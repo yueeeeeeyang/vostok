@@ -1,6 +1,6 @@
 package yueyang.vostok.data.core;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.ddl.VKDdlValidator;
 import yueyang.vostok.data.ds.VKDataSourceRegistry;
 import yueyang.vostok.data.meta.MetaRegistry;
@@ -23,7 +23,7 @@ public final class VostokBootstrap {
     private VostokBootstrap() {
     }
 
-    public static void init(DataSourceConfig config, String... basePackages) {
+    public static void init(VKDataConfig config, String... basePackages) {
         if (VostokRuntime.initialized) {
             return;
         }
@@ -66,7 +66,7 @@ public final class VostokBootstrap {
         }
     }
 
-    public static void registerDataSource(String name, DataSourceConfig config) {
+    public static void registerDataSource(String name, VKDataConfig config) {
         VostokInternal.ensureInit();
         VostokInternal.validateConfig(config);
         VKDataSourceRegistry.register(name, config);

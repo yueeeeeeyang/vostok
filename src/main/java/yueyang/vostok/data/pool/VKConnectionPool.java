@@ -1,6 +1,6 @@
 package yueyang.vostok.data.pool;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.util.VKAssert;
 import yueyang.vostok.util.VKLog;
 
@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class VKConnectionPool {
-    private final DataSourceConfig config;
+    private final VKDataConfig config;
     private final ConcurrentLinkedQueue<PooledEntry> idleQueue;
     private final AtomicInteger idleCount = new AtomicInteger(0);
     private final AtomicInteger localIdleCount = new AtomicInteger(0);
@@ -31,7 +31,7 @@ public class VKConnectionPool {
     private volatile String lastLeakStack;
     private volatile boolean closed;
 
-    public VKConnectionPool(DataSourceConfig config) {
+    public VKConnectionPool(VKDataConfig config) {
         this.config = config;
         this.idleQueue = new ConcurrentLinkedQueue<>();
         this.permits = new Semaphore(config.getMaxActive());
@@ -304,7 +304,7 @@ public class VKConnectionPool {
         localIdleCount.set(0);
     }
 
-    public DataSourceConfig getConfig() {
+    public VKDataConfig getConfig() {
         return config;
     }
 

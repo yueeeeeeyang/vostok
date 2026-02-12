@@ -1,7 +1,7 @@
 package yueyang.vostok.data.core;
 
 import yueyang.vostok.data.config.VKBatchFailStrategy;
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.dialect.VKDialect;
 import yueyang.vostok.data.ds.VKDataSourceHolder;
 import yueyang.vostok.data.ds.VKDataSourceRegistry;
@@ -29,8 +29,8 @@ final class VostokInternal {
     private VostokInternal() {
     }
 
-    static void validateConfig(DataSourceConfig cfg) {
-        VKAssert.notNull(cfg, "DataSourceConfig is null");
+    static void validateConfig(VKDataConfig cfg) {
+        VKAssert.notNull(cfg, "VKDataConfig is null");
         VKAssert.notBlank(cfg.getUrl(), "jdbc url is blank");
         VKAssert.notBlank(cfg.getUsername(), "username is blank");
         VKAssert.notBlank(cfg.getDriver(), "driver is blank");
@@ -70,7 +70,7 @@ final class VostokInternal {
         return MetaRegistry.getTemplateCache(currentDataSourceName());
     }
 
-    static DataSourceConfig currentConfig() {
+    static VKDataConfig currentConfig() {
         return currentHolder().getConfig();
     }
 

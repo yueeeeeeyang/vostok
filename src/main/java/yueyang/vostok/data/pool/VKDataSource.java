@@ -1,6 +1,6 @@
 package yueyang.vostok.data.pool;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.util.VKAssert;
 
 import java.sql.Connection;
@@ -9,8 +9,8 @@ import java.sql.SQLException;
 public class VKDataSource {
     private final VKConnectionPool pool;
 
-    public VKDataSource(DataSourceConfig config) {
-        VKAssert.notNull(config, "DataSourceConfig is null");
+    public VKDataSource(VKDataConfig config) {
+        VKAssert.notNull(config, "VKDataConfig is null");
         this.pool = new VKConnectionPool(config);
     }
 
@@ -39,7 +39,7 @@ public class VKDataSource {
         return pool.getLastLeakStack();
     }
 
-    public DataSourceConfig getConfig() {
+    public VKDataConfig getConfig() {
         return pool.getConfig();
     }
 }

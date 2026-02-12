@@ -1,6 +1,6 @@
 package yueyang.vostok.data.jdbc;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 
 import java.sql.SQLRecoverableException;
 import java.sql.SQLException;
@@ -18,7 +18,7 @@ public class VKRetryPolicy {
     private final long backoffMaxMs;
     private final Set<String> sqlStatePrefixes;
 
-    public VKRetryPolicy(DataSourceConfig config) {
+    public VKRetryPolicy(VKDataConfig config) {
         this.enabled = config.isRetryEnabled();
         this.maxRetries = Math.max(0, config.getMaxRetries());
         this.backoffBaseMs = Math.max(0, config.getRetryBackoffBaseMs());

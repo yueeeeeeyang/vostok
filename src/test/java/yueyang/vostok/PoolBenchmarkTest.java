@@ -2,7 +2,7 @@ package yueyang.vostok;
 
 import org.junit.jupiter.api.Test;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.dialect.VKDialectType;
 import yueyang.vostok.data.pool.VKDataSource;
 
@@ -22,7 +22,7 @@ public class PoolBenchmarkTest {
         int loops = Integer.getInteger("bench.loops", 2000);
         int warmup = Integer.getInteger("bench.warmup", 200);
 
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url("jdbc:h2:mem:bench_pool;MODE=MySQL;DB_CLOSE_DELAY=-1")
                 .username("sa")
                 .password("")

@@ -1,6 +1,6 @@
 package yueyang.vostok.data.ds;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.util.VKAssert;
 
 import java.util.Collections;
@@ -20,9 +20,9 @@ public final class VKDataSourceRegistry {
     }
 
     
-    public static void register(String name, DataSourceConfig config) {
+    public static void register(String name, VKDataConfig config) {
         VKAssert.notBlank(name, "DataSource name is blank");
-        VKAssert.notNull(config, "DataSourceConfig is null");
+        VKAssert.notNull(config, "VKDataConfig is null");
         synchronized (WRITE_LOCK) {
             if (REGISTRY.containsKey(name)) {
                 throw new yueyang.vostok.data.exception.VKConfigException("DataSource name already exists: " + name);

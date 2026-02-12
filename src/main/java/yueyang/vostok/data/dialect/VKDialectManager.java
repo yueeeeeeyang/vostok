@@ -1,6 +1,6 @@
 package yueyang.vostok.data.dialect;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.util.VKAssert;
 
 public final class VKDialectManager {
@@ -9,7 +9,7 @@ public final class VKDialectManager {
     private VKDialectManager() {
     }
 
-    public static void init(DataSourceConfig config) {
+    public static void init(VKDataConfig config) {
         DIALECT.set(resolve(config));
     }
 
@@ -17,8 +17,8 @@ public final class VKDialectManager {
         return DIALECT.get();
     }
 
-    public static VKDialect resolve(DataSourceConfig config) {
-        VKAssert.notNull(config, "DataSourceConfig is null");
+    public static VKDialect resolve(VKDataConfig config) {
+        VKAssert.notNull(config, "VKDataConfig is null");
         VKDialectType type = config.getDialect();
         if (type == null) {
             type = inferDialect(config.getUrl());

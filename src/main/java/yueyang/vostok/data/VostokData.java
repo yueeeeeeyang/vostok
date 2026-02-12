@@ -1,6 +1,6 @@
 package yueyang.vostok.data;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.config.VKTxIsolation;
 import yueyang.vostok.data.config.VKTxPropagation;
 import yueyang.vostok.data.core.VostokAdminOps;
@@ -28,11 +28,11 @@ public class VostokData {
 
     // 初始化 / 配置
 
-    public static void init(DataSourceConfig config, String... basePackages) {
+    public static void init(VKDataConfig config, String... basePackages) {
         VostokBootstrap.init(config, basePackages);
     }
 
-    public static void registerDataSource(String name, DataSourceConfig config) {
+    public static void registerDataSource(String name, VKDataConfig config) {
         VostokBootstrap.registerDataSource(name, config);
     }
 

@@ -1,7 +1,7 @@
 package yueyang.vostok.data.meta;
 
 import yueyang.vostok.data.annotation.VKEntity;
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.sql.SqlTemplateCache;
 import yueyang.vostok.util.VKAssert;
 import yueyang.vostok.util.VKLog;
@@ -70,7 +70,7 @@ public final class MetaRegistry {
         SNAPSHOT.set(new MetaSnapshot(metas, snapshot.dataSourceConfigs, caches, System.currentTimeMillis()));
     }
 
-    public static void refreshAll(Iterable<Class<?>> classes, Map<String, DataSourceConfig> dataSourceConfigs) {
+    public static void refreshAll(Iterable<Class<?>> classes, Map<String, VKDataConfig> dataSourceConfigs) {
         VKAssert.notNull(dataSourceConfigs, "dataSourceConfigs is null");
         Map<Class<?>, EntityMeta> metas = new ConcurrentHashMap<>();
         for (Class<?> clazz : classes) {
@@ -78,7 +78,7 @@ public final class MetaRegistry {
                 metas.put(clazz, MetaLoader.load(clazz));
             }
         }
-        Map<String, DataSourceConfig> configs = Collections.unmodifiableMap(new HashMap<>(dataSourceConfigs));
+        Map<String, VKDataConfig> configs = Collections.unmodifiableMap(new HashMap<>(dataSourceConfigs));
         Map<String, SqlTemplateCache> caches = buildTemplateCaches(configs, null);
         SNAPSHOT.set(new MetaSnapshot(metas, configs, caches, System.currentTimeMillis()));
     }
@@ -105,12 +105,12 @@ public final class MetaRegistry {
         return cache;
     }
 
-    public static void registerDataSource(String name, DataSourceConfig config) {
+    public static void registerDataSource(String name, VKDataConfig config) {
         VKAssert.notBlank(name, "dataSourceName is blank");
-        VKAssert.notNull(config, "DataSourceConfig is null");
+        VKAssert.notNull(config, "VKDataConfig is null");
         while (true) {
             MetaSnapshot snapshot = SNAPSHOT.get();
-            Map<String, DataSourceConfig> configs = new HashMap<>(snapshot.dataSourceConfigs);
+            Map<String, VKDataConfig> configs = new HashMap<>(snapshot.dataSourceConfigs);
             configs.put(name, config);
             Map<String, SqlTemplateCache> caches = buildTemplateCaches(Collections.unmodifiableMap(configs), snapshot.templateCaches);
             MetaSnapshot updated = new MetaSnapshot(snapshot.metas, Collections.unmodifiableMap(configs), caches, snapshot.lastRefreshAt);
@@ -124,13 +124,13 @@ public final class MetaRegistry {
         SNAPSHOT.set(MetaSnapshot.empty());
     }
 
-    private static Map<String, SqlTemplateCache> buildTemplateCaches(Map<String, DataSourceConfig> configs,
+    private static Map<String, SqlTemplateCache> buildTemplateCaches(Map<String, VKDataConfig> configs,
                                                                      Map<String, SqlTemplateCache> existing) {
         Map<String, SqlTemplateCache> caches = new HashMap<>();
         if (existing != null) {
             caches.putAll(existing);
         }
-        for (Map.Entry<String, DataSourceConfig> entry : configs.entrySet()) {
+        for (Map.Entry<String, VKDataConfig> entry : configs.entrySet()) {
             if (!caches.containsKey(entry.getKey())) {
                 caches.put(entry.getKey(), new SqlTemplateCache(entry.getValue().getSqlTemplateCacheSize()));
             }
@@ -141,12 +141,12 @@ public final class MetaRegistry {
     private static final class MetaSnapshot {
         private static final MetaSnapshot EMPTY = new MetaSnapshot(new ConcurrentHashMap<>(), Collections.emptyMap(), Collections.emptyMap(), 0L);
         private final Map<Class<?>, EntityMeta> metas;
-        private final Map<String, DataSourceConfig> dataSourceConfigs;
+        private final Map<String, VKDataConfig> dataSourceConfigs;
         private final Map<String, SqlTemplateCache> templateCaches;
         private final long lastRefreshAt;
 
         private MetaSnapshot(Map<Class<?>, EntityMeta> metas,
-                             Map<String, DataSourceConfig> dataSourceConfigs,
+                             Map<String, VKDataConfig> dataSourceConfigs,
                              Map<String, SqlTemplateCache> templateCaches,
                              long lastRefreshAt) {
             this.metas = metas;

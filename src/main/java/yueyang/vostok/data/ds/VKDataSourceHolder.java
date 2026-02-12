@@ -1,6 +1,6 @@
 package yueyang.vostok.data.ds;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.dialect.VKDialect;
 import yueyang.vostok.data.dialect.VKDialectManager;
 import yueyang.vostok.data.jdbc.JdbcExecutor;
@@ -14,7 +14,7 @@ import yueyang.vostok.data.pool.VKDataSource;
  */
 public class VKDataSourceHolder {
     private final String name;
-    private final DataSourceConfig config;
+    private final VKDataConfig config;
     private final VKDataSource dataSource;
     private final JdbcExecutor executor;
     private final VKSqlLogger sqlLogger;
@@ -22,7 +22,7 @@ public class VKDataSourceHolder {
     private final VKRetryPolicy retryPolicy;
     private final VKDialect dialect;
 
-    public VKDataSourceHolder(String name, DataSourceConfig config) {
+    public VKDataSourceHolder(String name, VKDataConfig config) {
         this.name = name;
         this.config = config;
         this.dataSource = new VKDataSource(config);
@@ -39,7 +39,7 @@ public class VKDataSourceHolder {
     }
 
     
-    public DataSourceConfig getConfig() {
+    public VKDataConfig getConfig() {
         return config;
     }
 

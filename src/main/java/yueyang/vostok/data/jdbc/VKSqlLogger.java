@@ -1,6 +1,6 @@
 package yueyang.vostok.data.jdbc;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.util.VKLog;
 
 import java.util.Arrays;
@@ -10,7 +10,7 @@ public final class VKSqlLogger {
     private final boolean logParams;
     private final long slowSqlMs;
 
-    public VKSqlLogger(DataSourceConfig config) {
+    public VKSqlLogger(VKDataConfig config) {
         this.logSql = config.isLogSql();
         this.logParams = config.isLogParams();
         this.slowSqlMs = config.getSlowSqlMs();

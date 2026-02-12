@@ -1,12 +1,13 @@
-package yueyang.vostok.data.config;
+package yueyang.vostok.data;
 
+import yueyang.vostok.data.config.VKBatchFailStrategy;
 import yueyang.vostok.data.dialect.VKDialectType;
 
 /**
  * Vostok 数据源与连接池配置。
  * 只能通过 Vostok.Data.init(...) 显式传入。
  */
-public class DataSourceConfig {
+public class VKDataConfig {
     /** JDBC URL，例如 jdbc:mysql://host:3306/db */
     private String url;
     /** 数据库用户名 */
@@ -84,7 +85,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig url(String url) {
+    public VKDataConfig url(String url) {
         this.url = url;
         return this;
     }
@@ -95,7 +96,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig username(String username) {
+    public VKDataConfig username(String username) {
         this.username = username;
         return this;
     }
@@ -106,7 +107,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig password(String password) {
+    public VKDataConfig password(String password) {
         this.password = password;
         return this;
     }
@@ -117,7 +118,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig driver(String driver) {
+    public VKDataConfig driver(String driver) {
         this.driver = driver;
         return this;
     }
@@ -128,7 +129,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig dialect(VKDialectType dialect) {
+    public VKDataConfig dialect(VKDialectType dialect) {
         this.dialect = dialect;
         return this;
     }
@@ -139,7 +140,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig validateDdl(boolean validateDdl) {
+    public VKDataConfig validateDdl(boolean validateDdl) {
         this.validateDdl = validateDdl;
         return this;
     }
@@ -150,7 +151,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig ddlSchema(String ddlSchema) {
+    public VKDataConfig ddlSchema(String ddlSchema) {
         this.ddlSchema = ddlSchema;
         return this;
     }
@@ -161,7 +162,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig minIdle(int minIdle) {
+    public VKDataConfig minIdle(int minIdle) {
         this.minIdle = minIdle;
         return this;
     }
@@ -172,7 +173,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig maxActive(int maxActive) {
+    public VKDataConfig maxActive(int maxActive) {
         this.maxActive = maxActive;
         return this;
     }
@@ -183,7 +184,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig maxWaitMs(long maxWaitMs) {
+    public VKDataConfig maxWaitMs(long maxWaitMs) {
         this.maxWaitMs = maxWaitMs;
         return this;
     }
@@ -194,7 +195,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig testOnBorrow(boolean testOnBorrow) {
+    public VKDataConfig testOnBorrow(boolean testOnBorrow) {
         this.testOnBorrow = testOnBorrow;
         return this;
     }
@@ -205,7 +206,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig testOnReturn(boolean testOnReturn) {
+    public VKDataConfig testOnReturn(boolean testOnReturn) {
         this.testOnReturn = testOnReturn;
         return this;
     }
@@ -216,7 +217,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig validationQuery(String validationQuery) {
+    public VKDataConfig validationQuery(String validationQuery) {
         this.validationQuery = validationQuery;
         return this;
     }
@@ -227,7 +228,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig validationTimeoutSec(int validationTimeoutSec) {
+    public VKDataConfig validationTimeoutSec(int validationTimeoutSec) {
         this.validationTimeoutSec = validationTimeoutSec;
         return this;
     }
@@ -238,7 +239,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig idleValidationIntervalMs(long idleValidationIntervalMs) {
+    public VKDataConfig idleValidationIntervalMs(long idleValidationIntervalMs) {
         this.idleValidationIntervalMs = idleValidationIntervalMs;
         return this;
     }
@@ -249,7 +250,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig preheatEnabled(boolean preheatEnabled) {
+    public VKDataConfig preheatEnabled(boolean preheatEnabled) {
         this.preheatEnabled = preheatEnabled;
         return this;
     }
@@ -260,7 +261,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig idleTimeoutMs(long idleTimeoutMs) {
+    public VKDataConfig idleTimeoutMs(long idleTimeoutMs) {
         this.idleTimeoutMs = idleTimeoutMs;
         return this;
     }
@@ -271,7 +272,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig leakDetectMs(long leakDetectMs) {
+    public VKDataConfig leakDetectMs(long leakDetectMs) {
         this.leakDetectMs = leakDetectMs;
         return this;
     }
@@ -282,7 +283,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig statementCacheSize(int statementCacheSize) {
+    public VKDataConfig statementCacheSize(int statementCacheSize) {
         this.statementCacheSize = statementCacheSize;
         return this;
     }
@@ -293,7 +294,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig sqlTemplateCacheSize(int sqlTemplateCacheSize) {
+    public VKDataConfig sqlTemplateCacheSize(int sqlTemplateCacheSize) {
         this.sqlTemplateCacheSize = sqlTemplateCacheSize;
         return this;
     }
@@ -304,7 +305,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig retryEnabled(boolean retryEnabled) {
+    public VKDataConfig retryEnabled(boolean retryEnabled) {
         this.retryEnabled = retryEnabled;
         return this;
     }
@@ -315,7 +316,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig maxRetries(int maxRetries) {
+    public VKDataConfig maxRetries(int maxRetries) {
         this.maxRetries = maxRetries;
         return this;
     }
@@ -326,7 +327,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig retryBackoffBaseMs(long retryBackoffBaseMs) {
+    public VKDataConfig retryBackoffBaseMs(long retryBackoffBaseMs) {
         this.retryBackoffBaseMs = retryBackoffBaseMs;
         return this;
     }
@@ -337,7 +338,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig retryBackoffMaxMs(long retryBackoffMaxMs) {
+    public VKDataConfig retryBackoffMaxMs(long retryBackoffMaxMs) {
         this.retryBackoffMaxMs = retryBackoffMaxMs;
         return this;
     }
@@ -348,7 +349,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig retrySqlStatePrefixes(String... retrySqlStatePrefixes) {
+    public VKDataConfig retrySqlStatePrefixes(String... retrySqlStatePrefixes) {
         this.retrySqlStatePrefixes = retrySqlStatePrefixes;
         return this;
     }
@@ -359,7 +360,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig batchSize(int batchSize) {
+    public VKDataConfig batchSize(int batchSize) {
         this.batchSize = batchSize;
         return this;
     }
@@ -370,7 +371,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig batchFailStrategy(VKBatchFailStrategy batchFailStrategy) {
+    public VKDataConfig batchFailStrategy(VKBatchFailStrategy batchFailStrategy) {
         this.batchFailStrategy = batchFailStrategy;
         return this;
     }
@@ -381,7 +382,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig logSql(boolean logSql) {
+    public VKDataConfig logSql(boolean logSql) {
         this.logSql = logSql;
         return this;
     }
@@ -392,7 +393,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig logParams(boolean logParams) {
+    public VKDataConfig logParams(boolean logParams) {
         this.logParams = logParams;
         return this;
     }
@@ -403,7 +404,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig slowSqlMs(long slowSqlMs) {
+    public VKDataConfig slowSqlMs(long slowSqlMs) {
         this.slowSqlMs = slowSqlMs;
         return this;
     }
@@ -414,7 +415,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig sqlMetricsEnabled(boolean sqlMetricsEnabled) {
+    public VKDataConfig sqlMetricsEnabled(boolean sqlMetricsEnabled) {
         this.sqlMetricsEnabled = sqlMetricsEnabled;
         return this;
     }
@@ -425,7 +426,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig slowSqlTopN(int slowSqlTopN) {
+    public VKDataConfig slowSqlTopN(int slowSqlTopN) {
         this.slowSqlTopN = slowSqlTopN;
         return this;
     }
@@ -436,7 +437,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig savepointEnabled(boolean savepointEnabled) {
+    public VKDataConfig savepointEnabled(boolean savepointEnabled) {
         this.savepointEnabled = savepointEnabled;
         return this;
     }
@@ -447,7 +448,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig txTimeoutMs(long txTimeoutMs) {
+    public VKDataConfig txTimeoutMs(long txTimeoutMs) {
         this.txTimeoutMs = txTimeoutMs;
         return this;
     }
@@ -458,7 +459,7 @@ public class DataSourceConfig {
     }
 
     
-    public DataSourceConfig queryTimeoutMs(long queryTimeoutMs) {
+    public VKDataConfig queryTimeoutMs(long queryTimeoutMs) {
         this.queryTimeoutMs = queryTimeoutMs;
         return this;
     }

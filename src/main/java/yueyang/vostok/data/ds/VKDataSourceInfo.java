@@ -1,15 +1,15 @@
 package yueyang.vostok.data.ds;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 
 /**
  * 数据源只读信息。
  */
 public final class VKDataSourceInfo {
     private final String name;
-    private final DataSourceConfig config;
+    private final VKDataConfig config;
 
-    public VKDataSourceInfo(String name, DataSourceConfig config) {
+    public VKDataSourceInfo(String name, VKDataConfig config) {
         this.name = name;
         this.config = config;
     }
@@ -20,7 +20,7 @@ public final class VKDataSourceInfo {
     }
 
     
-    public DataSourceConfig getConfig() {
+    public VKDataConfig getConfig() {
         return config;
     }
 }

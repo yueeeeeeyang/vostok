@@ -1,7 +1,7 @@
 package yueyang.vostok;
 
 import org.junit.jupiter.api.Test;
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.jdbc.VKRetryPolicy;
 
 import java.sql.SQLException;
@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 public class VKRetryPolicyTest {
     @Test
     void testShouldRetryBySqlStatePrefix() {
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .retryEnabled(true)
                 .maxRetries(2)
                 .retrySqlStatePrefixes("08");
@@ -22,7 +22,7 @@ public class VKRetryPolicyTest {
 
     @Test
     void testBackoff() {
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .retryEnabled(true)
                 .retryBackoffBaseMs(50)
                 .retryBackoffMaxMs(200);

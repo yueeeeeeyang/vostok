@@ -16,7 +16,7 @@ Vostok 是一个面向 JDK 17+ 的全能框架，当前包含高性能数据访�
 **Data 快速上手**
 ```java
 import yueyang.vostok.data.annotation.*;
-import yueyang.vostok.data.config.*;
+import yueyang.vostok.data.*;
 import yueyang.vostok.Vostok;
 import yueyang.vostok.data.dialect.VKDialectType;
 
@@ -31,7 +31,7 @@ public class User {
     private Integer age;
 }
 
-DataSourceConfig cfg = new DataSourceConfig()
+VKDataConfig cfg = new VKDataConfig()
     .url("jdbc:mysql://localhost:3306/demo")
     .username("root")
     .password("123456")
@@ -207,7 +207,7 @@ int fail = detail.totalFail();
 
 **多数据源**
 ```java
-DataSourceConfig cfg2 = new DataSourceConfig()
+VKDataConfig cfg2 = new VKDataConfig()
     .url("jdbc:h2:mem:ds2")
     .username("sa")
     .password("")
@@ -235,7 +235,7 @@ Vostok.Data.withDataSource("ds2", () -> {
 
 **多数据源 + 异步传递（组合示例）**
 ```java
-DataSourceConfig cfg = new DataSourceConfig()
+VKDataConfig cfg = new VKDataConfig()
         .url("jdbc:h2:mem:devkit;MODE=MySQL;DB_CLOSE_DELAY=-1")
         .username("sa")
         .password("")
@@ -243,7 +243,7 @@ DataSourceConfig cfg = new DataSourceConfig()
         .dialect(VKDialectType.MYSQL);
 Vostok.Data.init(cfg, "yueyang.vostok");
 
-DataSourceConfig cfg2 = new DataSourceConfig()
+VKDataConfig cfg2 = new VKDataConfig()
         .url("jdbc:h2:mem:devkit2;MODE=MySQL;DB_CLOSE_DELAY=-1")
         .username("sa")
         .password("")
@@ -305,7 +305,7 @@ String report = Vostok.Data.report();
 
 **慢 SQL TopN（可选）**
 ```java
-DataSourceConfig cfg = new DataSourceConfig()
+VKDataConfig cfg = new VKDataConfig()
     .slowSqlTopN(10)
     .slowSqlMs(200);
 ```
@@ -337,7 +337,7 @@ Vostok.Data.setScanner((pkgs) -> Set.of(UserEntity.class, TaskEntity.class));
 Vostok.Data.init(cfg, "ignored.pkg");
 ```
 
-**配置参考（DataSourceConfig）**
+**配置参考（VKDataConfig）**
 - `url` / `username` / `password` / `driver`：JDBC 基本配置
 - `dialect`：方言（可选）
 - `minIdle` / `maxActive` / `maxWaitMs`：连接池大小与等待
@@ -385,3 +385,13 @@ Vostok.Data.init(cfg, "ignored.pkg");
 
 **使用方式**
 见上方 **Web 快速上手** 示例。
+
+**配置参考（VKWebConfig）**
+- `port`：监听端口。可传 `0` 让系统自动分配空闲端口。
+- `ioThreads`：IO 线程数（Reactor 数量）。建议 1 或少量。
+- `workerThreads`：业务线程池线程数。默认按 CPU 核心数 * 2。
+- `backlog`：ServerSocket backlog 队列长度。
+- `readBufferSize`：每连接读缓冲区大小（字节）。
+- `maxHeaderBytes`：请求头最大字节数，超过返回 431。
+- `maxBodyBytes`：请求体最大字节数，超过返回 413。
+- `keepAliveTimeoutMs`：Keep-Alive 空闲超时（毫秒）。

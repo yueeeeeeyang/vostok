@@ -1,6 +1,6 @@
 package yueyang.vostok.data.jdbc;
 
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -27,7 +27,7 @@ public class VKSqlMetrics {
     private final boolean includeParams;
     private final PriorityQueue<SlowEntry> slowTopN;
 
-    public VKSqlMetrics(DataSourceConfig config) {
+    public VKSqlMetrics(VKDataConfig config) {
         this.enabled = config.isSqlMetricsEnabled();
         this.buckets = Arrays.copyOf(DEFAULT_BUCKETS, DEFAULT_BUCKETS.length);
         this.bucketCounts = new AtomicLongArray(buckets.length + 1);

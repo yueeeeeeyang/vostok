@@ -10,7 +10,7 @@ import org.junit.jupiter.api.MethodOrderer.OrderAnnotation;
 import yueyang.vostok.data.config.VKBatchFailStrategy;
 import yueyang.vostok.data.config.VKTxIsolation;
 import yueyang.vostok.data.config.VKTxPropagation;
-import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.Vostok;
 import yueyang.vostok.data.dialect.VKDialectManager;
 import yueyang.vostok.data.dialect.VKDialectType;
@@ -53,7 +53,7 @@ public class VostokIntegrationTest {
 
     @BeforeAll
     static void setUp() {
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -314,7 +314,7 @@ public class VostokIntegrationTest {
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(url2)
                 .username("sa")
                 .password("")
@@ -335,7 +335,7 @@ public class VostokIntegrationTest {
             stmt.execute("CREATE TABLE t_user (id BIGINT AUTO_INCREMENT PRIMARY KEY, user_name VARCHAR(64), age INT)");
         }
 
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(url)
                 .username("sa")
                 .password("")
@@ -364,7 +364,7 @@ public class VostokIntegrationTest {
              var stmt = conn.createStatement()) {
             stmt.execute("CREATE TABLE t_user (id BIGINT AUTO_INCREMENT PRIMARY KEY, user_name VARCHAR(64), age INT)");
         }
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(url)
                 .username("sa")
                 .password("")
@@ -431,22 +431,22 @@ public class VostokIntegrationTest {
     @Test
     void testDialectSql() {
         var meta = MetaLoader.load(UserEntity.class);
-        VKDialectManager.init(new DataSourceConfig().dialect(VKDialectType.SQLSERVER));
+        VKDialectManager.init(new VKDataConfig().dialect(VKDialectType.SQLSERVER));
         String sql1 = SqlBuilder.buildSelect(meta, VKQuery.create().limit(10).offset(5)).getSql();
         assertTrue(sql1.contains("OFFSET 5 ROWS"));
         assertTrue(sql1.contains("FETCH NEXT 10 ROWS ONLY"));
 
-        VKDialectManager.init(new DataSourceConfig().dialect(VKDialectType.DB2));
+        VKDialectManager.init(new VKDataConfig().dialect(VKDialectType.DB2));
         String sql2 = SqlBuilder.buildSelect(meta, VKQuery.create().limit(10).offset(5)).getSql();
         assertTrue(sql2.contains("OFFSET 5 ROWS"));
         assertTrue(sql2.contains("FETCH FIRST 10 ROWS ONLY"));
 
-        VKDialectManager.init(new DataSourceConfig().dialect(VKDialectType.MYSQL));
+        VKDialectManager.init(new VKDataConfig().dialect(VKDialectType.MYSQL));
     }
 
     @Test
     void testHolderDialectIsolation() {
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -467,7 +467,7 @@ public class VostokIntegrationTest {
     @Order(96)
     void testIdleValidationEvict() throws Exception {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -493,7 +493,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -512,7 +512,7 @@ public class VostokIntegrationTest {
     @Order(97)
     void testPreheatAndLeakStack() throws Exception {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -538,7 +538,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -557,7 +557,7 @@ public class VostokIntegrationTest {
     @Order(98)
     void testTxTimeout() {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -580,7 +580,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -599,7 +599,7 @@ public class VostokIntegrationTest {
     @Order(94)
     void testConnectionStateResetOnReturn() throws Exception {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -635,7 +635,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -654,7 +654,7 @@ public class VostokIntegrationTest {
     @Order(93)
     void testStatementTimeoutInTransaction() {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -675,7 +675,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -694,7 +694,7 @@ public class VostokIntegrationTest {
     @Order(95)
     void testTxIsolationRestoredAfterCommit() {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -724,7 +724,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -754,7 +754,7 @@ public class VostokIntegrationTest {
     @Order(97)
     void testConcurrentInitSafety() throws Exception {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -789,7 +789,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -852,7 +852,7 @@ public class VostokIntegrationTest {
     @Order(91)
     void testQueryTimeoutNonTx() {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -871,7 +871,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -890,7 +890,7 @@ public class VostokIntegrationTest {
     @Order(90)
     void testRawAndSubqueryWhitelist() {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -924,7 +924,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -943,7 +943,7 @@ public class VostokIntegrationTest {
     @Order(89)
     void testCustomScanner() {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -959,7 +959,7 @@ public class VostokIntegrationTest {
         // restore default scanner + config for remaining tests
         Vostok.Data.setScanner(yueyang.vostok.data.scan.ClassScanner::scan);
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -982,7 +982,7 @@ public class VostokIntegrationTest {
     @Test
     @Order(88)
     void testWhitelistIsolatedByDataSource() throws Exception {
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url("jdbc:h2:mem:ds2;MODE=MySQL;DB_CLOSE_DELAY=-1")
                 .username("sa")
                 .password("")
@@ -1016,7 +1016,7 @@ public class VostokIntegrationTest {
     @Order(99)
     void testConcurrencyPressure() throws Exception {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -1054,7 +1054,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -1073,7 +1073,7 @@ public class VostokIntegrationTest {
     @Order(100)
     void testPoolStabilityUnderLoad() throws Exception {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -1106,7 +1106,7 @@ public class VostokIntegrationTest {
 
         // restore default config for remaining tests
         Vostok.Data.close();
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -1126,7 +1126,7 @@ public class VostokIntegrationTest {
     void testDdlValidation() {
         Vostok.Data.close();
         String url = "jdbc:h2:mem:ddltest;MODE=MySQL;DB_CLOSE_DELAY=-1";
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(url)
                 .username("sa")
                 .password("")
@@ -1136,7 +1136,7 @@ public class VostokIntegrationTest {
         assertThrows(VKException.class, () -> Vostok.Data.init(cfg, "yueyang.vostok"));
         Vostok.Data.close();
 
-        DataSourceConfig cfg2 = new DataSourceConfig()
+        VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -1153,7 +1153,7 @@ public class VostokIntegrationTest {
     @Test
     void testBatchFailStrategyContinue() {
         Vostok.Data.close();
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
@@ -1213,7 +1213,7 @@ public class VostokIntegrationTest {
         assertThrows(VKStateException.class, () -> Vostok.Data.findAll(UserEntity.class));
 
         // re-init for remaining tests (if any)
-        DataSourceConfig cfg = new DataSourceConfig()
+        VKDataConfig cfg = new VKDataConfig()
                 .url(JDBC_URL)
                 .username("sa")
                 .password("")
