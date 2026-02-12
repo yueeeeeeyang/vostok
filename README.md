@@ -1,15 +1,18 @@
 # Vostok
 
-JDK 17+ 纯 JDBC 的零依赖 CRUD 组件（测试依赖除外）。提供注解实体、SQL 构建、事务、连接池、方言、多数据源、批处理、监控与插件等能力。
+JDK 17+ 纯 JDBC 的零依赖 CRUD 组件（测试依赖除外），提供注解实体、SQL 构建、事务、连接池、方言、多数据源、批处理、监控与插件等能力。
+
+**重要提醒**
+当前项目仅用于实验和技术验证，不建议用于生产环境。
 
 **核心特性**
-- 实体注解即可 CRUD（`@VKEntity` / `@VKId` / `@VKColumn` / `@VKIgnore`）
-- 内置轻量连接池（预热、空闲回收、泄露检测、预编译缓存）
-- 支持事务传播、隔离级别、只读、超时与保存点
+- 注解实体即 CRUD（`@VKEntity` / `@VKId` / `@VKColumn` / `@VKIgnore`）
+- 轻量连接池（预热、空闲回收、泄露检测、预编译缓存）
+- 事务传播、隔离级别、只读、超时与保存点
 - 条件查询 / 排序 / 分页 / 投影 / 聚合
 - SQL 日志、慢 SQL、耗时分布与 TopN
 - EXISTS / IN / NOT IN 子查询
-- 多数据源切换
+- 多数据源切换与上下文传播
 - DDL 校验（可选）
 - 插件拦截器
 - 元数据热更新
@@ -32,6 +35,8 @@ public class User {
 
     @VKColumn(name = "user_name")
     private String name;
+
+    private Integer age;
 }
 
 DataSourceConfig cfg = new DataSourceConfig()
@@ -48,17 +53,36 @@ DataSourceConfig cfg = new DataSourceConfig()
 Vostok.init(cfg, "com.example.entity");
 ```
 
-**CRUD**
+**实体定义**
+```java
+@VKEntity(table = "t_task")
+public class Task {
+    @VKId
+    private Long id;
+
+    @VKColumn(name = "task_name")
+    private String name;
+
+    @VKIgnore
+    private String transientField;
+}
+```
+
+**CRUD 基础用法**
 ```java
 User u = new User();
 Vostok.insert(u);
+
+u.setName("Tom");
 Vostok.update(u);
+
 Vostok.delete(User.class, 1L);
+
 User one = Vostok.findById(User.class, 1L);
 List<User> all = Vostok.findAll(User.class);
 ```
 
-**条件查询 / 排序 / 分页**
+**分页查询与总数**
 ```java
 import yueyang.vostok.query.*;
 
@@ -72,8 +96,9 @@ VKQuery q = VKQuery.create()
 List<User> list = Vostok.query(User.class, q);
 long total = Vostok.count(User.class, q);
 ```
+说明：`count` 只统计当前条件，不受 `limit/offset` 影响。
 
-**更多查询示例**
+**高级查询示例**
 ```java
 // 复合条件（OR + BETWEEN + NOT IN）
 VKQuery q = VKQuery.create()
@@ -97,7 +122,7 @@ List<User> names = Vostok.queryColumns(User.class, proj, "name");
 ```
 
 **子查询（EXISTS / IN）与白名单**
-子查询与 raw 表达式需要在白名单中注册，避免 SQL 注入：
+子查询与 raw 表达式必须注册白名单，以降低 SQL 注入风险。
 ```java
 Vostok.registerRawSql("COUNT(1)", "1");
 Vostok.registerSubquery("SELECT 1 FROM t_user u2 WHERE u2.id = t_user.id AND u2.age >= ?");
@@ -135,24 +160,7 @@ Vostok.tx(() -> {
     Vostok.findAll(User.class);
 }, VKTxPropagation.SUPPORTS, VKTxIsolation.DEFAULT, true);
 ```
-注意：事务上下文仅限当前线程，异步线程不会自动传播事务。
-异步场景请在新线程内自行使用 `Vostok.tx(...)` 开启事务。
-
-**异步上下文（VostokContext）**
-```java
-ExecutorService pool = Executors.newFixedThreadPool(4);
-
-Vostok.withDataSource("ds2", () -> {
-    Vostok.insert(user);
-    VostokContext ctx = Vostok.captureContext();
-    CompletableFuture<Integer> future = CompletableFuture.supplyAsync(
-        Vostok.wrap(ctx, () -> Vostok.findAll(User.class).size()), pool
-    );
-});
-```
-说明：
-- `VostokContext` 仅传播数据源上下文，不传播事务。
-- 事务需在异步线程内显式 `Vostok.tx(...)`。
+说明：事务上下文仅限当前线程，异步线程不会自动传播事务。
 
 **Savepoint（默认开启）**
 ```java
@@ -191,76 +199,23 @@ Vostok.registerDataSource("ds2", cfg2);
 Vostok.withDataSource("ds2", () -> Vostok.insert(user));
 ```
 
-**连接池指标与诊断**
+**异步上下文（VostokContext）**
 ```java
-var metrics = Vostok.poolMetrics();
-String report = Vostok.report();
-```
+ExecutorService pool = Executors.newFixedThreadPool(4);
 
-**慢 SQL TopN**
-默认关闭（`slowSqlTopN=0`），如需开启：
-```java
-DataSourceConfig cfg = new DataSourceConfig()
-    .slowSqlTopN(10)
-    .slowSqlMs(200);
-```
-
-**插件拦截器**
-```java
-Vostok.registerInterceptor(new VKInterceptor() {
-    @Override
-    public void beforeExecute(String sql, Object[] params) {
-        // 例如：拦截敏感表
-        if (sql != null && sql.contains("t_secret")) {
-            throw new IllegalStateException("blocked");
-        }
-    }
-
-    @Override
-    public void afterExecute(String sql, Object[] params, long costMs, boolean success, Throwable error) {
-        // 例如：记录慢 SQL 或失败日志
-        if (costMs > 200) {
-            System.out.println("[SLOW] " + costMs + "ms: " + sql);
-        }
-        if (!success && error != null) {
-            System.out.println("[FAIL] " + error.getMessage());
-        }
-    }
+Vostok.withDataSource("ds2", () -> {
+    Vostok.insert(user);
+    VostokContext ctx = Vostok.captureContext();
+    CompletableFuture<Integer> future = CompletableFuture.supplyAsync(
+        Vostok.wrap(ctx, () -> Vostok.findAll(User.class).size()), pool
+    );
 });
 ```
+说明：
+- `VostokContext` 仅传播数据源上下文，不传播事务。
+- 事务需在异步线程内显式 `Vostok.tx(...)`。
 
-**元数据热更新**
-```java
-Vostok.refreshMeta(); // 使用初始化时的包名
-Vostok.refreshMeta("com.example.entity");
-```
-
-**异常分层**
-```java
-try {
-    Vostok.insert(user);
-} catch (yueyang.vostok.exception.VKSqlException e) {
-    // SQL 异常（含 SQLState/错误码）
-} catch (yueyang.vostok.exception.VKMetaException e) {
-    // 元数据异常
-}
-```
-
-**错误码与异常说明**
-详见 `docs/errors.md`。
-
-**可插拔扫描器**
-在复杂 ClassLoader/容器环境下，可替换默认扫描器：
-```java
-Vostok.setScanner((pkgs) -> Set.of(UserEntity.class, TaskEntity.class));
-Vostok.init(cfg, "ignored.pkg");
-```
-
-**多数据源 + 异步上下文传递**
-ThreadLocal 在异步/线程池场景不会自动传播，跨线程时请使用 `Vostok.wrap(...)`。
-下面示例将多数据源与异步调用组合在一起：
-注意：`Vostok.wrap(...)` 只传递数据源上下文，不会传播事务上下文。
-事务上下文仅限当前线程，异步线程需要自行开启新事务（`Vostok.tx(...)`）。
+**多数据源 + 异步传递（组合示例）**
 ```java
 DataSourceConfig cfg = new DataSourceConfig()
         .url("jdbc:h2:mem:devkit;MODE=MySQL;DB_CLOSE_DELAY=-1")
@@ -294,27 +249,74 @@ CompletableFuture<Integer> f = Vostok.withDataSource("ds2", () -> {
 Integer ds2Count = f.get(3, TimeUnit.SECONDS);
 Integer ds1Count = Vostok.findAll(UserEntity.class).size();
 
-// ds2 只有 D2，default 只有 D1
 System.out.println("ds2 size=" + ds2Count + ", default size=" + ds1Count);
 
 es.shutdown();
 ```
 
-**异步嵌套切换**
+**插件拦截器**
 ```java
-ExecutorService es = Executors.newSingleThreadExecutor();
-Vostok.withDataSource("ds2", () -> {
-    CompletableFuture<Void> f = CompletableFuture.runAsync(Vostok.wrap(() -> {
-        // 继承 ds2
-        Vostok.insert(user("D2-A", 1));
-        // 临时切回 default
-        Vostok.withDataSource("default", () -> Vostok.insert(user("D1-A", 1)));
-        // 返回 ds2
-        Vostok.insert(user("D2-B", 2));
-    }), es);
-    f.get(3, TimeUnit.SECONDS);
+Vostok.registerInterceptor(new VKInterceptor() {
+    @Override
+    public void beforeExecute(String sql, Object[] params) {
+        if (sql != null && sql.contains("t_secret")) {
+            throw new IllegalStateException("blocked");
+        }
+    }
+
+    @Override
+    public void afterExecute(String sql, Object[] params, long costMs, boolean success, Throwable error) {
+        if (costMs > 200) {
+            System.out.println("[SLOW] " + costMs + "ms: " + sql);
+        }
+        if (!success && error != null) {
+            System.out.println("[FAIL] " + error.getMessage());
+        }
+    }
 });
-es.shutdown();
+```
+
+**监控与诊断**
+```java
+var metrics = Vostok.poolMetrics();
+String report = Vostok.report();
+```
+说明：
+- 监控开关关闭时不会执行采集逻辑，避免额外开销。
+- 慢 SQL TopN 默认关闭（`slowSqlTopN=0`）。
+
+**慢 SQL TopN（可选）**
+```java
+DataSourceConfig cfg = new DataSourceConfig()
+    .slowSqlTopN(10)
+    .slowSqlMs(200);
+```
+
+**元数据热更新**
+```java
+Vostok.refreshMeta(); // 使用初始化时的包名
+Vostok.refreshMeta("com.example.entity");
+```
+
+**异常分层**
+```java
+try {
+    Vostok.insert(user);
+} catch (yueyang.vostok.exception.VKSqlException e) {
+    // SQL 异常（含 SQLState/错误码）
+} catch (yueyang.vostok.exception.VKMetaException e) {
+    // 元数据异常
+}
+```
+
+**错误码与异常说明**
+详见 `docs/errors.md`。
+
+**可插拔扫描器**
+在复杂 ClassLoader/容器环境下可替换默认扫描器：
+```java
+Vostok.setScanner((pkgs) -> Set.of(UserEntity.class, TaskEntity.class));
+Vostok.init(cfg, "ignored.pkg");
 ```
 
 **配置参考（DataSourceConfig）**
@@ -345,7 +347,6 @@ es.shutdown();
 
 **性能压测（连接池借还）**
 ```bash
-# 可通过环境变量调整线程数与循环次数
 THREADS=64 LOOPS=5000 WARMUP=500 ./scripts/bench_pool.sh
 ```
 
