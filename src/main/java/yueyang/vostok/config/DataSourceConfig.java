@@ -28,7 +28,7 @@ public class DataSourceConfig {
     /** 获取连接最大等待时间（毫秒） */
     private long maxWaitMs = 30000;
     /** 是否在借出时校验连接有效性 */
-    private boolean testOnBorrow = true;
+    private boolean testOnBorrow = false;
     /** 是否在归还时校验连接有效性 */
     private boolean testOnReturn = false;
     /** 连接有效性检测 SQL（可选，优先于 isValid） */

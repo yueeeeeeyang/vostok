@@ -321,7 +321,7 @@ es.shutdown();
 - `url` / `username` / `password` / `driver`：JDBC 基本配置
 - `dialect`：方言（可选）
 - `minIdle` / `maxActive` / `maxWaitMs`：连接池大小与等待
-- `testOnBorrow` / `testOnReturn`：借出/归还时是否校验连接
+- `testOnBorrow` / `testOnReturn`：借出/归还时是否校验连接（默认关闭，开启会显著降低性能，生产建议仅在需要时开启）
 - `validationQuery` / `validationTimeoutSec`：连接有效性探测
 - `idleValidationIntervalMs`：空闲连接定期校验与回收间隔
 - `preheatEnabled`：连接池预热开关（预创建 minIdle）
