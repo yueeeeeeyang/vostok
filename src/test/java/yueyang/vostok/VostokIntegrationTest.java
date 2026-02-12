@@ -37,6 +37,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -321,6 +322,36 @@ public class VostokIntegrationTest {
         Vostok.withDataSource("ds2", () -> Vostok.insert(user("DS2", 1)));
         assertEquals(0, Vostok.findAll(UserEntity.class).size());
         Vostok.withDataSource("ds2", () -> assertEquals(1, Vostok.findAll(UserEntity.class).size()));
+    }
+
+    @Test
+    void testWrapPropagatesDataSource() throws Exception {
+        String url = "jdbc:h2:mem:devkit_wrap;MODE=MySQL;DB_CLOSE_DELAY=-1";
+        try (var conn = java.sql.DriverManager.getConnection(url, "sa", "");
+             var stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE t_user (id BIGINT AUTO_INCREMENT PRIMARY KEY, user_name VARCHAR(64), age INT)");
+        }
+
+        DataSourceConfig cfg = new DataSourceConfig()
+                .url(url)
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.MYSQL);
+        Vostok.registerDataSource("ds_wrap", cfg);
+
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            CompletableFuture<Integer> future = Vostok.withDataSource("ds_wrap", () -> {
+                Vostok.insert(user("W1", 1));
+                return CompletableFuture.supplyAsync(
+                        Vostok.wrap(() -> Vostok.findAll(UserEntity.class).size()), executor
+                );
+            });
+            assertEquals(1, future.get(5, TimeUnit.SECONDS));
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test

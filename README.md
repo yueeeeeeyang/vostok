@@ -230,6 +230,18 @@ Vostok.setScanner((pkgs) -> Set.of(UserEntity.class, TaskEntity.class));
 Vostok.init(cfg, "ignored.pkg");
 ```
 
+**异步上下文传递**
+ThreadLocal 在异步/线程池场景不会自动传播，可使用 `Vostok.wrap(...)`：
+```java
+ExecutorService es = Executors.newFixedThreadPool(4);
+Vostok.withDataSource("ds2", () -> {
+    CompletableFuture<Integer> f = CompletableFuture.supplyAsync(
+            Vostok.wrap(() -> Vostok.findAll(UserEntity.class).size()), es
+    );
+    Integer count = f.get(3, TimeUnit.SECONDS);
+});
+```
+
 **配置参考（DataSourceConfig）**
 - `url` / `username` / `password` / `driver`：JDBC 基本配置
 - `dialect`：方言（可选）

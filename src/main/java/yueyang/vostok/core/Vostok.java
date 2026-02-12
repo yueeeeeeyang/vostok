@@ -9,6 +9,7 @@ import yueyang.vostok.plugin.VKInterceptor;
 import yueyang.vostok.query.VKAggregate;
 import yueyang.vostok.query.VKQuery;
 import yueyang.vostok.scan.ClassScanner;
+import yueyang.vostok.util.VKAssert;
 
 import java.util.List;
 import java.util.function.Supplier;
@@ -48,6 +49,50 @@ public final class Vostok {
 
     public static <T> T withDataSource(String name, Supplier<T> supplier) {
         return VostokBootstrap.withDataSource(name, supplier);
+    }
+
+    public static Runnable wrap(Runnable action) {
+        VKAssert.notNull(action, "Runnable is null");
+        String captured = VostokRuntime.DS_CONTEXT.get();
+        return () -> {
+            String prev = VostokRuntime.DS_CONTEXT.get();
+            if (captured == null) {
+                VostokRuntime.DS_CONTEXT.remove();
+            } else {
+                VostokRuntime.DS_CONTEXT.set(captured);
+            }
+            try {
+                action.run();
+            } finally {
+                if (prev == null) {
+                    VostokRuntime.DS_CONTEXT.remove();
+                } else {
+                    VostokRuntime.DS_CONTEXT.set(prev);
+                }
+            }
+        };
+    }
+
+    public static <T> Supplier<T> wrap(Supplier<T> supplier) {
+        VKAssert.notNull(supplier, "Supplier is null");
+        String captured = VostokRuntime.DS_CONTEXT.get();
+        return () -> {
+            String prev = VostokRuntime.DS_CONTEXT.get();
+            if (captured == null) {
+                VostokRuntime.DS_CONTEXT.remove();
+            } else {
+                VostokRuntime.DS_CONTEXT.set(captured);
+            }
+            try {
+                return supplier.get();
+            } finally {
+                if (prev == null) {
+                    VostokRuntime.DS_CONTEXT.remove();
+                } else {
+                    VostokRuntime.DS_CONTEXT.set(prev);
+                }
+            }
+        };
     }
 
     public static void registerInterceptor(VKInterceptor interceptor) {
