@@ -23,6 +23,7 @@ public class VKConnectionPool {
     private final AtomicInteger totalCount = new AtomicInteger(0);
     private final ScheduledExecutorService housekeeper;
     private final ConcurrentHashMap<Connection, ConnectionDefaults> defaults = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Connection, ConnectionState> states = new ConcurrentHashMap<>();
     private final ThreadLocal<PooledEntry> localCache = new ThreadLocal<>();
     private final ConcurrentHashMap<Thread, PooledEntry> localCacheMap = new ConcurrentHashMap<>();
     private final Semaphore permits;
@@ -274,6 +275,7 @@ public class VKConnectionPool {
         try {
             Connection conn = DriverManager.getConnection(config.getUrl(), config.getUsername(), config.getPassword());
             defaults.put(conn, captureDefaults(conn));
+            states.put(conn, new ConnectionState());
             totalCount.incrementAndGet();
             return conn;
         } catch (SQLException e) {
@@ -333,6 +335,7 @@ public class VKConnectionPool {
             // ignore
         } finally {
             defaults.remove(conn);
+            states.remove(conn);
             totalCount.decrementAndGet();
         }
     }
@@ -417,20 +420,54 @@ public class VKConnectionPool {
         if (defaults == null) {
             return;
         }
+        ConnectionState state = states.get(conn);
+        if (state == null) {
+            state = new ConnectionState(true, true, true);
+        }
         try {
-            conn.setAutoCommit(defaults.autoCommit);
+            if (state.autoCommitDirty) {
+                conn.setAutoCommit(defaults.autoCommit);
+            }
         } catch (SQLException ignore) {
             // ignore
         }
         try {
-            conn.setReadOnly(defaults.readOnly);
+            if (state.readOnlyDirty) {
+                conn.setReadOnly(defaults.readOnly);
+            }
         } catch (SQLException ignore) {
             // ignore
         }
         try {
-            conn.setTransactionIsolation(defaults.isolation);
+            if (state.isolationDirty) {
+                conn.setTransactionIsolation(defaults.isolation);
+            }
         } catch (SQLException ignore) {
             // ignore
+        }
+        if (state != null) {
+            state.reset();
+        }
+    }
+
+    void markAutoCommitDirty(Connection conn) {
+        ConnectionState state = states.get(conn);
+        if (state != null) {
+            state.autoCommitDirty = true;
+        }
+    }
+
+    void markReadOnlyDirty(Connection conn) {
+        ConnectionState state = states.get(conn);
+        if (state != null) {
+            state.readOnlyDirty = true;
+        }
+    }
+
+    void markIsolationDirty(Connection conn) {
+        ConnectionState state = states.get(conn);
+        if (state != null) {
+            state.isolationDirty = true;
         }
     }
 
@@ -469,6 +506,28 @@ public class VKConnectionPool {
             this.autoCommit = autoCommit;
             this.readOnly = readOnly;
             this.isolation = isolation;
+        }
+    }
+
+    private static class ConnectionState {
+        private volatile boolean autoCommitDirty;
+        private volatile boolean readOnlyDirty;
+        private volatile boolean isolationDirty;
+
+        private ConnectionState() {
+            this(false, false, false);
+        }
+
+        private ConnectionState(boolean autoCommitDirty, boolean readOnlyDirty, boolean isolationDirty) {
+            this.autoCommitDirty = autoCommitDirty;
+            this.readOnlyDirty = readOnlyDirty;
+            this.isolationDirty = isolationDirty;
+        }
+
+        private void reset() {
+            autoCommitDirty = false;
+            readOnlyDirty = false;
+            isolationDirty = false;
         }
     }
 }

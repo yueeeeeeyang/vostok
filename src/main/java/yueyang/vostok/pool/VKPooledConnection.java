@@ -64,6 +64,13 @@ public final class VKPooledConnection implements InvocationHandler {
             }
             return null;
         }
+        if ("setAutoCommit".equals(name) && args != null && args.length == 1) {
+            pool.markAutoCommitDirty(target);
+        } else if ("setReadOnly".equals(name) && args != null && args.length == 1) {
+            pool.markReadOnlyDirty(target);
+        } else if ("setTransactionIsolation".equals(name) && args != null && args.length == 1) {
+            pool.markIsolationDirty(target);
+        }
         if ("prepareStatement".equals(name) && args != null && args.length >= 1 && args[0] instanceof String) {
             PreparedStatement cached = getOrCreatePreparedStatement(method, args);
             if (cached != null) {
