@@ -1,0 +1,8 @@
+yueyang/vostok/Status.class
+yueyang/vostokbad/BadColumnEntity.class
+yueyang/vostok/TaskEntity.class
+yueyang/vostok/UserEntity.class
+yueyang/vostokbad/BadEntity.class
+yueyang/vostok/VostokIntegrationTest.class
+yueyang/vostok/VKRetryPolicyTest.class
+yueyang/vostok/VostokIntegrationTest$1CounterInterceptor.class

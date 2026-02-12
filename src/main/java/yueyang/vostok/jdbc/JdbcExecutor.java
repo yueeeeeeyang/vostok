@@ -1,0 +1,389 @@
+package yueyang.vostok.jdbc;
+
+import yueyang.vostok.meta.EntityMeta;
+import yueyang.vostok.meta.FieldMeta;
+import yueyang.vostok.plugin.VKInterceptor;
+import yueyang.vostok.plugin.VKInterceptorRegistry;
+import yueyang.vostok.pool.VKDataSource;
+import yueyang.vostok.tx.VKTransactionManager;
+import yueyang.vostok.type.VKTypeMapper;
+
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+
+public class JdbcExecutor {
+    private final VKDataSource dataSource;
+    private final VKSqlLogger sqlLogger;
+    private final VKSqlMetrics sqlMetrics;
+    private final VKRetryPolicy retryPolicy;
+
+    public JdbcExecutor(VKDataSource dataSource, VKSqlLogger sqlLogger, VKSqlMetrics sqlMetrics, VKRetryPolicy retryPolicy) {
+        this.dataSource = dataSource;
+        this.sqlLogger = sqlLogger;
+        this.sqlMetrics = sqlMetrics;
+        this.retryPolicy = retryPolicy;
+    }
+
+    public int executeUpdate(String sql, Object[] params) throws SQLException {
+        long start = System.currentTimeMillis();
+        sqlLogger.logSql(sql, params);
+        before(sql, params);
+        boolean success = false;
+        Throwable error = null;
+        ConnectionHolder holder = getConnection();
+        try (PreparedStatement ps = holder.conn.prepareStatement(sql)) {
+            applyQueryTimeout(ps);
+            bindParams(ps, params);
+            int count = ps.executeUpdate();
+            success = true;
+            return count;
+        } catch (SQLException e) {
+            error = e;
+            throw e;
+        } finally {
+            long cost = System.currentTimeMillis() - start;
+            sqlLogger.logSlow(sql, params, cost);
+            sqlMetrics.record(sql, params, cost);
+            after(sql, params, cost, success, error);
+            holder.closeIfNeeded();
+        }
+    }
+
+    public VKBatchResult executeBatch(String sql, List<Object[]> paramsList, boolean returnKeys) throws SQLException {
+        long start = System.currentTimeMillis();
+        sqlLogger.logSql(sql, null);
+        before(sql, null);
+        boolean success = false;
+        Throwable error = null;
+        ConnectionHolder holder = getConnection();
+        try (PreparedStatement ps = returnKeys
+                ? holder.conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)
+                : holder.conn.prepareStatement(sql)) {
+            applyQueryTimeout(ps);
+            if (paramsList != null) {
+                for (Object[] params : paramsList) {
+                    bindParams(ps, params);
+                    ps.addBatch();
+                }
+            }
+            int[] counts = ps.executeBatch();
+            List<Object> keys = null;
+            if (returnKeys) {
+                keys = new ArrayList<>();
+                try (ResultSet rs = ps.getGeneratedKeys()) {
+                    while (rs.next()) {
+                        keys.add(rs.getObject(1));
+                    }
+                }
+            }
+            success = true;
+            return new VKBatchResult(counts, keys);
+        } catch (SQLException e) {
+            error = e;
+            throw e;
+        } finally {
+            long cost = System.currentTimeMillis() - start;
+            sqlLogger.logSlow(sql, null, cost);
+            sqlMetrics.record(sql, null, cost);
+            after(sql, null, cost, success, error);
+            holder.closeIfNeeded();
+        }
+    }
+
+    public VKBatchDetailResult executeBatchDetailedFallback(String sql, List<Object[]> paramsList, boolean returnKeys) throws SQLException {
+        List<VKBatchItemResult> items = new ArrayList<>();
+        ConnectionHolder holder = getConnection();
+        try {
+            for (int i = 0; i < paramsList.size(); i++) {
+                Object[] params = paramsList.get(i);
+                final int rowIndex = i;
+                long start = System.currentTimeMillis();
+                before(sql, params);
+                boolean success = false;
+                Throwable error = null;
+                try (PreparedStatement ps = returnKeys
+                        ? holder.conn.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)
+                        : holder.conn.prepareStatement(sql)) {
+                    applyQueryTimeout(ps);
+                    bindParams(ps, params);
+                    int count = ps.executeUpdate();
+                    Object key = null;
+                    if (returnKeys) {
+                        try (ResultSet rs = ps.getGeneratedKeys()) {
+                            if (rs.next()) {
+                                key = rs.getObject(1);
+                            }
+                        }
+                    }
+                    items.add(new VKBatchItemResult(rowIndex, true, count, key, null));
+                    success = true;
+                } catch (SQLException e) {
+                    error = e;
+                    items.add(new VKBatchItemResult(rowIndex, false, 0, null, e.getMessage()));
+                } finally {
+                    long cost = System.currentTimeMillis() - start;
+                    sqlMetrics.record(sql, params, cost);
+                    after(sql, params, cost, success, error);
+                }
+            }
+        } finally {
+            holder.closeIfNeeded();
+        }
+        return new VKBatchDetailResult(items);
+    }
+
+    public Object executeInsertReturnKey(String sql, Object[] params) throws SQLException {
+        long start = System.currentTimeMillis();
+        sqlLogger.logSql(sql, params);
+        before(sql, params);
+        boolean success = false;
+        Throwable error = null;
+        ConnectionHolder holder = getConnection();
+        try (PreparedStatement ps = holder.conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
+            applyQueryTimeout(ps);
+            bindParams(ps, params);
+            ps.executeUpdate();
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                if (rs.next()) {
+                    success = true;
+                    return rs.getObject(1);
+                }
+                success = true;
+                return null;
+            }
+        } catch (SQLException e) {
+            error = e;
+            throw e;
+        } finally {
+            long cost = System.currentTimeMillis() - start;
+            sqlLogger.logSlow(sql, params, cost);
+            sqlMetrics.record(sql, params, cost);
+            after(sql, params, cost, success, error);
+            holder.closeIfNeeded();
+        }
+    }
+
+    public <T> T queryOne(EntityMeta meta, String sql, Object[] params) throws SQLException {
+        List<T> list = queryList(meta, meta.getFields(), sql, params);
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    public <T> List<T> queryList(EntityMeta meta, String sql, Object[] params) throws SQLException {
+        return queryList(meta, meta.getFields(), sql, params);
+    }
+
+    public <T> List<T> queryList(EntityMeta meta, List<FieldMeta> projection, String sql, Object[] params) throws SQLException {
+        return withRetry(sql, params, () -> {
+            long start = System.currentTimeMillis();
+            sqlLogger.logSql(sql, params);
+            before(sql, params);
+            boolean success = false;
+            Throwable error = null;
+            ConnectionHolder holder = getConnection();
+            try (PreparedStatement ps = holder.conn.prepareStatement(sql)) {
+                applyQueryTimeout(ps);
+                bindParams(ps, params);
+                try (ResultSet rs = ps.executeQuery()) {
+                    List<T> list = mapRows(meta, projection, rs);
+                    success = true;
+                    return list;
+                }
+            } catch (SQLException e) {
+                error = e;
+                throw e;
+            } finally {
+                long cost = System.currentTimeMillis() - start;
+                sqlLogger.logSlow(sql, params, cost);
+                sqlMetrics.record(sql, params, cost);
+                after(sql, params, cost, success, error);
+                holder.closeIfNeeded();
+            }
+        });
+    }
+
+    public List<Object[]> queryRows(String sql, Object[] params) throws SQLException {
+        return withRetry(sql, params, () -> {
+            long start = System.currentTimeMillis();
+            sqlLogger.logSql(sql, params);
+            before(sql, params);
+            boolean success = false;
+            Throwable error = null;
+            ConnectionHolder holder = getConnection();
+            try (PreparedStatement ps = holder.conn.prepareStatement(sql)) {
+                applyQueryTimeout(ps);
+                bindParams(ps, params);
+                try (ResultSet rs = ps.executeQuery()) {
+                    List<Object[]> rows = new ArrayList<>();
+                    int cols = rs.getMetaData().getColumnCount();
+                    while (rs.next()) {
+                        Object[] row = new Object[cols];
+                        for (int i = 0; i < cols; i++) {
+                            row[i] = rs.getObject(i + 1);
+                        }
+                        rows.add(row);
+                    }
+                    success = true;
+                    return rows;
+                }
+            } catch (SQLException e) {
+                error = e;
+                throw e;
+            } finally {
+                long cost = System.currentTimeMillis() - start;
+                sqlLogger.logSlow(sql, params, cost);
+                sqlMetrics.record(sql, params, cost);
+                after(sql, params, cost, success, error);
+                holder.closeIfNeeded();
+            }
+        });
+    }
+
+    public Object queryScalar(String sql, Object[] params) throws SQLException {
+        return withRetry(sql, params, () -> {
+            long start = System.currentTimeMillis();
+            sqlLogger.logSql(sql, params);
+            before(sql, params);
+            boolean success = false;
+            Throwable error = null;
+            ConnectionHolder holder = getConnection();
+            try (PreparedStatement ps = holder.conn.prepareStatement(sql)) {
+                applyQueryTimeout(ps);
+                bindParams(ps, params);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        success = true;
+                        return rs.getObject(1);
+                    }
+                    success = true;
+                    return null;
+                }
+            } catch (SQLException e) {
+                error = e;
+                throw e;
+            } finally {
+                long cost = System.currentTimeMillis() - start;
+                sqlLogger.logSlow(sql, params, cost);
+                sqlMetrics.record(sql, params, cost);
+                after(sql, params, cost, success, error);
+                holder.closeIfNeeded();
+            }
+        });
+    }
+
+    private <T> T withRetry(String sql, Object[] params, SqlCallable<T> callable) throws SQLException {
+        if (retryPolicy == null || !retryPolicy.isEnabled()) {
+            return callable.call();
+        }
+        int attempt = 0;
+        while (true) {
+            try {
+                return callable.call();
+            } catch (SQLException e) {
+                if (!retryPolicy.shouldRetry(e) || attempt >= retryPolicy.getMaxRetries()) {
+                    throw e;
+                }
+                attempt++;
+                long backoff = retryPolicy.backoffMs(attempt);
+                if (backoff > 0) {
+                    try {
+                        Thread.sleep(backoff);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw e;
+                    }
+                }
+            }
+        }
+    }
+
+    private void bindParams(PreparedStatement ps, Object[] params) throws SQLException {
+        if (params == null) {
+            return;
+        }
+        for (int i = 0; i < params.length; i++) {
+            Object v = VKTypeMapper.toJdbc(params[i]);
+            ps.setObject(i + 1, v);
+        }
+    }
+
+    private void applyQueryTimeout(PreparedStatement ps) throws SQLException {
+        long timeoutMs = 0L;
+        if (VKTransactionManager.inTransaction()) {
+            timeoutMs = VKTransactionManager.remainingTimeoutMs();
+        }
+        if (timeoutMs <= 0) {
+            timeoutMs = dataSource.getConfig().getQueryTimeoutMs();
+        }
+        if (timeoutMs > 0) {
+            int sec = (int) Math.max(1, (timeoutMs + 999) / 1000);
+            ps.setQueryTimeout(sec);
+        }
+    }
+
+    /**
+     * 将 ResultSet 映射为实体列表。
+     */
+    @SuppressWarnings("unchecked")
+    private <T> List<T> mapRows(EntityMeta meta, List<FieldMeta> projection, ResultSet rs) throws SQLException {
+        List<T> list = new ArrayList<>();
+        try {
+            while (rs.next()) {
+                Object obj = meta.getEntityClass().getDeclaredConstructor().newInstance();
+                for (FieldMeta field : projection) {
+                    Object value = rs.getObject(field.getColumnName());
+                    Object mapped = VKTypeMapper.fromJdbc(value, field.getField().getType());
+                    field.setValue(obj, mapped);
+                }
+                list.add((T) obj);
+            }
+        } catch (Exception e) {
+            throw new SQLException("Failed to map result set", e);
+        }
+        return list;
+    }
+
+    private void before(String sql, Object[] params) {
+        for (VKInterceptor interceptor : VKInterceptorRegistry.all()) {
+            interceptor.beforeExecute(sql, params);
+        }
+    }
+
+    private void after(String sql, Object[] params, long costMs, boolean success, Throwable error) {
+        for (VKInterceptor interceptor : VKInterceptorRegistry.all()) {
+            interceptor.afterExecute(sql, params, costMs, success, error);
+        }
+    }
+
+    private ConnectionHolder getConnection() throws SQLException {
+        if (VKTransactionManager.inTransaction()) {
+            return new ConnectionHolder(VKTransactionManager.getConnection(), true);
+        }
+        return new ConnectionHolder(dataSource.getConnection(), false);
+    }
+
+    @FunctionalInterface
+    private interface SqlCallable<T> {
+        T call() throws SQLException;
+    }
+
+    private static class ConnectionHolder {
+        private final Connection conn;
+        private final boolean inTx;
+
+        private ConnectionHolder(Connection conn, boolean inTx) {
+            this.conn = conn;
+            this.inTx = inTx;
+        }
+
+        private void closeIfNeeded() throws SQLException {
+            if (!inTx && conn != null) {
+                conn.close();
+            }
+        }
+    }
+}
