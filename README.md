@@ -230,16 +230,63 @@ Vostok.setScanner((pkgs) -> Set.of(UserEntity.class, TaskEntity.class));
 Vostok.init(cfg, "ignored.pkg");
 ```
 
-**异步上下文传递**
-ThreadLocal 在异步/线程池场景不会自动传播，可使用 `Vostok.wrap(...)`：
+**多数据源 + 异步上下文传递**
+ThreadLocal 在异步/线程池场景不会自动传播，跨线程时请使用 `Vostok.wrap(...)`。
+下面示例将多数据源与异步调用组合在一起：
 ```java
-ExecutorService es = Executors.newFixedThreadPool(4);
-Vostok.withDataSource("ds2", () -> {
-    CompletableFuture<Integer> f = CompletableFuture.supplyAsync(
+DataSourceConfig cfg = new DataSourceConfig()
+        .url("jdbc:h2:mem:devkit;MODE=MySQL;DB_CLOSE_DELAY=-1")
+        .username("sa")
+        .password("")
+        .driver("org.h2.Driver")
+        .dialect(VKDialectType.MYSQL);
+Vostok.init(cfg, "yueyang.vostok");
+
+DataSourceConfig cfg2 = new DataSourceConfig()
+        .url("jdbc:h2:mem:devkit2;MODE=MySQL;DB_CLOSE_DELAY=-1")
+        .username("sa")
+        .password("")
+        .driver("org.h2.Driver")
+        .dialect(VKDialectType.MYSQL);
+Vostok.registerDataSource("ds2", cfg2);
+
+ExecutorService es = Executors.newFixedThreadPool(2);
+
+// 主线程默认使用 default 数据源
+Vostok.insert(user("D1", 1));
+
+// 在 ds2 上异步执行，并确保上下文被正确传递
+CompletableFuture<Integer> f = Vostok.withDataSource("ds2", () -> {
+    Vostok.insert(user("D2", 2));
+    return CompletableFuture.supplyAsync(
             Vostok.wrap(() -> Vostok.findAll(UserEntity.class).size()), es
     );
-    Integer count = f.get(3, TimeUnit.SECONDS);
 });
+
+Integer ds2Count = f.get(3, TimeUnit.SECONDS);
+Integer ds1Count = Vostok.findAll(UserEntity.class).size();
+
+// ds2 只有 D2，default 只有 D1
+System.out.println("ds2 size=" + ds2Count + ", default size=" + ds1Count);
+
+es.shutdown();
+```
+
+**异步嵌套切换**
+```java
+ExecutorService es = Executors.newSingleThreadExecutor();
+Vostok.withDataSource("ds2", () -> {
+    CompletableFuture<Void> f = CompletableFuture.runAsync(Vostok.wrap(() -> {
+        // 继承 ds2
+        Vostok.insert(user("D2-A", 1));
+        // 临时切回 default
+        Vostok.withDataSource("default", () -> Vostok.insert(user("D1-A", 1)));
+        // 返回 ds2
+        Vostok.insert(user("D2-B", 2));
+    }), es);
+    f.get(3, TimeUnit.SECONDS);
+});
+es.shutdown();
 ```
 
 **配置参考（DataSourceConfig）**
