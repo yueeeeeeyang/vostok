@@ -319,6 +319,12 @@ es.shutdown();
 **全量扫描**
 如果 `Vostok.init(cfg)` 不传入包名，将扫描整个 classpath。
 
+**性能压测（连接池借还）**
+```bash
+# 可通过环境变量调整线程数与循环次数
+THREADS=64 LOOPS=5000 WARMUP=500 ./scripts/bench_pool.sh
+```
+
 **生产级注意事项**
 - 初始化线程安全：`Vostok.init(...)` 并发安全，仅首次生效。
 - 事务隔离级别恢复：事务结束后会恢复连接的原始隔离级别与只读/autoCommit 状态。

@@ -7,25 +7,34 @@ import yueyang.vostok.util.VKLog;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class VKConnectionPool {
     private final DataSourceConfig config;
-    private final ArrayBlockingQueue<PooledEntry> idleQueue;
+    private final ConcurrentLinkedQueue<PooledEntry> idleQueue;
+    private final AtomicInteger idleCount = new AtomicInteger(0);
+    private final AtomicInteger localIdleCount = new AtomicInteger(0);
     private final AtomicInteger totalCount = new AtomicInteger(0);
     private final ScheduledExecutorService housekeeper;
     private final ConcurrentHashMap<Connection, ConnectionDefaults> defaults = new ConcurrentHashMap<>();
+    private final ThreadLocal<PooledEntry> localCache = new ThreadLocal<>();
+    private final ConcurrentHashMap<Thread, PooledEntry> localCacheMap = new ConcurrentHashMap<>();
+    private final Semaphore permits;
+    private final boolean localCacheEnabled;
     private volatile String lastLeakStack;
     private volatile boolean closed;
 
     public VKConnectionPool(DataSourceConfig config) {
         this.config = config;
-        this.idleQueue = new ArrayBlockingQueue<>(config.getMaxActive());
+        this.idleQueue = new ConcurrentLinkedQueue<>();
+        this.permits = new Semaphore(config.getMaxActive());
+        this.localCacheEnabled = config.getIdleTimeoutMs() <= 0 && config.getIdleValidationIntervalMs() <= 0;
         if (config.isPreheatEnabled()) {
             preload();
         }
@@ -36,49 +45,106 @@ public class VKConnectionPool {
         for (int i = 0; i < config.getMinIdle(); i++) {
             Connection conn = createConnection();
             if (conn != null) {
-                idleQueue.offer(new PooledEntry(conn, System.currentTimeMillis()));
+                if (idleQueue.offer(new PooledEntry(conn, System.currentTimeMillis()))) {
+                    idleCount.incrementAndGet();
+                }
             }
         }
     }
 
     public Connection borrow() throws SQLException {
         VKAssert.isTrue(!closed, "Connection pool is closed");
-
+        long timeoutMs = config.getMaxWaitMs();
+        long deadline = timeoutMs > 0 ? System.currentTimeMillis() + timeoutMs : Long.MAX_VALUE;
+        boolean acquired = false;
         while (true) {
-            PooledEntry entry = idleQueue.poll();
+            long waitMs = timeoutMs > 0 ? Math.max(0L, deadline - System.currentTimeMillis()) : 0L;
+            try {
+                if (timeoutMs > 0) {
+                    acquired = permits.tryAcquire(waitMs, TimeUnit.MILLISECONDS);
+                } else {
+                    permits.acquire();
+                    acquired = true;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new SQLException("Interrupted while waiting for a connection", e);
+            }
+            if (!acquired) {
+                throw new SQLException("Timeout waiting for a connection");
+            }
+
+            PooledEntry entry;
+            if (localCacheEnabled) {
+                entry = localCache.get();
+                if (entry != null) {
+                    localCache.remove();
+                    if (localCacheMap.remove(Thread.currentThread(), entry)) {
+                        localIdleCount.decrementAndGet();
+                    }
+                    if (isIdleExpired(entry)) {
+                        closeSilently(entry.conn);
+                        continue;
+                    }
+                    try {
+                        return validate(entry.conn);
+                    } catch (SQLException e) {
+                        permits.release();
+                        throw e;
+                    }
+                }
+            }
+
+            entry = idleQueue.poll();
             if (entry != null) {
+                idleCount.decrementAndGet();
                 if (isIdleExpired(entry)) {
                     closeSilently(entry.conn);
                     continue;
                 }
-                return validate(entry.conn);
+                try {
+                    return validate(entry.conn);
+                } catch (SQLException e) {
+                    permits.release();
+                    throw e;
+                }
             }
 
             if (totalCount.get() < config.getMaxActive()) {
                 Connection created = createConnection();
                 if (created != null) {
-                    return created;
+                    try {
+                        return validate(created);
+                    } catch (SQLException e) {
+                        permits.release();
+                        throw e;
+                    }
                 }
+                permits.release();
                 throw new SQLException("Failed to create connection");
             }
 
-            try {
-                entry = idleQueue.poll(config.getMaxWaitMs(), TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new SQLException("Interrupted while waiting for a connection", e);
+            if (localCacheEnabled) {
+                PooledEntry stolen = stealLocalCache();
+                if (stolen != null) {
+                    if (isIdleExpired(stolen)) {
+                        closeSilently(stolen.conn);
+                        continue;
+                    }
+                    try {
+                        return validate(stolen.conn);
+                    } catch (SQLException e) {
+                        permits.release();
+                        throw e;
+                    }
+                }
             }
 
-            if (entry == null) {
+            permits.release();
+            // no idle and at max, retry until timeout
+            if (timeoutMs > 0 && System.currentTimeMillis() >= deadline) {
                 throw new SQLException("Timeout waiting for a connection");
             }
-
-            if (isIdleExpired(entry)) {
-                closeSilently(entry.conn);
-                continue;
-            }
-
-            return validate(entry.conn);
         }
     }
 
@@ -92,6 +158,7 @@ public class VKConnectionPool {
         }
         if (closed) {
             closeSilently(conn);
+            permits.release();
             return;
         }
         detectLeak(checkoutAt, checkoutStack);
@@ -102,17 +169,40 @@ public class VKConnectionPool {
             try {
                 if (!validateConnection(conn)) {
                     closeSilently(conn);
+                    permits.release();
                     return;
                 }
             } catch (SQLException e) {
                 closeSilently(conn);
+                permits.release();
                 return;
             }
         }
-
-        if (!idleQueue.offer(new PooledEntry(conn, System.currentTimeMillis()))) {
-            closeSilently(conn);
+        PooledEntry entry = new PooledEntry(conn, System.currentTimeMillis());
+        if (!localCacheEnabled || permits.getQueueLength() > 0) {
+            if (idleQueue.offer(entry)) {
+                idleCount.incrementAndGet();
+            } else {
+                closeSilently(conn);
+            }
+        } else {
+            PooledEntry cached = localCache.get();
+            if (cached != null) {
+                localCache.remove();
+                if (localCacheMap.remove(Thread.currentThread(), cached)) {
+                    localIdleCount.decrementAndGet();
+                }
+                if (idleQueue.offer(cached)) {
+                    idleCount.incrementAndGet();
+                } else {
+                    closeSilently(cached.conn);
+                }
+            }
+            localCache.set(entry);
+            localCacheMap.put(Thread.currentThread(), entry);
+            localIdleCount.incrementAndGet();
         }
+        permits.release();
     }
 
     private Connection validate(Connection conn) throws SQLException {
@@ -197,12 +287,19 @@ public class VKConnectionPool {
         if (housekeeper != null) {
             housekeeper.shutdownNow();
         }
-        while (!idleQueue.isEmpty()) {
+        while (true) {
             PooledEntry entry = idleQueue.poll();
-            if (entry != null) {
-                closeSilently(entry.conn);
+            if (entry == null) {
+                break;
             }
+            idleCount.decrementAndGet();
+            closeSilently(entry.conn);
         }
+        for (PooledEntry entry : localCacheMap.values()) {
+            closeSilently(entry.conn);
+        }
+        localCacheMap.clear();
+        localIdleCount.set(0);
     }
 
     public DataSourceConfig getConfig() {
@@ -218,11 +315,12 @@ public class VKConnectionPool {
     }
 
     public int getIdleCount() {
-        return idleQueue.size();
+        return idleCount.get() + (localCacheEnabled ? localIdleCount.get() : 0);
     }
 
     public int getActiveCount() {
-        return Math.max(0, totalCount.get() - idleQueue.size());
+        int active = config.getMaxActive() - permits.availablePermits();
+        return Math.max(0, active);
     }
 
     private void closeSilently(Connection conn) {
@@ -257,12 +355,13 @@ public class VKConnectionPool {
         if (closed) {
             return;
         }
-        int size = idleQueue.size();
+        int size = idleCount.get();
         for (int i = 0; i < size; i++) {
             PooledEntry entry = idleQueue.poll();
             if (entry == null) {
                 break;
             }
+            idleCount.decrementAndGet();
             if (isIdleExpired(entry)) {
                 closeSilently(entry.conn);
                 continue;
@@ -276,7 +375,9 @@ public class VKConnectionPool {
                 closeSilently(entry.conn);
                 continue;
             }
-            idleQueue.offer(new PooledEntry(entry.conn, System.currentTimeMillis()));
+            if (idleQueue.offer(new PooledEntry(entry.conn, System.currentTimeMillis()))) {
+                idleCount.incrementAndGet();
+            }
         }
         ensureMinIdle();
     }
@@ -286,14 +387,16 @@ public class VKConnectionPool {
         if (minIdle <= 0) {
             return;
         }
-        int need = minIdle - idleQueue.size();
+        int need = minIdle - idleCount.get();
         for (int i = 0; i < need; i++) {
             if (totalCount.get() >= config.getMaxActive()) {
                 return;
             }
             Connection conn = createConnection();
             if (conn != null) {
-                idleQueue.offer(new PooledEntry(conn, System.currentTimeMillis()));
+                if (idleQueue.offer(new PooledEntry(conn, System.currentTimeMillis()))) {
+                    idleCount.incrementAndGet();
+                }
             }
         }
     }
@@ -335,6 +438,22 @@ public class VKConnectionPool {
         } catch (SQLException ignore) {
             // ignore
         }
+    }
+
+    private PooledEntry stealLocalCache() {
+        for (var entry : localCacheMap.entrySet()) {
+            Thread owner = entry.getKey();
+            PooledEntry cached = entry.getValue();
+            if (cached == null) {
+                localCacheMap.remove(owner);
+                continue;
+            }
+            if (localCacheMap.remove(owner, cached)) {
+                localIdleCount.decrementAndGet();
+                return cached;
+            }
+        }
+        return null;
     }
 
     private static class PooledEntry {
