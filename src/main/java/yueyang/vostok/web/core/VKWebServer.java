@@ -66,7 +66,6 @@ public final class VKWebServer {
             reactor = new VKReactor(this, selector, serverChannel, workers, router, middlewares, errorHandler,
                     new VKHttpParser(config.getMaxHeaderBytes(), config.getMaxBodyBytes()), bufferPool);
             reactorThread = new Thread(reactor, "vostok-web-reactor");
-            reactorThread.setDaemon(true);
             reactorThread.start();
             started = true;
         } catch (IOException e) {

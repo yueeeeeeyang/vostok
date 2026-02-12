@@ -69,16 +69,20 @@ final class VKReactor implements Runnable {
                     if (!key.isValid()) {
                         continue;
                     }
-                    if (key.isAcceptable()) {
-                        onAccept();
-                    } else {
-                        VKConn conn = (VKConn) key.attachment();
-                        if (key.isReadable()) {
-                            conn.onRead();
+                    try {
+                        if (key.isAcceptable()) {
+                            onAccept();
+                        } else {
+                            VKConn conn = (VKConn) key.attachment();
+                            if (key.isReadable()) {
+                                conn.onRead();
+                            }
+                            if (key.isWritable()) {
+                                conn.onWrite();
+                            }
                         }
-                        if (key.isWritable()) {
-                            conn.onWrite();
-                        }
+                    } catch (java.nio.channels.CancelledKeyException e) {
+                        // key cancelled during processing, ignore
                     }
                 }
             } catch (java.nio.channels.ClosedSelectorException e) {
