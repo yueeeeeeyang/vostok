@@ -418,23 +418,17 @@ public class VKConnectionPool {
             return;
         }
         try {
-            if (conn.getAutoCommit() != defaults.autoCommit) {
-                conn.setAutoCommit(defaults.autoCommit);
-            }
+            conn.setAutoCommit(defaults.autoCommit);
         } catch (SQLException ignore) {
             // ignore
         }
         try {
-            if (conn.isReadOnly() != defaults.readOnly) {
-                conn.setReadOnly(defaults.readOnly);
-            }
+            conn.setReadOnly(defaults.readOnly);
         } catch (SQLException ignore) {
             // ignore
         }
         try {
-            if (conn.getTransactionIsolation() != defaults.isolation) {
-                conn.setTransactionIsolation(defaults.isolation);
-            }
+            conn.setTransactionIsolation(defaults.isolation);
         } catch (SQLException ignore) {
             // ignore
         }
