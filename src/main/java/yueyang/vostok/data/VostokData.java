@@ -1,8 +1,13 @@
-package yueyang.vostok.data.core;
+package yueyang.vostok.data;
 
 import yueyang.vostok.data.config.DataSourceConfig;
 import yueyang.vostok.data.config.VKTxIsolation;
 import yueyang.vostok.data.config.VKTxPropagation;
+import yueyang.vostok.data.core.VostokAdminOps;
+import yueyang.vostok.data.core.VostokBootstrap;
+import yueyang.vostok.data.core.VostokContext;
+import yueyang.vostok.data.core.VostokCrudOps;
+import yueyang.vostok.data.core.VostokTxOps;
 import yueyang.vostok.data.jdbc.VKBatchDetailResult;
 import yueyang.vostok.data.pool.VKPoolMetrics;
 import yueyang.vostok.data.plugin.VKInterceptor;

@@ -11,11 +11,11 @@ import java.util.List;
 /**
  * 管理与诊断相关操作。
  */
-final class VostokAdminOps {
+public final class VostokAdminOps {
     private VostokAdminOps() {
     }
 
-    static List<VKPoolMetrics> poolMetrics() {
+    public static List<VKPoolMetrics> poolMetrics() {
         VostokInternal.ensureInit();
         List<VKPoolMetrics> list = new ArrayList<>();
         for (VKDataSourceHolder holder : VKDataSourceRegistry.allHolders().values()) {
@@ -25,7 +25,7 @@ final class VostokAdminOps {
         return list;
     }
 
-    static String report() {
+    public static String report() {
         VostokInternal.ensureInit();
         StringBuilder sb = new StringBuilder();
         sb.append("Vostok Report\n");

@@ -19,11 +19,11 @@ import java.util.function.Supplier;
 /**
  * 初始化与运行期管理。
  */
-final class VostokBootstrap {
+public final class VostokBootstrap {
     private VostokBootstrap() {
     }
 
-    static void init(DataSourceConfig config, String... basePackages) {
+    public static void init(DataSourceConfig config, String... basePackages) {
         if (VostokRuntime.initialized) {
             return;
         }
@@ -66,7 +66,7 @@ final class VostokBootstrap {
         }
     }
 
-    static void registerDataSource(String name, DataSourceConfig config) {
+    public static void registerDataSource(String name, DataSourceConfig config) {
         VostokInternal.ensureInit();
         VostokInternal.validateConfig(config);
         VKDataSourceRegistry.register(name, config);
@@ -76,11 +76,11 @@ final class VostokBootstrap {
         }
     }
 
-    static void refreshMeta() {
+    public static void refreshMeta() {
         refreshMeta(VostokRuntime.initPackages);
     }
 
-    static void refreshMeta(String... basePackages) {
+    public static void refreshMeta(String... basePackages) {
         VostokInternal.ensureInit();
         Set<Class<?>> classes = VostokRuntime.SCANNER.scan(basePackages);
         MetaRegistry.refreshAll(classes, VKDataSourceRegistry.all().entrySet().stream()
@@ -90,12 +90,12 @@ final class VostokBootstrap {
         }
     }
 
-    static void setScanner(ClassScanner.EntityScanner scanner) {
+    public static void setScanner(ClassScanner.EntityScanner scanner) {
         VKAssert.notNull(scanner, "EntityScanner is null");
         VostokRuntime.SCANNER = scanner;
     }
 
-    static void withDataSource(String name, Runnable action) {
+    public static void withDataSource(String name, Runnable action) {
         String prev = VostokRuntime.DS_CONTEXT.get();
         VostokRuntime.DS_CONTEXT.set(name);
         try {
@@ -109,7 +109,7 @@ final class VostokBootstrap {
         }
     }
 
-    static <T> T withDataSource(String name, Supplier<T> supplier) {
+    public static <T> T withDataSource(String name, Supplier<T> supplier) {
         String prev = VostokRuntime.DS_CONTEXT.get();
         VostokRuntime.DS_CONTEXT.set(name);
         try {
@@ -123,31 +123,31 @@ final class VostokBootstrap {
         }
     }
 
-    static void registerInterceptor(VKInterceptor interceptor) {
+    public static void registerInterceptor(VKInterceptor interceptor) {
         VKInterceptorRegistry.register(interceptor);
     }
 
-    static void registerRawSql(String... sqls) {
+    public static void registerRawSql(String... sqls) {
         VKSqlWhitelist.registerRaw(sqls);
     }
 
-    static void registerRawSql(String dataSourceName, String[] sqls) {
+    public static void registerRawSql(String dataSourceName, String[] sqls) {
         VKSqlWhitelist.registerRaw(dataSourceName, sqls);
     }
 
-    static void registerSubquery(String... sqls) {
+    public static void registerSubquery(String... sqls) {
         VKSqlWhitelist.registerSubquery(sqls);
     }
 
-    static void registerSubquery(String dataSourceName, String[] sqls) {
+    public static void registerSubquery(String dataSourceName, String[] sqls) {
         VKSqlWhitelist.registerSubquery(dataSourceName, sqls);
     }
 
-    static void clearInterceptors() {
+    public static void clearInterceptors() {
         VKInterceptorRegistry.clear();
     }
 
-    static void close() {
+    public static void close() {
         synchronized (VostokRuntime.LOCK) {
             VKDataSourceRegistry.clear();
             MetaRegistry.clear();

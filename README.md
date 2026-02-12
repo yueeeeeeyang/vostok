@@ -1,27 +1,19 @@
 # Vostok
 
-JDK 17+ 纯 JDBC 的零依赖 CRUD 组件（测试依赖除外），提供注解实体、SQL 构建、事务、连接池、方言、多数据源、批处理、监控与插件等能力。
+Vostok 是一个面向 JDK 17+ 的全能框架，当前包含高性能数据访问（Data）与轻量 Web 服务器（Web）两大模块，整体保持零依赖（测试依赖除外）。
 
 **重要提醒**
 当前项目仅用于实验和技术验证，不建议用于生产环境。
 
-**核心特性**
-- 注解实体即 CRUD（`@VKEntity` / `@VKId` / `@VKColumn` / `@VKIgnore`）
-- 轻量连接池（预热、空闲回收、泄露检测、预编译缓存）
-- 事务传播、隔离级别、只读、超时与保存点
-- 条件查询 / 排序 / 分页 / 投影 / 聚合
-- SQL 日志、慢 SQL、耗时分布与 TopN
-- EXISTS / IN / NOT IN 子查询
-- 多数据源切换与上下文传播
-- DDL 校验（可选）
-- 插件拦截器
-- 元数据热更新
+**模块一览**
+- Data：纯 JDBC 的零依赖 ORM/CRUD 组件，内建连接池、事务、SQL 构建与多数据源。
+- Web：轻量高性能 Web 服务器，支持中间件与基础路由。
 
 **运行环境**
 - JDK 17+
 - 纯 JDBC（生产环境需自行提供数据库驱动）
 
-**快速上手**
+**Data 快速上手**
 ```java
 import yueyang.vostok.data.annotation.*;
 import yueyang.vostok.data.config.*;
@@ -52,6 +44,32 @@ DataSourceConfig cfg = new DataSourceConfig()
 
 Vostok.Data.init(cfg, "com.example.entity");
 ```
+
+**Web 快速上手**
+```java
+import yueyang.vostok.Vostok;
+
+Vostok.Web.init(8080)
+    .get("/ping", (req, res) -> res.text("ok"))
+    .get("/json", (req, res) -> res.json("{\"ok\":true}"))
+    .post("/echo", (req, res) -> res.text(req.bodyText()));
+
+Vostok.Web.start();
+```
+
+**Data 模块**
+
+**核心特性**
+- 注解实体即 CRUD（`@VKEntity` / `@VKId` / `@VKColumn` / `@VKIgnore`）
+- 轻量连接池（预热、空闲回收、泄露检测、预编译缓存）
+- 事务传播、隔离级别、只读、超时与保存点
+- 条件查询 / 排序 / 分页 / 投影 / 聚合
+- SQL 日志、慢 SQL、耗时分布与 TopN
+- EXISTS / IN / NOT IN 子查询
+- 多数据源切换与上下文传播
+- DDL 校验（可选）
+- 插件拦截器
+- 元数据热更新
 
 **实体定义**
 ```java
@@ -357,3 +375,13 @@ Vostok.Data.init(cfg, "ignored.pkg");
 
 **全量扫描**
 如果 `Vostok.Data.init(cfg)` 不传入包名，将扫描整个 classpath。
+
+**Web 模块**
+
+**核心特性**
+- 纯 Java NIO Reactor 模式，低开销高并发
+- 路由 + 中间件链
+- 支持 Keep-Alive 与基础错误处理
+
+**使用方式**
+见上方 **Web 快速上手** 示例。

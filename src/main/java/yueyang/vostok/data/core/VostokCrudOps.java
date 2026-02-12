@@ -26,11 +26,11 @@ import java.util.List;
 /**
  * CRUD / 查询相关操作。
  */
-final class VostokCrudOps {
+public final class VostokCrudOps {
     private VostokCrudOps() {
     }
 
-    static int insert(Object entity) {
+    public static int insert(Object entity) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entity, "Entity is null");
         EntityMeta meta = MetaRegistry.get(entity.getClass());
@@ -48,11 +48,11 @@ final class VostokCrudOps {
         return VostokInternal.executeUpdate(sp);
     }
 
-    static int batchInsert(List<?> entities) {
+    public static int batchInsert(List<?> entities) {
         return batchInsertDetail(entities).totalSuccess();
     }
 
-    static VKBatchDetailResult batchInsertDetail(List<?> entities) {
+    public static VKBatchDetailResult batchInsertDetail(List<?> entities) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entities, "Entities is null");
         VKAssert.isTrue(!entities.isEmpty(), "Entities is empty");
@@ -112,7 +112,7 @@ final class VostokCrudOps {
         return new VKBatchDetailResult(items);
     }
 
-    static int update(Object entity) {
+    public static int update(Object entity) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entity, "Entity is null");
         EntityMeta meta = MetaRegistry.get(entity.getClass());
@@ -120,11 +120,11 @@ final class VostokCrudOps {
         return VostokInternal.executeUpdate(new SqlAndParams(tpl.getSql(), tpl.bindEntity(entity)));
     }
 
-    static int batchUpdate(List<?> entities) {
+    public static int batchUpdate(List<?> entities) {
         return batchUpdateDetail(entities).totalSuccess();
     }
 
-    static VKBatchDetailResult batchUpdateDetail(List<?> entities) {
+    public static VKBatchDetailResult batchUpdateDetail(List<?> entities) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entities, "Entities is null");
         VKAssert.isTrue(!entities.isEmpty(), "Entities is empty");
@@ -176,7 +176,7 @@ final class VostokCrudOps {
         return new VKBatchDetailResult(items);
     }
 
-    static int delete(Class<?> entityClass, Object idValue) {
+    public static int delete(Class<?> entityClass, Object idValue) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         EntityMeta meta = MetaRegistry.get(entityClass);
@@ -184,11 +184,11 @@ final class VostokCrudOps {
         return VostokInternal.executeUpdate(new SqlAndParams(tpl.getSql(), tpl.bindId(idValue)));
     }
 
-    static int batchDelete(Class<?> entityClass, List<?> idValues) {
+    public static int batchDelete(Class<?> entityClass, List<?> idValues) {
         return batchDeleteDetail(entityClass, idValues).totalSuccess();
     }
 
-    static VKBatchDetailResult batchDeleteDetail(Class<?> entityClass, List<?> idValues) {
+    public static VKBatchDetailResult batchDeleteDetail(Class<?> entityClass, List<?> idValues) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         VKAssert.notNull(idValues, "Id list is null");
@@ -215,7 +215,7 @@ final class VostokCrudOps {
         return new VKBatchDetailResult(items);
     }
 
-    static <T> T findById(Class<T> entityClass, Object idValue) {
+    public static <T> T findById(Class<T> entityClass, Object idValue) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         EntityMeta meta = MetaRegistry.get(entityClass);
@@ -223,7 +223,7 @@ final class VostokCrudOps {
         return VostokInternal.executeQueryOne(meta, new SqlAndParams(tpl.getSql(), tpl.bindId(idValue)));
     }
 
-    static <T> List<T> findAll(Class<T> entityClass) {
+    public static <T> List<T> findAll(Class<T> entityClass) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         EntityMeta meta = MetaRegistry.get(entityClass);
@@ -231,7 +231,7 @@ final class VostokCrudOps {
         return VostokInternal.executeQueryList(meta, new SqlAndParams(tpl.getSql(), new Object[0]));
     }
 
-    static <T> List<T> query(Class<T> entityClass, VKQuery query) {
+    public static <T> List<T> query(Class<T> entityClass, VKQuery query) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         EntityMeta meta = MetaRegistry.get(entityClass);
@@ -239,7 +239,7 @@ final class VostokCrudOps {
         return VostokInternal.executeQueryList(meta, sp);
     }
 
-    static <T> List<T> queryColumns(Class<T> entityClass, VKQuery query, String... fields) {
+    public static <T> List<T> queryColumns(Class<T> entityClass, VKQuery query, String... fields) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         VKAssert.notNull(fields, "Fields is null");
@@ -261,7 +261,7 @@ final class VostokCrudOps {
         }
     }
 
-    static List<Object[]> aggregate(Class<?> entityClass, VKQuery query, VKAggregate... aggregates) {
+    public static List<Object[]> aggregate(Class<?> entityClass, VKQuery query, VKAggregate... aggregates) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         VKAssert.notNull(query, "Query is null");
@@ -275,7 +275,7 @@ final class VostokCrudOps {
         }
     }
 
-    static long count(Class<?> entityClass, VKQuery query) {
+    public static long count(Class<?> entityClass, VKQuery query) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         EntityMeta meta = MetaRegistry.get(entityClass);

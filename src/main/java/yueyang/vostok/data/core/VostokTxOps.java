@@ -10,19 +10,19 @@ import java.util.function.Supplier;
 /**
  * 事务相关操作。
  */
-final class VostokTxOps {
+public final class VostokTxOps {
     private VostokTxOps() {
     }
 
-    static void tx(Runnable action) {
+    public static void tx(Runnable action) {
         tx(action, VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT, false);
     }
 
-    static void tx(Runnable action, VKTxPropagation propagation, VKTxIsolation isolation) {
+    public static void tx(Runnable action, VKTxPropagation propagation, VKTxIsolation isolation) {
         tx(action, propagation, isolation, false);
     }
 
-    static void tx(Runnable action, VKTxPropagation propagation, VKTxIsolation isolation, boolean readOnly) {
+    public static void tx(Runnable action, VKTxPropagation propagation, VKTxIsolation isolation, boolean readOnly) {
         VostokInternal.ensureInit();
         VKAssert.notNull(action, "Transaction action is null");
         boolean started = false;
@@ -39,15 +39,15 @@ final class VostokTxOps {
         }
     }
 
-    static <T> T tx(Supplier<T> supplier) {
+    public static <T> T tx(Supplier<T> supplier) {
         return tx(supplier, VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT, false);
     }
 
-    static <T> T tx(Supplier<T> supplier, VKTxPropagation propagation, VKTxIsolation isolation) {
+    public static <T> T tx(Supplier<T> supplier, VKTxPropagation propagation, VKTxIsolation isolation) {
         return tx(supplier, propagation, isolation, false);
     }
 
-    static <T> T tx(Supplier<T> supplier, VKTxPropagation propagation, VKTxIsolation isolation, boolean readOnly) {
+    public static <T> T tx(Supplier<T> supplier, VKTxPropagation propagation, VKTxIsolation isolation, boolean readOnly) {
         VostokInternal.ensureInit();
         VKAssert.notNull(supplier, "Transaction supplier is null");
         boolean started = false;
@@ -65,15 +65,15 @@ final class VostokTxOps {
         }
     }
 
-    static void beginTx() {
+    public static void beginTx() {
         beginTx(VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT, false);
     }
 
-    static void beginTx(VKTxPropagation propagation, VKTxIsolation isolation) {
+    public static void beginTx(VKTxPropagation propagation, VKTxIsolation isolation) {
         beginTx(propagation, isolation, false);
     }
 
-    static void beginTx(VKTxPropagation propagation, VKTxIsolation isolation, boolean readOnly) {
+    public static void beginTx(VKTxPropagation propagation, VKTxIsolation isolation, boolean readOnly) {
         VostokInternal.ensureInit();
         VKAssert.notNull(propagation, "TxPropagation is null");
         VKAssert.notNull(isolation, "TxIsolation is null");
@@ -86,12 +86,12 @@ final class VostokTxOps {
         }
     }
 
-    static void commitTx() {
+    public static void commitTx() {
         VostokInternal.ensureInit();
         VKTransactionManager.commit();
     }
 
-    static void rollbackTx() {
+    public static void rollbackTx() {
         VostokInternal.ensureInit();
         VKTransactionManager.rollback();
     }
