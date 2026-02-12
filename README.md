@@ -135,6 +135,8 @@ Vostok.tx(() -> {
     Vostok.findAll(User.class);
 }, VKTxPropagation.SUPPORTS, VKTxIsolation.DEFAULT, true);
 ```
+注意：事务上下文仅限当前线程，异步线程不会自动传播事务。
+异步场景请在新线程内自行使用 `Vostok.tx(...)` 开启事务。
 
 **Savepoint（默认开启）**
 ```java
