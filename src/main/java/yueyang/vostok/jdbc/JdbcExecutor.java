@@ -169,8 +169,37 @@ public class JdbcExecutor {
     }
 
     public <T> T queryOne(EntityMeta meta, String sql, Object[] params) throws SQLException {
-        List<T> list = queryList(meta, meta.getFields(), sql, params);
-        return list.isEmpty() ? null : list.get(0);
+        return withRetry(sql, params, () -> {
+            long start = System.currentTimeMillis();
+            sqlLogger.logSql(sql, params);
+            before(sql, params);
+            boolean success = false;
+            Throwable error = null;
+            ConnectionHolder holder = getConnection();
+            try (PreparedStatement ps = holder.conn.prepareStatement(sql)) {
+                applyQueryTimeout(ps);
+                bindParams(ps, params);
+                try (ResultSet rs = ps.executeQuery()) {
+                    if (!rs.next()) {
+                        success = true;
+                        return null;
+                    }
+                    int[] indexes = resolveColumnIndexes(rs, meta.getFields());
+                    T row = mapRow(meta, meta.getFields(), rs, indexes);
+                    success = true;
+                    return row;
+                }
+            } catch (SQLException e) {
+                error = e;
+                throw e;
+            } finally {
+                long cost = System.currentTimeMillis() - start;
+                sqlLogger.logSlow(sql, params, cost);
+                sqlMetrics.record(sql, params, cost);
+                after(sql, params, cost, success, error);
+                holder.closeIfNeeded();
+            }
+        });
     }
 
     public <T> List<T> queryList(EntityMeta meta, String sql, Object[] params) throws SQLException {
@@ -307,7 +336,34 @@ public class JdbcExecutor {
         }
         for (int i = 0; i < params.length; i++) {
             Object v = VKTypeMapper.toJdbc(params[i]);
-            ps.setObject(i + 1, v);
+            int idx = i + 1;
+            if (v == null) {
+                ps.setObject(idx, null);
+            } else if (v instanceof Integer) {
+                ps.setInt(idx, (Integer) v);
+            } else if (v instanceof Long) {
+                ps.setLong(idx, (Long) v);
+            } else if (v instanceof String) {
+                ps.setString(idx, (String) v);
+            } else if (v instanceof Boolean) {
+                ps.setBoolean(idx, (Boolean) v);
+            } else if (v instanceof Short) {
+                ps.setShort(idx, (Short) v);
+            } else if (v instanceof Byte) {
+                ps.setByte(idx, (Byte) v);
+            } else if (v instanceof Float) {
+                ps.setFloat(idx, (Float) v);
+            } else if (v instanceof Double) {
+                ps.setDouble(idx, (Double) v);
+            } else if (v instanceof java.math.BigDecimal) {
+                ps.setBigDecimal(idx, (java.math.BigDecimal) v);
+            } else if (v instanceof java.sql.Timestamp) {
+                ps.setTimestamp(idx, (java.sql.Timestamp) v);
+            } else if (v instanceof java.sql.Date) {
+                ps.setDate(idx, (java.sql.Date) v);
+            } else {
+                ps.setObject(idx, v);
+            }
         }
     }
 
@@ -332,19 +388,44 @@ public class JdbcExecutor {
     private <T> List<T> mapRows(EntityMeta meta, List<FieldMeta> projection, ResultSet rs) throws SQLException {
         List<T> list = new ArrayList<>();
         try {
+            int[] indexes = resolveColumnIndexes(rs, projection);
             while (rs.next()) {
-                Object obj = meta.getEntityClass().getDeclaredConstructor().newInstance();
-                for (FieldMeta field : projection) {
-                    Object value = rs.getObject(field.getColumnName());
-                    Object mapped = VKTypeMapper.fromJdbc(value, field.getField().getType());
-                    field.setValue(obj, mapped);
-                }
-                list.add((T) obj);
+                list.add(mapRow(meta, projection, rs, indexes));
             }
         } catch (Exception e) {
             throw new SQLException("Failed to map result set", e);
         }
         return list;
+    }
+
+    @SuppressWarnings("unchecked")
+    private <T> T mapRow(EntityMeta meta, List<FieldMeta> projection, ResultSet rs, int[] indexes) throws SQLException {
+        try {
+            Object obj = meta.getEntityClass().getDeclaredConstructor().newInstance();
+            for (int i = 0; i < projection.size(); i++) {
+                FieldMeta field = projection.get(i);
+                Object value = rs.getObject(indexes[i]);
+                Object mapped = VKTypeMapper.fromJdbc(value, field.getField().getType());
+                field.setValue(obj, mapped);
+            }
+            return (T) obj;
+        } catch (Exception e) {
+            throw new SQLException("Failed to map result set", e);
+        }
+    }
+
+    private int[] resolveColumnIndexes(ResultSet rs, List<FieldMeta> projection) throws SQLException {
+        int size = projection.size();
+        int[] indexes = new int[size];
+        for (int i = 0; i < size; i++) {
+            String column = projection.get(i).getColumnName();
+            try {
+                indexes[i] = rs.findColumn(column);
+            } catch (SQLException ignore) {
+                indexes[i] = i + 1;
+            }
+        }
+        return indexes;
     }
 
     private void before(String sql, Object[] params) {

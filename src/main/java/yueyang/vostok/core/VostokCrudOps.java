@@ -15,6 +15,7 @@ import yueyang.vostok.sql.SqlAndParams;
 import yueyang.vostok.sql.SqlBuilder;
 import yueyang.vostok.sql.SqlTemplate;
 import yueyang.vostok.sql.SqlTemplateType;
+import yueyang.vostok.tx.VKTransactionManager;
 import yueyang.vostok.util.VKAssert;
 
 import java.sql.SQLException;
@@ -56,6 +57,14 @@ final class VostokCrudOps {
         VKAssert.notNull(entities, "Entities is null");
         VKAssert.isTrue(!entities.isEmpty(), "Entities is empty");
 
+        if (!VKTransactionManager.inTransaction()) {
+            return VostokTxOps.tx(() -> batchInsertDetailInternal(entities), yueyang.vostok.config.VKTxPropagation.REQUIRED,
+                    yueyang.vostok.config.VKTxIsolation.DEFAULT, false);
+        }
+        return batchInsertDetailInternal(entities);
+    }
+
+    private static VKBatchDetailResult batchInsertDetailInternal(List<?> entities) {
         Class<?> entityClass = entities.get(0).getClass();
         EntityMeta meta = MetaRegistry.get(entityClass);
         SqlTemplate tpl = VostokInternal.currentTemplateCache().get(meta, SqlTemplateType.INSERT);
@@ -120,6 +129,14 @@ final class VostokCrudOps {
         VKAssert.notNull(entities, "Entities is null");
         VKAssert.isTrue(!entities.isEmpty(), "Entities is empty");
 
+        if (!VKTransactionManager.inTransaction()) {
+            return VostokTxOps.tx(() -> batchUpdateDetailInternal(entities), yueyang.vostok.config.VKTxPropagation.REQUIRED,
+                    yueyang.vostok.config.VKTxIsolation.DEFAULT, false);
+        }
+        return batchUpdateDetailInternal(entities);
+    }
+
+    private static VKBatchDetailResult batchUpdateDetailInternal(List<?> entities) {
         Class<?> entityClass = entities.get(0).getClass();
         EntityMeta meta = MetaRegistry.get(entityClass);
         SqlTemplate tpl = VostokInternal.currentTemplateCache().get(meta, SqlTemplateType.UPDATE);
