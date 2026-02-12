@@ -54,16 +54,25 @@ public final class ClassScanner {
             return result;
         }
 
+        boolean found = false;
         for (String pkg : prefixes) {
             String path = pkg.replace('.', '/');
             try {
                 Enumeration<URL> urls = cl.getResources(path);
                 while (urls.hasMoreElements()) {
                     URL url = urls.nextElement();
+                    found = true;
                     String protocol = url.getProtocol();
                     if ("file".equals(protocol)) {
                         Path dir = Path.of(url.toURI());
-                        scanDirectory(dir, dir, prefixes, result);
+                        Path root = dir;
+                        String[] parts = pkg.split("\\.");
+                        for (int i = 0; i < parts.length; i++) {
+                            if (root.getParent() != null) {
+                                root = root.getParent();
+                            }
+                        }
+                        scanDirectory(root, dir, prefixes, result);
                     } else if ("jar".equals(protocol)) {
                         JarURLConnection conn = (JarURLConnection) url.openConnection();
                         File jar = new File(conn.getJarFile().getName());
@@ -75,6 +84,9 @@ public final class ClassScanner {
             } catch (Exception e) {
                 VKLog.error("Failed to scan package: " + pkg, e);
             }
+        }
+        if (!found) {
+            scanClasspathEntries(prefixes, result);
         }
         return result;
     }
@@ -132,6 +144,28 @@ public final class ClassScanner {
             }
         } catch (IOException e) {
             VKLog.error("Failed to scan jar: " + jarFile.getAbsolutePath(), e);
+        }
+    }
+
+    private static void scanClasspathEntries(Set<String> prefixes, Set<Class<?>> result) {
+        String cp = System.getProperty("java.class.path");
+        if (cp == null || cp.trim().isEmpty()) {
+            return;
+        }
+        String[] entries = cp.split(File.pathSeparator);
+        for (String entry : entries) {
+            if (entry == null || entry.trim().isEmpty()) {
+                continue;
+            }
+            File file = new File(entry);
+            if (!file.exists()) {
+                continue;
+            }
+            if (file.isDirectory()) {
+                scanDirectory(file.toPath(), file.toPath(), prefixes, result);
+            } else if (entry.endsWith(".jar")) {
+                scanJar(file, prefixes, result);
+            }
         }
     }
 

@@ -51,48 +51,32 @@ public final class Vostok {
         return VostokBootstrap.withDataSource(name, supplier);
     }
 
+    public static VostokContext captureContext() {
+        return VostokContext.capture();
+    }
+
     public static Runnable wrap(Runnable action) {
         VKAssert.notNull(action, "Runnable is null");
-        String captured = VostokRuntime.DS_CONTEXT.get();
-        return () -> {
-            String prev = VostokRuntime.DS_CONTEXT.get();
-            if (captured == null) {
-                VostokRuntime.DS_CONTEXT.remove();
-            } else {
-                VostokRuntime.DS_CONTEXT.set(captured);
-            }
-            try {
-                action.run();
-            } finally {
-                if (prev == null) {
-                    VostokRuntime.DS_CONTEXT.remove();
-                } else {
-                    VostokRuntime.DS_CONTEXT.set(prev);
-                }
-            }
-        };
+        VostokContext captured = VostokContext.capture();
+        return () -> captured.run(action);
     }
 
     public static <T> Supplier<T> wrap(Supplier<T> supplier) {
         VKAssert.notNull(supplier, "Supplier is null");
-        String captured = VostokRuntime.DS_CONTEXT.get();
-        return () -> {
-            String prev = VostokRuntime.DS_CONTEXT.get();
-            if (captured == null) {
-                VostokRuntime.DS_CONTEXT.remove();
-            } else {
-                VostokRuntime.DS_CONTEXT.set(captured);
-            }
-            try {
-                return supplier.get();
-            } finally {
-                if (prev == null) {
-                    VostokRuntime.DS_CONTEXT.remove();
-                } else {
-                    VostokRuntime.DS_CONTEXT.set(prev);
-                }
-            }
-        };
+        VostokContext captured = VostokContext.capture();
+        return () -> captured.call(supplier);
+    }
+
+    public static Runnable wrap(VostokContext context, Runnable action) {
+        VKAssert.notNull(context, "VostokContext is null");
+        VKAssert.notNull(action, "Runnable is null");
+        return () -> context.run(action);
+    }
+
+    public static <T> Supplier<T> wrap(VostokContext context, Supplier<T> supplier) {
+        VKAssert.notNull(context, "VostokContext is null");
+        VKAssert.notNull(supplier, "Supplier is null");
+        return () -> context.call(supplier);
     }
 
     public static void registerInterceptor(VKInterceptor interceptor) {

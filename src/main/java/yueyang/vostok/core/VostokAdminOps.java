@@ -38,8 +38,9 @@ final class VostokAdminOps {
                     .append(" idle=").append(m.getIdle())
                     .append("\n");
             VKDataSourceHolder holder = VKDataSourceRegistry.get(m.getName());
-            sb.append("  SqlTemplateCacheSize: ").append(holder.getTemplateCache().size())
-                    .append("/").append(holder.getTemplateCache().getMaxSize()).append("\n");
+            var cache = MetaRegistry.getTemplateCache(holder.getName());
+            sb.append("  SqlTemplateCacheSize: ").append(cache.size())
+                    .append("/").append(cache.getMaxSize()).append("\n");
             String leak = holder.getDataSource().getLastLeakStack();
             if (leak != null && !leak.isBlank()) {
                 sb.append("  LeakStack:\n").append(leak).append("\n");

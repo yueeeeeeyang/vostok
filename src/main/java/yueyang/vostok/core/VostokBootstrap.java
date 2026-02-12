@@ -11,7 +11,9 @@ import yueyang.vostok.sql.VKSqlWhitelist;
 import yueyang.vostok.util.VKAssert;
 import yueyang.vostok.util.VKLog;
 
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.function.Supplier;
 
 /**
@@ -47,9 +49,8 @@ final class VostokBootstrap {
                 }
 
                 Set<Class<?>> classes = VostokRuntime.SCANNER.scan(basePackages);
-                for (Class<?> clazz : classes) {
-                    MetaRegistry.register(clazz);
-                }
+                MetaRegistry.refreshAll(classes, VKDataSourceRegistry.all().entrySet().stream()
+                        .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().getConfig())));
 
                 if (config.isValidateDdl()) {
                     VKDdlValidator.validate(VostokInternal.currentHolder().getDataSource(), MetaRegistry.all(), config.getDdlSchema());
@@ -69,6 +70,7 @@ final class VostokBootstrap {
         VostokInternal.ensureInit();
         VostokInternal.validateConfig(config);
         VKDataSourceRegistry.register(name, config);
+        MetaRegistry.registerDataSource(name, config);
         if (config.isValidateDdl()) {
             VKDdlValidator.validate(VKDataSourceRegistry.get(name).getDataSource(), MetaRegistry.all(), config.getDdlSchema());
         }
@@ -81,8 +83,8 @@ final class VostokBootstrap {
     static void refreshMeta(String... basePackages) {
         VostokInternal.ensureInit();
         Set<Class<?>> classes = VostokRuntime.SCANNER.scan(basePackages);
-        MetaRegistry.refreshAll(classes);
-        VostokInternal.clearTemplateCaches();
+        MetaRegistry.refreshAll(classes, VKDataSourceRegistry.all().entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().getConfig())));
         if (VostokInternal.currentConfig().isValidateDdl()) {
             VKDdlValidator.validate(VostokInternal.currentHolder().getDataSource(), MetaRegistry.all(), VostokInternal.currentConfig().getDdlSchema());
         }
@@ -148,6 +150,7 @@ final class VostokBootstrap {
     static void close() {
         synchronized (VostokRuntime.LOCK) {
             VKDataSourceRegistry.clear();
+            MetaRegistry.clear();
             VostokRuntime.initialized = false;
             VostokRuntime.DS_CONTEXT.remove();
             VostokRuntime.initPackages = new String[0];

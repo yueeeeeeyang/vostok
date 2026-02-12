@@ -1,5 +1,6 @@
 package yueyang.vostok.sql;
 
+import yueyang.vostok.dialect.VKDialect;
 import yueyang.vostok.dialect.VKDialectManager;
 import yueyang.vostok.meta.EntityMeta;
 import yueyang.vostok.meta.FieldMeta;
@@ -96,10 +97,18 @@ public final class SqlBuilder {
     }
 
     public static SqlAndParams buildSelect(EntityMeta meta, VKQuery query) {
-        return buildSelect(meta, meta.getFields(), query);
+        return buildSelect(meta, meta.getFields(), query, VKDialectManager.getDialect());
     }
 
     public static SqlAndParams buildSelect(EntityMeta meta, List<FieldMeta> projection, VKQuery query) {
+        return buildSelect(meta, projection, query, VKDialectManager.getDialect());
+    }
+
+    public static SqlAndParams buildSelect(EntityMeta meta, VKQuery query, VKDialect dialect) {
+        return buildSelect(meta, meta.getFields(), query, dialect);
+    }
+
+    public static SqlAndParams buildSelect(EntityMeta meta, List<FieldMeta> projection, VKQuery query, VKDialect dialect) {
         StringBuilder sb = new StringBuilder();
         List<Object> params = new ArrayList<>();
 
@@ -110,12 +119,16 @@ public final class SqlBuilder {
         appendGroupBy(meta, query, sb);
         appendHaving(meta, query, sb, params);
         appendOrderBy(meta, query, sb);
-        appendLimitOffset(query, sb);
+        appendLimitOffset(query, sb, dialect);
 
         return new SqlAndParams(sb.toString(), params.toArray());
     }
 
     public static SqlAndParams buildCount(EntityMeta meta, VKQuery query) {
+        return buildCount(meta, query, VKDialectManager.getDialect());
+    }
+
+    public static SqlAndParams buildCount(EntityMeta meta, VKQuery query, VKDialect dialect) {
         StringBuilder sb = new StringBuilder();
         List<Object> params = new ArrayList<>();
         sb.append("SELECT COUNT(1) FROM ").append(meta.getTableName());
@@ -356,10 +369,10 @@ public final class SqlBuilder {
         sb.append(joiner);
     }
 
-    private static void appendLimitOffset(VKQuery query, StringBuilder sb) {
+    private static void appendLimitOffset(VKQuery query, StringBuilder sb, VKDialect dialect) {
         if (query == null) {
             return;
         }
-        VKDialectManager.getDialect().appendLimitOffset(sb, query.getLimit(), query.getOffset());
+        dialect.appendLimitOffset(sb, query.getLimit(), query.getOffset());
     }
 }

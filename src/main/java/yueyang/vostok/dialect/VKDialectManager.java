@@ -4,22 +4,26 @@ import yueyang.vostok.config.DataSourceConfig;
 import yueyang.vostok.util.VKAssert;
 
 public final class VKDialectManager {
-    private static volatile VKDialect DIALECT = new MySqlDialect();
+    private static final ThreadLocal<VKDialect> DIALECT = ThreadLocal.withInitial(MySqlDialect::new);
 
     private VKDialectManager() {
     }
 
     public static void init(DataSourceConfig config) {
+        DIALECT.set(resolve(config));
+    }
+
+    public static VKDialect getDialect() {
+        return DIALECT.get();
+    }
+
+    public static VKDialect resolve(DataSourceConfig config) {
         VKAssert.notNull(config, "DataSourceConfig is null");
         VKDialectType type = config.getDialect();
         if (type == null) {
             type = inferDialect(config.getUrl());
         }
-        DIALECT = create(type);
-    }
-
-    public static VKDialect getDialect() {
-        return DIALECT;
+        return create(type);
     }
 
     private static VKDialect create(VKDialectType type) {

@@ -235,7 +235,7 @@ final class VostokCrudOps {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         EntityMeta meta = MetaRegistry.get(entityClass);
-        SqlAndParams sp = SqlBuilder.buildSelect(meta, query);
+        SqlAndParams sp = SqlBuilder.buildSelect(meta, query, VostokInternal.currentDialect());
         return VostokInternal.executeQueryList(meta, sp);
     }
 
@@ -253,7 +253,7 @@ final class VostokCrudOps {
             projection.add(fm);
         }
 
-        SqlAndParams sp = SqlBuilder.buildSelect(meta, projection, query);
+        SqlAndParams sp = SqlBuilder.buildSelect(meta, projection, query, VostokInternal.currentDialect());
         try {
             return VostokInternal.currentExecutor().queryList(meta, projection, sp.getSql(), sp.getParams());
         } catch (SQLException e) {
@@ -267,7 +267,7 @@ final class VostokCrudOps {
         VKAssert.notNull(query, "Query is null");
         query.selectAggregates(aggregates);
         EntityMeta meta = MetaRegistry.get(entityClass);
-        SqlAndParams sp = SqlBuilder.buildSelect(meta, query);
+        SqlAndParams sp = SqlBuilder.buildSelect(meta, query, VostokInternal.currentDialect());
         try {
             return VostokInternal.currentExecutor().queryRows(sp.getSql(), sp.getParams());
         } catch (SQLException e) {
@@ -279,7 +279,7 @@ final class VostokCrudOps {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         EntityMeta meta = MetaRegistry.get(entityClass);
-        SqlAndParams sp = SqlBuilder.buildCount(meta, query);
+        SqlAndParams sp = SqlBuilder.buildCount(meta, query, VostokInternal.currentDialect());
         try {
             Object value = VostokInternal.currentExecutor().queryScalar(sp.getSql(), sp.getParams());
             if (value instanceof Number) {

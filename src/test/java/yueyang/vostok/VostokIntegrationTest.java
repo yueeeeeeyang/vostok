@@ -19,6 +19,7 @@ import yueyang.vostok.exception.VKSqlException;
 import yueyang.vostok.exception.VKStateException;
 import yueyang.vostok.jdbc.VKSqlLogger;
 import yueyang.vostok.meta.MetaLoader;
+import yueyang.vostok.meta.MetaRegistry;
 import yueyang.vostok.plugin.VKInterceptor;
 import yueyang.vostokbad.BadColumnEntity;
 import yueyang.vostokbad.BadEntity;
@@ -28,6 +29,8 @@ import yueyang.vostok.query.VKOrder;
 import yueyang.vostok.query.VKOperator;
 import yueyang.vostok.query.VKQuery;
 import yueyang.vostok.sql.SqlBuilder;
+import yueyang.vostok.ds.VKDataSourceRegistry;
+import yueyang.vostok.ds.VKDataSourceHolder;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -355,6 +358,36 @@ public class VostokIntegrationTest {
     }
 
     @Test
+    void testWrapWithCapturedContext() throws Exception {
+        String url = "jdbc:h2:mem:devkit_ctx;MODE=MySQL;DB_CLOSE_DELAY=-1";
+        try (var conn = java.sql.DriverManager.getConnection(url, "sa", "");
+             var stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE t_user (id BIGINT AUTO_INCREMENT PRIMARY KEY, user_name VARCHAR(64), age INT)");
+        }
+        DataSourceConfig cfg = new DataSourceConfig()
+                .url(url)
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.MYSQL);
+        Vostok.registerDataSource("ds_ctx", cfg);
+
+        var executor = Executors.newSingleThreadExecutor();
+        try {
+            CompletableFuture<Integer> future = Vostok.withDataSource("ds_ctx", () -> {
+                Vostok.insert(user("C1", 1));
+                var ctx = Vostok.captureContext();
+                return CompletableFuture.supplyAsync(
+                        Vostok.wrap(ctx, () -> Vostok.findAll(UserEntity.class).size()), executor
+                );
+            });
+            assertEquals(1, future.get(5, TimeUnit.SECONDS));
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void testInterceptor() {
         class CounterInterceptor implements VKInterceptor {
             int before = 0;
@@ -409,6 +442,25 @@ public class VostokIntegrationTest {
         assertTrue(sql2.contains("FETCH FIRST 10 ROWS ONLY"));
 
         VKDialectManager.init(new DataSourceConfig().dialect(VKDialectType.MYSQL));
+    }
+
+    @Test
+    void testHolderDialectIsolation() {
+        DataSourceConfig cfg = new DataSourceConfig()
+                .url(JDBC_URL)
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.SQLSERVER);
+        var meta = MetaLoader.load(UserEntity.class);
+        var holder = new VKDataSourceHolder("dialect_tmp", cfg);
+        try {
+            String sql = SqlBuilder.buildSelect(meta, VKQuery.create().limit(10).offset(5), holder.getDialect()).getSql();
+            assertTrue(sql.contains("OFFSET 5 ROWS"));
+            assertTrue(sql.contains("FETCH NEXT 10 ROWS ONLY"));
+        } finally {
+            holder.close();
+        }
     }
 
     @Test
@@ -781,6 +833,19 @@ public class VostokIntegrationTest {
         assertTrue(latch.await(10, TimeUnit.SECONDS));
         pool.shutdownNow();
         assertTrue(errors.isEmpty());
+    }
+
+    @Test
+    @Order(93)
+    void testTemplateCacheSnapshotOnRefresh() {
+        var cache1 = MetaRegistry.getTemplateCache(VKDataSourceRegistry.getDefaultName());
+        Vostok.findAll(UserEntity.class);
+        assertTrue(cache1.size() > 0);
+
+        Vostok.refreshMeta("yueyang.vostok");
+        var cache2 = MetaRegistry.getTemplateCache(VKDataSourceRegistry.getDefaultName());
+        assertNotSame(cache1, cache2);
+        assertEquals(0, cache2.size());
     }
 
     @Test

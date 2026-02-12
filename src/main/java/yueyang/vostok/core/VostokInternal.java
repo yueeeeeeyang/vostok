@@ -2,7 +2,7 @@ package yueyang.vostok.core;
 
 import yueyang.vostok.config.VKBatchFailStrategy;
 import yueyang.vostok.config.DataSourceConfig;
-import yueyang.vostok.dialect.VKDialectManager;
+import yueyang.vostok.dialect.VKDialect;
 import yueyang.vostok.ds.VKDataSourceHolder;
 import yueyang.vostok.ds.VKDataSourceRegistry;
 import yueyang.vostok.exception.VKErrorCode;
@@ -12,6 +12,7 @@ import yueyang.vostok.exception.VKStateException;
 import yueyang.vostok.jdbc.JdbcExecutor;
 import yueyang.vostok.meta.EntityMeta;
 import yueyang.vostok.meta.FieldMeta;
+import yueyang.vostok.meta.MetaRegistry;
 import yueyang.vostok.sql.SqlAndParams;
 import yueyang.vostok.sql.SqlTemplateCache;
 import yueyang.vostok.util.VKAssert;
@@ -58,9 +59,7 @@ final class VostokInternal {
 
     static VKDataSourceHolder currentHolder() {
         String name = VostokRuntime.DS_CONTEXT.get();
-        VKDataSourceHolder holder = (name == null) ? VKDataSourceRegistry.getDefault() : VKDataSourceRegistry.get(name);
-        VKDialectManager.init(holder.getConfig());
-        return holder;
+        return (name == null) ? VKDataSourceRegistry.getDefault() : VKDataSourceRegistry.get(name);
     }
 
     static JdbcExecutor currentExecutor() {
@@ -68,17 +67,20 @@ final class VostokInternal {
     }
 
     static SqlTemplateCache currentTemplateCache() {
-        return currentHolder().getTemplateCache();
+        return MetaRegistry.getTemplateCache(currentDataSourceName());
     }
 
     static DataSourceConfig currentConfig() {
         return currentHolder().getConfig();
     }
 
-    static void clearTemplateCaches() {
-        for (VKDataSourceHolder holder : VKDataSourceRegistry.allHolders().values()) {
-            holder.getTemplateCache().clear();
-        }
+    static VKDialect currentDialect() {
+        return currentHolder().getDialect();
+    }
+
+    static String currentDataSourceName() {
+        String name = VostokRuntime.DS_CONTEXT.get();
+        return (name == null) ? VKDataSourceRegistry.getDefaultName() : name;
     }
 
     static int executeUpdate(SqlAndParams sp) {

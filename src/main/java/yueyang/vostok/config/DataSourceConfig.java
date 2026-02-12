@@ -70,7 +70,7 @@ public class DataSourceConfig {
     /** 是否启用 SQL 耗时分布统计 */
     private boolean sqlMetricsEnabled = true;
     /** 慢 SQL TopN 数量 */
-    private int slowSqlTopN = 20;
+    private int slowSqlTopN = 0;
     /** 是否启用 Savepoint 支持 */
     private boolean savepointEnabled = true;
     /** 事务超时（毫秒，<=0 不限制） */

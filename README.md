@@ -138,6 +138,22 @@ Vostok.tx(() -> {
 注意：事务上下文仅限当前线程，异步线程不会自动传播事务。
 异步场景请在新线程内自行使用 `Vostok.tx(...)` 开启事务。
 
+**异步上下文（VostokContext）**
+```java
+ExecutorService pool = Executors.newFixedThreadPool(4);
+
+Vostok.withDataSource("ds2", () -> {
+    Vostok.insert(user);
+    VostokContext ctx = Vostok.captureContext();
+    CompletableFuture<Integer> future = CompletableFuture.supplyAsync(
+        Vostok.wrap(ctx, () -> Vostok.findAll(User.class).size()), pool
+    );
+});
+```
+说明：
+- `VostokContext` 仅传播数据源上下文，不传播事务。
+- 事务需在异步线程内显式 `Vostok.tx(...)`。
+
 **Savepoint（默认开启）**
 ```java
 Vostok.tx(() -> {
@@ -179,6 +195,14 @@ Vostok.withDataSource("ds2", () -> Vostok.insert(user));
 ```java
 var metrics = Vostok.poolMetrics();
 String report = Vostok.report();
+```
+
+**慢 SQL TopN**
+默认关闭（`slowSqlTopN=0`），如需开启：
+```java
+DataSourceConfig cfg = new DataSourceConfig()
+    .slowSqlTopN(10)
+    .slowSqlMs(200);
 ```
 
 **插件拦截器**
