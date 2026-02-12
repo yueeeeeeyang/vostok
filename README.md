@@ -233,6 +233,8 @@ Vostok.init(cfg, "ignored.pkg");
 **多数据源 + 异步上下文传递**
 ThreadLocal 在异步/线程池场景不会自动传播，跨线程时请使用 `Vostok.wrap(...)`。
 下面示例将多数据源与异步调用组合在一起：
+注意：`Vostok.wrap(...)` 只传递数据源上下文，不会传播事务上下文。
+事务上下文仅限当前线程，异步线程需要自行开启新事务（`Vostok.tx(...)`）。
 ```java
 DataSourceConfig cfg = new DataSourceConfig()
         .url("jdbc:h2:mem:devkit;MODE=MySQL;DB_CLOSE_DELAY=-1")
