@@ -131,6 +131,10 @@ public class VKSqlMetrics {
         }
     }
 
+    public boolean isEnabled() {
+        return enabled;
+    }
+
     /**
      * 慢 SQL 记录。
      */

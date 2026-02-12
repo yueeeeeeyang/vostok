@@ -28,4 +28,8 @@ public final class VKInterceptorRegistry {
     public static List<VKInterceptor> all() {
         return LIST;
     }
+
+    public static boolean hasAny() {
+        return !LIST.isEmpty();
+    }
 }

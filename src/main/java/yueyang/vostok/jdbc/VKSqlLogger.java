@@ -51,4 +51,12 @@ public final class VKSqlLogger {
         }
         return "SLOW SQL: " + sql + " | costMs=" + costMs;
     }
+
+    public boolean isLogEnabled() {
+        return logSql;
+    }
+
+    public boolean isSlowEnabled() {
+        return slowSqlMs > 0;
+    }
 }

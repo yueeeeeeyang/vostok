@@ -30,6 +30,16 @@ public class JdbcExecutor {
     }
 
     public int executeUpdate(String sql, Object[] params) throws SQLException {
+        if (!isMonitoringEnabled()) {
+            ConnectionHolder holder = getConnection();
+            try (PreparedStatement ps = holder.conn.prepareStatement(sql)) {
+                applyQueryTimeout(ps);
+                bindParams(ps, params);
+                return ps.executeUpdate();
+            } finally {
+                holder.closeIfNeeded();
+            }
+        }
         long start = System.currentTimeMillis();
         sqlLogger.logSql(sql, params);
         before(sql, params);
@@ -55,6 +65,33 @@ public class JdbcExecutor {
     }
 
     public VKBatchResult executeBatch(String sql, List<Object[]> paramsList, boolean returnKeys) throws SQLException {
+        if (!isMonitoringEnabled()) {
+            ConnectionHolder holder = getConnection();
+            try (PreparedStatement ps = returnKeys
+                    ? holder.conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)
+                    : holder.conn.prepareStatement(sql)) {
+                applyQueryTimeout(ps);
+                if (paramsList != null) {
+                    for (Object[] params : paramsList) {
+                        bindParams(ps, params);
+                        ps.addBatch();
+                    }
+                }
+                int[] counts = ps.executeBatch();
+                List<Object> keys = null;
+                if (returnKeys) {
+                    keys = new ArrayList<>();
+                    try (ResultSet rs = ps.getGeneratedKeys()) {
+                        while (rs.next()) {
+                            keys.add(rs.getObject(1));
+                        }
+                    }
+                }
+                return new VKBatchResult(counts, keys);
+            } finally {
+                holder.closeIfNeeded();
+            }
+        }
         long start = System.currentTimeMillis();
         sqlLogger.logSql(sql, null);
         before(sql, null);
@@ -98,12 +135,15 @@ public class JdbcExecutor {
     public VKBatchDetailResult executeBatchDetailedFallback(String sql, List<Object[]> paramsList, boolean returnKeys) throws SQLException {
         List<VKBatchItemResult> items = new ArrayList<>();
         ConnectionHolder holder = getConnection();
+        boolean monitor = isMonitoringEnabled();
         try {
             for (int i = 0; i < paramsList.size(); i++) {
                 Object[] params = paramsList.get(i);
                 final int rowIndex = i;
-                long start = System.currentTimeMillis();
-                before(sql, params);
+                long start = monitor ? System.currentTimeMillis() : 0L;
+                if (monitor) {
+                    before(sql, params);
+                }
                 boolean success = false;
                 Throwable error = null;
                 try (PreparedStatement ps = returnKeys
@@ -126,9 +166,11 @@ public class JdbcExecutor {
                     error = e;
                     items.add(new VKBatchItemResult(rowIndex, false, 0, null, e.getMessage()));
                 } finally {
-                    long cost = System.currentTimeMillis() - start;
-                    sqlMetrics.record(sql, params, cost);
-                    after(sql, params, cost, success, error);
+                    if (monitor) {
+                        long cost = System.currentTimeMillis() - start;
+                        sqlMetrics.record(sql, params, cost);
+                        after(sql, params, cost, success, error);
+                    }
                 }
             }
         } finally {
@@ -138,6 +180,19 @@ public class JdbcExecutor {
     }
 
     public Object executeInsertReturnKey(String sql, Object[] params) throws SQLException {
+        if (!isMonitoringEnabled()) {
+            ConnectionHolder holder = getConnection();
+            try (PreparedStatement ps = holder.conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
+                applyQueryTimeout(ps);
+                bindParams(ps, params);
+                ps.executeUpdate();
+                try (ResultSet rs = ps.getGeneratedKeys()) {
+                    return rs.next() ? rs.getObject(1) : null;
+                }
+            } finally {
+                holder.closeIfNeeded();
+            }
+        }
         long start = System.currentTimeMillis();
         sqlLogger.logSql(sql, params);
         before(sql, params);
@@ -170,6 +225,22 @@ public class JdbcExecutor {
 
     public <T> T queryOne(EntityMeta meta, String sql, Object[] params) throws SQLException {
         return withRetry(sql, params, () -> {
+            if (!isMonitoringEnabled()) {
+                ConnectionHolder holder = getConnection();
+                try (PreparedStatement ps = holder.conn.prepareStatement(sql)) {
+                    applyQueryTimeout(ps);
+                    bindParams(ps, params);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (!rs.next()) {
+                            return null;
+                        }
+                        int[] indexes = resolveColumnIndexes(rs, meta.getFields());
+                        return mapRow(meta, meta.getFields(), rs, indexes);
+                    }
+                } finally {
+                    holder.closeIfNeeded();
+                }
+            }
             long start = System.currentTimeMillis();
             sqlLogger.logSql(sql, params);
             before(sql, params);
@@ -208,6 +279,18 @@ public class JdbcExecutor {
 
     public <T> List<T> queryList(EntityMeta meta, List<FieldMeta> projection, String sql, Object[] params) throws SQLException {
         return withRetry(sql, params, () -> {
+            if (!isMonitoringEnabled()) {
+                ConnectionHolder holder = getConnection();
+                try (PreparedStatement ps = holder.conn.prepareStatement(sql)) {
+                    applyQueryTimeout(ps);
+                    bindParams(ps, params);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        return mapRows(meta, projection, rs);
+                    }
+                } finally {
+                    holder.closeIfNeeded();
+                }
+            }
             long start = System.currentTimeMillis();
             sqlLogger.logSql(sql, params);
             before(sql, params);
@@ -237,6 +320,27 @@ public class JdbcExecutor {
 
     public List<Object[]> queryRows(String sql, Object[] params) throws SQLException {
         return withRetry(sql, params, () -> {
+            if (!isMonitoringEnabled()) {
+                ConnectionHolder holder = getConnection();
+                try (PreparedStatement ps = holder.conn.prepareStatement(sql)) {
+                    applyQueryTimeout(ps);
+                    bindParams(ps, params);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        List<Object[]> rows = new ArrayList<>();
+                        int cols = rs.getMetaData().getColumnCount();
+                        while (rs.next()) {
+                            Object[] row = new Object[cols];
+                            for (int i = 0; i < cols; i++) {
+                                row[i] = rs.getObject(i + 1);
+                            }
+                            rows.add(row);
+                        }
+                        return rows;
+                    }
+                } finally {
+                    holder.closeIfNeeded();
+                }
+            }
             long start = System.currentTimeMillis();
             sqlLogger.logSql(sql, params);
             before(sql, params);
@@ -274,6 +378,18 @@ public class JdbcExecutor {
 
     public Object queryScalar(String sql, Object[] params) throws SQLException {
         return withRetry(sql, params, () -> {
+            if (!isMonitoringEnabled()) {
+                ConnectionHolder holder = getConnection();
+                try (PreparedStatement ps = holder.conn.prepareStatement(sql)) {
+                    applyQueryTimeout(ps);
+                    bindParams(ps, params);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        return rs.next() ? rs.getObject(1) : null;
+                    }
+                } finally {
+                    holder.closeIfNeeded();
+                }
+            }
             long start = System.currentTimeMillis();
             sqlLogger.logSql(sql, params);
             before(sql, params);
@@ -302,6 +418,10 @@ public class JdbcExecutor {
                 holder.closeIfNeeded();
             }
         });
+    }
+
+    private boolean isMonitoringEnabled() {
+        return sqlLogger.isLogEnabled() || sqlLogger.isSlowEnabled() || sqlMetrics.isEnabled() || VKInterceptorRegistry.hasAny();
     }
 
     private <T> T withRetry(String sql, Object[] params, SqlCallable<T> callable) throws SQLException {

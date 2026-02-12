@@ -23,7 +23,11 @@ public final class VKPooledConnection implements InvocationHandler {
         this.target = target;
         this.pool = pool;
         this.checkoutAt = checkoutAt;
-        this.checkoutStack = new Exception().getStackTrace();
+        if (pool.getConfig().getLeakDetectMs() > 0) {
+            this.checkoutStack = new Exception().getStackTrace();
+        } else {
+            this.checkoutStack = null;
+        }
         this.statementCacheSize = Math.max(0, statementCacheSize);
         if (this.statementCacheSize > 0) {
             this.statementCache = new LinkedHashMap<>(16, 0.75f, true) {
