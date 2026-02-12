@@ -344,16 +344,3 @@ Vostok.init(cfg, "ignored.pkg");
 
 **全量扫描**
 如果 `Vostok.init(cfg)` 不传入包名，将扫描整个 classpath。
-
-**性能压测（连接池借还）**
-```bash
-THREADS=64 LOOPS=5000 WARMUP=500 ./scripts/bench_pool.sh
-```
-
-**生产级注意事项**
-- 初始化线程安全：`Vostok.init(...)` 并发安全，仅首次生效。
-- 事务隔离级别恢复：事务结束后会恢复连接的原始隔离级别与只读/autoCommit 状态。
-- 连接归还重置：连接返回池时会恢复 `autoCommit` / `readOnly` / `isolation` 到默认值。
-- 事务超时与 SQL 超时联动：当 `txTimeoutMs > 0` 时，Statement 使用剩余超时。
-- 预编译 SQL 缓存释放：连接归还池时关闭缓存的 PreparedStatement。
-- 数据源注册并发安全：相同名称重复注册会抛出异常。
