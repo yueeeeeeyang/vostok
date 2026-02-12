@@ -7,30 +7,30 @@ import org.junit.jupiter.api.Order;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.junit.jupiter.api.MethodOrderer.OrderAnnotation;
-import yueyang.vostok.config.VKBatchFailStrategy;
-import yueyang.vostok.config.VKTxIsolation;
-import yueyang.vostok.config.VKTxPropagation;
-import yueyang.vostok.config.DataSourceConfig;
-import yueyang.vostok.core.Vostok;
-import yueyang.vostok.dialect.VKDialectManager;
-import yueyang.vostok.dialect.VKDialectType;
-import yueyang.vostok.exception.VKException;
-import yueyang.vostok.exception.VKSqlException;
-import yueyang.vostok.exception.VKStateException;
-import yueyang.vostok.jdbc.VKSqlLogger;
-import yueyang.vostok.meta.MetaLoader;
-import yueyang.vostok.meta.MetaRegistry;
-import yueyang.vostok.plugin.VKInterceptor;
+import yueyang.vostok.data.config.VKBatchFailStrategy;
+import yueyang.vostok.data.config.VKTxIsolation;
+import yueyang.vostok.data.config.VKTxPropagation;
+import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.Vostok;
+import yueyang.vostok.data.dialect.VKDialectManager;
+import yueyang.vostok.data.dialect.VKDialectType;
+import yueyang.vostok.data.exception.VKException;
+import yueyang.vostok.data.exception.VKSqlException;
+import yueyang.vostok.data.exception.VKStateException;
+import yueyang.vostok.data.jdbc.VKSqlLogger;
+import yueyang.vostok.data.meta.MetaLoader;
+import yueyang.vostok.data.meta.MetaRegistry;
+import yueyang.vostok.data.plugin.VKInterceptor;
 import yueyang.vostokbad.BadColumnEntity;
 import yueyang.vostokbad.BadEntity;
-import yueyang.vostok.query.VKAggregate;
-import yueyang.vostok.query.VKCondition;
-import yueyang.vostok.query.VKOrder;
-import yueyang.vostok.query.VKOperator;
-import yueyang.vostok.query.VKQuery;
-import yueyang.vostok.sql.SqlBuilder;
-import yueyang.vostok.ds.VKDataSourceRegistry;
-import yueyang.vostok.ds.VKDataSourceHolder;
+import yueyang.vostok.data.query.VKAggregate;
+import yueyang.vostok.data.query.VKCondition;
+import yueyang.vostok.data.query.VKOrder;
+import yueyang.vostok.data.query.VKOperator;
+import yueyang.vostok.data.query.VKQuery;
+import yueyang.vostok.data.sql.SqlBuilder;
+import yueyang.vostok.data.ds.VKDataSourceRegistry;
+import yueyang.vostok.data.ds.VKDataSourceHolder;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
@@ -71,9 +71,9 @@ public class VostokIntegrationTest {
                 .sqlMetricsEnabled(true)
                 .slowSqlTopN(5);
 
-        Vostok.init(cfg, "yueyang.vostok");
-        Vostok.registerRawSql("COUNT(1)", "SLEEP(1200)", "SLEEP(600)", "SLEEP(10)");
-        Vostok.registerSubquery(
+        Vostok.Data.init(cfg, "yueyang.vostok");
+        Vostok.Data.registerRawSql("COUNT(1)", "SLEEP(1200)", "SLEEP(600)", "SLEEP(10)");
+        Vostok.Data.registerSubquery(
                 "SELECT 1 FROM t_user u2 WHERE u2.id = t_user.id AND u2.age >= ?",
                 "SELECT id FROM t_user WHERE age >= ?"
         );
@@ -100,7 +100,7 @@ public class VostokIntegrationTest {
 
     @AfterAll
     static void tearDown() {
-        Vostok.close();
+        Vostok.Data.close();
     }
 
     @Test
@@ -108,32 +108,32 @@ public class VostokIntegrationTest {
         UserEntity u = new UserEntity();
         u.setName("Tom");
         u.setAge(20);
-        int inserted = Vostok.insert(u);
+        int inserted = Vostok.Data.insert(u);
         assertEquals(1, inserted);
         assertNotNull(u.getId());
 
-        UserEntity db = Vostok.findById(UserEntity.class, u.getId());
+        UserEntity db = Vostok.Data.findById(UserEntity.class, u.getId());
         assertNotNull(db);
         assertEquals("Tom", db.getName());
         assertEquals(20, db.getAge());
 
         db.setName("Tom-2");
-        int updated = Vostok.update(db);
+        int updated = Vostok.Data.update(db);
         assertEquals(1, updated);
 
-        UserEntity db2 = Vostok.findById(UserEntity.class, db.getId());
+        UserEntity db2 = Vostok.Data.findById(UserEntity.class, db.getId());
         assertEquals("Tom-2", db2.getName());
 
-        int deleted = Vostok.delete(UserEntity.class, db.getId());
+        int deleted = Vostok.Data.delete(UserEntity.class, db.getId());
         assertEquals(1, deleted);
 
-        UserEntity none = Vostok.findById(UserEntity.class, db.getId());
+        UserEntity none = Vostok.Data.findById(UserEntity.class, db.getId());
         assertNull(none);
     }
 
     @Test
     void testQueryOrderLimitOffset() {
-        Vostok.batchInsert(List.of(user("A", 10), user("B", 20), user("C", 30), user("D", 40)));
+        Vostok.Data.batchInsert(List.of(user("A", 10), user("B", 20), user("C", 30), user("D", 40)));
 
         VKQuery q = VKQuery.create()
                 .where(VKCondition.of("age", VKOperator.GE, 20))
@@ -141,18 +141,18 @@ public class VostokIntegrationTest {
                 .limit(2)
                 .offset(0);
 
-        List<UserEntity> list = Vostok.query(UserEntity.class, q);
+        List<UserEntity> list = Vostok.Data.query(UserEntity.class, q);
         assertEquals(2, list.size());
         assertEquals(40, list.get(0).getAge());
         assertEquals(30, list.get(1).getAge());
 
-        long count = Vostok.count(UserEntity.class, q);
+        long count = Vostok.Data.count(UserEntity.class, q);
         assertEquals(3, count);
     }
 
     @Test
     void testOrBetweenNotIn() {
-        Vostok.batchInsert(List.of(user("Tom", 18), user("Jack", 25), user("Lucy", 35)));
+        Vostok.Data.batchInsert(List.of(user("Tom", 18), user("Jack", 25), user("Lucy", 35)));
 
         VKQuery q = VKQuery.create()
                 .or(
@@ -162,50 +162,50 @@ public class VostokIntegrationTest {
                 .where(VKCondition.of("age", VKOperator.BETWEEN, 18, 30))
                 .where(VKCondition.of("id", VKOperator.NOT_IN, 999, 1000));
 
-        List<UserEntity> list = Vostok.query(UserEntity.class, q);
+        List<UserEntity> list = Vostok.Data.query(UserEntity.class, q);
         assertEquals(2, list.size());
     }
 
     @Test
     void testExistsAndInSubquery() {
-        Vostok.batchInsert(List.of(user("A", 10), user("B", 20), user("C", 30)));
+        Vostok.Data.batchInsert(List.of(user("A", 10), user("B", 20), user("C", 30)));
 
         VKQuery q1 = VKQuery.create()
                 .where(VKCondition.exists("SELECT 1 FROM t_user u2 WHERE u2.id = t_user.id AND u2.age >= ?", 20));
-        List<UserEntity> list1 = Vostok.query(UserEntity.class, q1);
+        List<UserEntity> list1 = Vostok.Data.query(UserEntity.class, q1);
         assertEquals(2, list1.size());
 
         VKQuery q2 = VKQuery.create()
                 .where(VKCondition.inSubquery("id", "SELECT id FROM t_user WHERE age >= ?", 20));
-        List<UserEntity> list2 = Vostok.query(UserEntity.class, q2);
+        List<UserEntity> list2 = Vostok.Data.query(UserEntity.class, q2);
         assertEquals(2, list2.size());
 
         VKQuery q3 = VKQuery.create()
                 .where(VKCondition.notInSubquery("id", "SELECT id FROM t_user WHERE age >= ?", 20));
-        List<UserEntity> list3 = Vostok.query(UserEntity.class, q3);
+        List<UserEntity> list3 = Vostok.Data.query(UserEntity.class, q3);
         assertEquals(1, list3.size());
     }
 
     @Test
     void testBatchUpdateDelete() {
         List<UserEntity> users = List.of(user("U1", 11), user("U2", 12), user("U3", 13));
-        int inserted = Vostok.batchInsert(users);
+        int inserted = Vostok.Data.batchInsert(users);
         assertEquals(3, inserted);
 
         users.get(0).setAge(21);
         users.get(1).setAge(22);
         users.get(2).setAge(23);
-        int updated = Vostok.batchUpdate(users);
+        int updated = Vostok.Data.batchUpdate(users);
         assertEquals(3, updated);
 
-        int deleted = Vostok.batchDelete(UserEntity.class, List.of(users.get(0).getId(), users.get(1).getId(), users.get(2).getId()));
+        int deleted = Vostok.Data.batchDelete(UserEntity.class, List.of(users.get(0).getId(), users.get(1).getId(), users.get(2).getId()));
         assertEquals(3, deleted);
     }
 
     @Test
     void testBatchDetailResult() {
         List<UserEntity> users = List.of(user("D1", 1), user("D2", 2), user("D3", 3));
-        var detail = Vostok.batchInsertDetail(users);
+        var detail = Vostok.Data.batchInsertDetail(users);
         assertEquals(3, detail.getItems().size());
         assertEquals(3, detail.totalSuccess());
         assertEquals(0, detail.totalFail());
@@ -219,10 +219,10 @@ public class VostokIntegrationTest {
         task.setAmount(new BigDecimal("123.45"));
         task.setStatus(Status.DONE);
 
-        Vostok.insert(task);
+        Vostok.Data.insert(task);
         assertNotNull(task.getId());
 
-        TaskEntity db = Vostok.findById(TaskEntity.class, task.getId());
+        TaskEntity db = Vostok.Data.findById(TaskEntity.class, task.getId());
         assertNotNull(db);
         assertEquals(LocalDate.of(2025, 1, 1), db.getStartDate());
         assertEquals(LocalDateTime.of(2025, 1, 2, 10, 30), db.getFinishTime());
@@ -232,53 +232,53 @@ public class VostokIntegrationTest {
 
     @Test
     void testTransactionRollback() {
-        int before = Vostok.findAll(UserEntity.class).size();
+        int before = Vostok.Data.findAll(UserEntity.class).size();
         try {
-            Vostok.tx(() -> {
-                Vostok.insert(user("Rollback", 99));
+            Vostok.Data.tx(() -> {
+                Vostok.Data.insert(user("Rollback", 99));
                 throw new RuntimeException("boom");
             });
             fail("Expected exception");
         } catch (RuntimeException e) {
             // expected
         }
-        int after = Vostok.findAll(UserEntity.class).size();
+        int after = Vostok.Data.findAll(UserEntity.class).size();
         assertEquals(before, after);
     }
 
     @Test
     void testTxRequiresNewIsolation() {
-        Vostok.tx(() -> {
-            Vostok.insert(user("Outer", 1));
+        Vostok.Data.tx(() -> {
+            Vostok.Data.insert(user("Outer", 1));
             try {
-                Vostok.tx(() -> {
-                    Vostok.insert(user("Inner", 2));
+                Vostok.Data.tx(() -> {
+                    Vostok.Data.insert(user("Inner", 2));
                     throw new RuntimeException("inner");
                 }, VKTxPropagation.REQUIRES_NEW, VKTxIsolation.READ_COMMITTED);
             } catch (RuntimeException e) {
                 // expected for inner tx
             }
         });
-        List<UserEntity> all = Vostok.findAll(UserEntity.class);
+        List<UserEntity> all = Vostok.Data.findAll(UserEntity.class);
         assertEquals(1, all.size());
         assertEquals("Outer", all.get(0).getName());
     }
 
     @Test
     void testSavepointNestedRequired() {
-        Vostok.tx(() -> {
-            Vostok.insert(user("A", 1));
+        Vostok.Data.tx(() -> {
+            Vostok.Data.insert(user("A", 1));
             try {
-                Vostok.tx(() -> {
-                    Vostok.insert(user("B", 2));
+                Vostok.Data.tx(() -> {
+                    Vostok.Data.insert(user("B", 2));
                     throw new RuntimeException("inner");
                 }, VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT);
             } catch (RuntimeException e) {
                 // ignore
             }
-            Vostok.insert(user("C", 3));
+            Vostok.Data.insert(user("C", 3));
         });
-        List<UserEntity> all = Vostok.findAll(UserEntity.class);
+        List<UserEntity> all = Vostok.Data.findAll(UserEntity.class);
         assertEquals(2, all.size());
         assertTrue(all.stream().anyMatch(u -> "A".equals(u.getName())));
         assertTrue(all.stream().anyMatch(u -> "C".equals(u.getName())));
@@ -286,9 +286,9 @@ public class VostokIntegrationTest {
 
     @Test
     void testProjectionQuery() {
-        Vostok.batchInsert(List.of(user("A", 10), user("B", 20)));
+        Vostok.Data.batchInsert(List.of(user("A", 10), user("B", 20)));
         VKQuery q = VKQuery.create().orderBy(VKOrder.asc("id"));
-        List<UserEntity> list = Vostok.queryColumns(UserEntity.class, q, "name");
+        List<UserEntity> list = Vostok.Data.queryColumns(UserEntity.class, q, "name");
         assertEquals(2, list.size());
         assertNotNull(list.get(0).getName());
         assertNull(list.get(0).getAge());
@@ -296,12 +296,12 @@ public class VostokIntegrationTest {
 
     @Test
     void testAggregateGroupByHaving() {
-        Vostok.batchInsert(List.of(user("A", 10), user("B", 10), user("C", 20)));
+        Vostok.Data.batchInsert(List.of(user("A", 10), user("B", 10), user("C", 20)));
         VKQuery q = VKQuery.create()
                 .groupBy("age")
                 .having(VKCondition.raw("COUNT(1)", VKOperator.GT, 1))
                 .selectAggregates(VKAggregate.countAll("cnt"));
-        List<Object[]> rows = Vostok.aggregate(UserEntity.class, q);
+        List<Object[]> rows = Vostok.Data.aggregate(UserEntity.class, q);
         assertEquals(1, rows.size());
     }
 
@@ -320,11 +320,11 @@ public class VostokIntegrationTest {
                 .password("")
                 .driver("org.h2.Driver")
                 .dialect(VKDialectType.MYSQL);
-        Vostok.registerDataSource("ds2", cfg2);
+        Vostok.Data.registerDataSource("ds2", cfg2);
 
-        Vostok.withDataSource("ds2", () -> Vostok.insert(user("DS2", 1)));
-        assertEquals(0, Vostok.findAll(UserEntity.class).size());
-        Vostok.withDataSource("ds2", () -> assertEquals(1, Vostok.findAll(UserEntity.class).size()));
+        Vostok.Data.withDataSource("ds2", () -> Vostok.Data.insert(user("DS2", 1)));
+        assertEquals(0, Vostok.Data.findAll(UserEntity.class).size());
+        Vostok.Data.withDataSource("ds2", () -> assertEquals(1, Vostok.Data.findAll(UserEntity.class).size()));
     }
 
     @Test
@@ -341,14 +341,14 @@ public class VostokIntegrationTest {
                 .password("")
                 .driver("org.h2.Driver")
                 .dialect(VKDialectType.MYSQL);
-        Vostok.registerDataSource("ds_wrap", cfg);
+        Vostok.Data.registerDataSource("ds_wrap", cfg);
 
         var executor = Executors.newSingleThreadExecutor();
         try {
-            CompletableFuture<Integer> future = Vostok.withDataSource("ds_wrap", () -> {
-                Vostok.insert(user("W1", 1));
+            CompletableFuture<Integer> future = Vostok.Data.withDataSource("ds_wrap", () -> {
+                Vostok.Data.insert(user("W1", 1));
                 return CompletableFuture.supplyAsync(
-                        Vostok.wrap(() -> Vostok.findAll(UserEntity.class).size()), executor
+                        Vostok.Data.wrap(() -> Vostok.Data.findAll(UserEntity.class).size()), executor
                 );
             });
             assertEquals(1, future.get(5, TimeUnit.SECONDS));
@@ -370,15 +370,15 @@ public class VostokIntegrationTest {
                 .password("")
                 .driver("org.h2.Driver")
                 .dialect(VKDialectType.MYSQL);
-        Vostok.registerDataSource("ds_ctx", cfg);
+        Vostok.Data.registerDataSource("ds_ctx", cfg);
 
         var executor = Executors.newSingleThreadExecutor();
         try {
-            CompletableFuture<Integer> future = Vostok.withDataSource("ds_ctx", () -> {
-                Vostok.insert(user("C1", 1));
-                var ctx = Vostok.captureContext();
+            CompletableFuture<Integer> future = Vostok.Data.withDataSource("ds_ctx", () -> {
+                Vostok.Data.insert(user("C1", 1));
+                var ctx = Vostok.Data.captureContext();
                 return CompletableFuture.supplyAsync(
-                        Vostok.wrap(ctx, () -> Vostok.findAll(UserEntity.class).size()), executor
+                        Vostok.Data.wrap(ctx, () -> Vostok.Data.findAll(UserEntity.class).size()), executor
                 );
             });
             assertEquals(1, future.get(5, TimeUnit.SECONDS));
@@ -404,18 +404,18 @@ public class VostokIntegrationTest {
             }
         }
         CounterInterceptor it = new CounterInterceptor();
-        Vostok.registerInterceptor(it);
-        Vostok.insert(user("Hook", 1));
+        Vostok.Data.registerInterceptor(it);
+        Vostok.Data.insert(user("Hook", 1));
         assertTrue(it.before > 0);
         assertTrue(it.after > 0);
-        Vostok.clearInterceptors();
+        Vostok.Data.clearInterceptors();
     }
 
     @Test
     void testPoolMetricsAndReport() {
-        var metrics = Vostok.poolMetrics();
+        var metrics = Vostok.Data.poolMetrics();
         assertFalse(metrics.isEmpty());
-        String report = Vostok.report();
+        String report = Vostok.Data.report();
         assertTrue(report.contains("Vostok Report"));
         assertTrue(report.contains("SqlMetrics"));
         assertTrue(report.contains("Histogram"));
@@ -466,7 +466,7 @@ public class VostokIntegrationTest {
     @Test
     @Order(96)
     void testIdleValidationEvict() throws Exception {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -479,20 +479,20 @@ public class VostokIntegrationTest {
                 .idleTimeoutMs(5)
                 .idleValidationIntervalMs(20)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
-        Vostok.findAll(UserEntity.class);
+        Vostok.Data.findAll(UserEntity.class);
 
         long deadline = System.currentTimeMillis() + 500;
         int total;
         do {
             Thread.sleep(20);
-            total = Vostok.poolMetrics().get(0).getTotal();
+            total = Vostok.Data.poolMetrics().get(0).getTotal();
         } while (total > 0 && System.currentTimeMillis() < deadline);
         assertEquals(0, total);
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -505,13 +505,13 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(97)
     void testPreheatAndLeakStack() throws Exception {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -524,20 +524,20 @@ public class VostokIntegrationTest {
                 .preheatEnabled(true)
                 .leakDetectMs(10)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
-        var metrics = Vostok.poolMetrics().get(0);
+        var metrics = Vostok.Data.poolMetrics().get(0);
         assertTrue(metrics.getIdle() >= 2);
 
-        var holder = yueyang.vostok.ds.VKDataSourceRegistry.getDefault();
+        var holder = yueyang.vostok.data.ds.VKDataSourceRegistry.getDefault();
         try (var conn = holder.getDataSource().getConnection()) {
             Thread.sleep(20);
         }
-        String report = Vostok.report();
+        String report = Vostok.Data.report();
         assertTrue(report.contains("LeakStack"));
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -550,13 +550,13 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(98)
     void testTxTimeout() {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -565,21 +565,21 @@ public class VostokIntegrationTest {
                 .dialect(VKDialectType.MYSQL)
                 .txTimeoutMs(30)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
-        assertThrows(yueyang.vostok.exception.VKTxException.class, () -> {
-            Vostok.tx(() -> {
+        assertThrows(yueyang.vostok.data.exception.VKTxException.class, () -> {
+            Vostok.Data.tx(() -> {
                 try {
                     Thread.sleep(60);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                Vostok.findAll(UserEntity.class);
+                Vostok.Data.findAll(UserEntity.class);
             });
         });
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -592,13 +592,13 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(94)
     void testConnectionStateResetOnReturn() throws Exception {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -609,9 +609,9 @@ public class VostokIntegrationTest {
                 .maxActive(1)
                 .maxWaitMs(10000)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
-        var holder = yueyang.vostok.ds.VKDataSourceRegistry.getDefault();
+        var holder = yueyang.vostok.data.ds.VKDataSourceRegistry.getDefault();
         int defaultIsolation;
         boolean defaultReadOnly;
         boolean defaultAutoCommit;
@@ -634,7 +634,7 @@ public class VostokIntegrationTest {
         }
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -647,13 +647,13 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(93)
     void testStatementTimeoutInTransaction() {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -662,19 +662,19 @@ public class VostokIntegrationTest {
                 .dialect(VKDialectType.MYSQL)
                 .txTimeoutMs(900)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
         assertThrows(VKException.class, () -> {
-            Vostok.tx(() -> {
-                Vostok.insert(user("Sleep", 1));
+            Vostok.Data.tx(() -> {
+                Vostok.Data.insert(user("Sleep", 1));
                 VKQuery q = VKQuery.create()
                         .where(VKCondition.raw("SLEEP(1200)", VKOperator.GE, 0));
-                Vostok.query(UserEntity.class, q);
+                Vostok.Data.query(UserEntity.class, q);
             });
         });
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -687,13 +687,13 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(95)
     void testTxIsolationRestoredAfterCommit() {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -704,9 +704,9 @@ public class VostokIntegrationTest {
                 .maxActive(1)
                 .maxWaitMs(10000)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
-        var holder = yueyang.vostok.ds.VKDataSourceRegistry.getDefault();
+        var holder = yueyang.vostok.data.ds.VKDataSourceRegistry.getDefault();
         int defaultIsolation;
         try (Connection conn = holder.getDataSource().getConnection()) {
             defaultIsolation = conn.getTransactionIsolation();
@@ -714,7 +714,7 @@ public class VostokIntegrationTest {
             throw new RuntimeException(e);
         }
 
-        Vostok.tx(() -> Vostok.findAll(UserEntity.class), VKTxPropagation.REQUIRED, VKTxIsolation.SERIALIZABLE, false);
+        Vostok.Data.tx(() -> Vostok.Data.findAll(UserEntity.class), VKTxPropagation.REQUIRED, VKTxIsolation.SERIALIZABLE, false);
 
         try (Connection conn = holder.getDataSource().getConnection()) {
             assertEquals(defaultIsolation, conn.getTransactionIsolation());
@@ -723,7 +723,7 @@ public class VostokIntegrationTest {
         }
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -736,13 +736,13 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(96)
     void testStatementCacheClosedOnReturn() throws Exception {
-        var holder = yueyang.vostok.ds.VKDataSourceRegistry.getDefault();
+        var holder = yueyang.vostok.data.ds.VKDataSourceRegistry.getDefault();
         PreparedStatement ps;
         try (Connection conn = holder.getDataSource().getConnection()) {
             ps = conn.prepareStatement("SELECT 1");
@@ -753,7 +753,7 @@ public class VostokIntegrationTest {
     @Test
     @Order(97)
     void testConcurrentInitSafety() throws Exception {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -772,7 +772,7 @@ public class VostokIntegrationTest {
         for (int i = 0; i < threads; i++) {
             pool.submit(() -> {
                 try {
-                    Vostok.init(cfg, "yueyang.vostok");
+                    Vostok.Data.init(cfg, "yueyang.vostok");
                 } catch (Throwable t) {
                     synchronized (errors) {
                         errors.add(t);
@@ -785,10 +785,10 @@ public class VostokIntegrationTest {
         assertTrue(latch.await(5, TimeUnit.SECONDS));
         pool.shutdownNow();
         assertTrue(errors.isEmpty());
-        assertEquals(1, yueyang.vostok.ds.VKDataSourceRegistry.all().size());
+        assertEquals(1, yueyang.vostok.data.ds.VKDataSourceRegistry.all().size());
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -801,7 +801,7 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
@@ -817,8 +817,8 @@ public class VostokIntegrationTest {
             pool.submit(() -> {
                 try {
                     for (int j = 0; j < loops; j++) {
-                        Vostok.refreshMeta("yueyang.vostok");
-                        Vostok.findAll(UserEntity.class);
+                        Vostok.Data.refreshMeta("yueyang.vostok");
+                        Vostok.Data.findAll(UserEntity.class);
                     }
                 } catch (Throwable t) {
                     synchronized (errors) {
@@ -839,10 +839,10 @@ public class VostokIntegrationTest {
     @Order(93)
     void testTemplateCacheSnapshotOnRefresh() {
         var cache1 = MetaRegistry.getTemplateCache(VKDataSourceRegistry.getDefaultName());
-        Vostok.findAll(UserEntity.class);
+        Vostok.Data.findAll(UserEntity.class);
         assertTrue(cache1.size() > 0);
 
-        Vostok.refreshMeta("yueyang.vostok");
+        Vostok.Data.refreshMeta("yueyang.vostok");
         var cache2 = MetaRegistry.getTemplateCache(VKDataSourceRegistry.getDefaultName());
         assertNotSame(cache1, cache2);
         assertEquals(0, cache2.size());
@@ -851,7 +851,7 @@ public class VostokIntegrationTest {
     @Test
     @Order(91)
     void testQueryTimeoutNonTx() {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -860,17 +860,17 @@ public class VostokIntegrationTest {
                 .dialect(VKDialectType.MYSQL)
                 .queryTimeoutMs(200)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
-        Vostok.insert(user("Sleep2", 2));
+        Vostok.Data.insert(user("Sleep2", 2));
         assertThrows(VKException.class, () -> {
             VKQuery q = VKQuery.create()
                     .where(VKCondition.raw("SLEEP(600)", VKOperator.GE, 0));
-            Vostok.query(UserEntity.class, q);
+            Vostok.Data.query(UserEntity.class, q);
         });
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -883,13 +883,13 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(90)
     void testRawAndSubqueryWhitelist() {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -897,33 +897,33 @@ public class VostokIntegrationTest {
                 .driver("org.h2.Driver")
                 .dialect(VKDialectType.MYSQL)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
-        Vostok.registerRawSql("1");
-        Vostok.registerSubquery("SELECT id FROM t_user WHERE age >= ?");
+        Vostok.Data.registerRawSql("1");
+        Vostok.Data.registerSubquery("SELECT id FROM t_user WHERE age >= ?");
 
-        Vostok.insert(user("W1", 10));
+        Vostok.Data.insert(user("W1", 10));
 
         VKQuery okRaw = VKQuery.create()
                 .where(VKCondition.raw("1", VKOperator.GE, 0));
-        List<UserEntity> okRawList = Vostok.query(UserEntity.class, okRaw);
+        List<UserEntity> okRawList = Vostok.Data.query(UserEntity.class, okRaw);
         assertEquals(1, okRawList.size());
 
         VKQuery okSub = VKQuery.create()
                 .where(VKCondition.inSubquery("id", "SELECT id FROM t_user WHERE age >= ?", 0));
-        List<UserEntity> list = Vostok.query(UserEntity.class, okSub);
+        List<UserEntity> list = Vostok.Data.query(UserEntity.class, okSub);
         assertEquals(1, list.size());
 
         VKQuery badRaw = VKQuery.create()
                 .where(VKCondition.raw("2", VKOperator.GE, 0));
-        assertThrows(VKException.class, () -> Vostok.query(UserEntity.class, badRaw));
+        assertThrows(VKException.class, () -> Vostok.Data.query(UserEntity.class, badRaw));
 
         VKQuery badSub = VKQuery.create()
                 .where(VKCondition.inSubquery("id", "SELECT id FROM t_user WHERE age >= ?", 0, 1));
-        assertThrows(VKException.class, () -> Vostok.query(UserEntity.class, badSub));
+        assertThrows(VKException.class, () -> Vostok.Data.query(UserEntity.class, badSub));
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -936,13 +936,13 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(89)
     void testCustomScanner() {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -951,14 +951,14 @@ public class VostokIntegrationTest {
                 .dialect(VKDialectType.MYSQL)
                 .validationQuery("SELECT 1");
 
-        Vostok.setScanner((pkgs) -> Set.of(UserEntity.class, TaskEntity.class));
-        Vostok.init(cfg, "ignored.pkg");
+        Vostok.Data.setScanner((pkgs) -> Set.of(UserEntity.class, TaskEntity.class));
+        Vostok.Data.init(cfg, "ignored.pkg");
 
-        assertEquals(2, yueyang.vostok.meta.MetaRegistry.size());
+        assertEquals(2, yueyang.vostok.data.meta.MetaRegistry.size());
 
         // restore default scanner + config for remaining tests
-        Vostok.setScanner(yueyang.vostok.scan.ClassScanner::scan);
-        Vostok.close();
+        Vostok.Data.setScanner(yueyang.vostok.data.scan.ClassScanner::scan);
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -971,9 +971,9 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
-        Vostok.registerRawSql("COUNT(1)", "SLEEP(1200)", "SLEEP(600)", "SLEEP(10)");
-        Vostok.registerSubquery(
+        Vostok.Data.init(cfg2, "yueyang.vostok");
+        Vostok.Data.registerRawSql("COUNT(1)", "SLEEP(1200)", "SLEEP(600)", "SLEEP(10)");
+        Vostok.Data.registerSubquery(
                 "SELECT 1 FROM t_user u2 WHERE u2.id = t_user.id AND u2.age >= ?",
                 "SELECT id FROM t_user WHERE age >= ?"
         );
@@ -989,7 +989,7 @@ public class VostokIntegrationTest {
                 .driver("org.h2.Driver")
                 .dialect(VKDialectType.MYSQL)
                 .validationQuery("SELECT 1");
-        Vostok.registerDataSource("ds2", cfg2);
+        Vostok.Data.registerDataSource("ds2", cfg2);
 
         try (var conn = java.sql.DriverManager.getConnection(cfg2.getUrl(), "sa", "");
              var stmt = conn.createStatement()) {
@@ -997,17 +997,17 @@ public class VostokIntegrationTest {
             stmt.execute("DELETE FROM t_user");
         }
 
-        Vostok.registerRawSql("ds2", new String[]{"1"});
+        Vostok.Data.registerRawSql("ds2", new String[]{"1"});
 
-        Vostok.insert(user("D1", 1));
-        Vostok.withDataSource("ds2", () -> Vostok.insert(user("D2", 2)));
+        Vostok.Data.insert(user("D1", 1));
+        Vostok.Data.withDataSource("ds2", () -> Vostok.Data.insert(user("D2", 2)));
 
         VKQuery raw = VKQuery.create()
                 .where(VKCondition.raw("1", VKOperator.GE, 0));
 
-        assertThrows(VKException.class, () -> Vostok.query(UserEntity.class, raw));
-        Vostok.withDataSource("ds2", () -> {
-            List<UserEntity> list = Vostok.query(UserEntity.class, raw);
+        assertThrows(VKException.class, () -> Vostok.Data.query(UserEntity.class, raw));
+        Vostok.Data.withDataSource("ds2", () -> {
+            List<UserEntity> list = Vostok.Data.query(UserEntity.class, raw);
             assertEquals(1, list.size());
         });
     }
@@ -1015,7 +1015,7 @@ public class VostokIntegrationTest {
     @Test
     @Order(99)
     void testConcurrencyPressure() throws Exception {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -1026,7 +1026,7 @@ public class VostokIntegrationTest {
                 .maxActive(20)
                 .maxWaitMs(30000)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
         int threads = 10;
         int loops = 50;
@@ -1038,8 +1038,8 @@ public class VostokIntegrationTest {
             pool.submit(() -> {
                 try {
                     for (int j = 0; j < loops; j++) {
-                        Vostok.insert(user("U-" + idx + "-" + j, j));
-                        Vostok.findAll(UserEntity.class);
+                        Vostok.Data.insert(user("U-" + idx + "-" + j, j));
+                        Vostok.Data.findAll(UserEntity.class);
                     }
                 } catch (Exception e) {
                     errors.incrementAndGet();
@@ -1053,7 +1053,7 @@ public class VostokIntegrationTest {
         assertEquals(0, errors.get());
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -1066,13 +1066,13 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(100)
     void testPoolStabilityUnderLoad() throws Exception {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -1083,7 +1083,7 @@ public class VostokIntegrationTest {
                 .maxActive(3)
                 .maxWaitMs(10000)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
         int threads = 20;
         var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
@@ -1092,7 +1092,7 @@ public class VostokIntegrationTest {
         for (int i = 0; i < threads; i++) {
             pool.submit(() -> {
                 try {
-                    Vostok.findAll(UserEntity.class);
+                    Vostok.Data.findAll(UserEntity.class);
                 } catch (Exception e) {
                     errors.incrementAndGet();
                 } finally {
@@ -1105,7 +1105,7 @@ public class VostokIntegrationTest {
         assertEquals(0, errors.get());
 
         // restore default config for remaining tests
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -1118,13 +1118,13 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(101)
     void testDdlValidation() {
-        Vostok.close();
+        Vostok.Data.close();
         String url = "jdbc:h2:mem:ddltest;MODE=MySQL;DB_CLOSE_DELAY=-1";
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(url)
@@ -1133,8 +1133,8 @@ public class VostokIntegrationTest {
                 .driver("org.h2.Driver")
                 .dialect(VKDialectType.MYSQL)
                 .validateDdl(true);
-        assertThrows(VKException.class, () -> Vostok.init(cfg, "yueyang.vostok"));
-        Vostok.close();
+        assertThrows(VKException.class, () -> Vostok.Data.init(cfg, "yueyang.vostok"));
+        Vostok.Data.close();
 
         DataSourceConfig cfg2 = new DataSourceConfig()
                 .url(JDBC_URL)
@@ -1147,12 +1147,12 @@ public class VostokIntegrationTest {
                 .maxWaitMs(10000)
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST);
-        Vostok.init(cfg2, "yueyang.vostok");
+        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     void testBatchFailStrategyContinue() {
-        Vostok.close();
+        Vostok.Data.close();
         DataSourceConfig cfg = new DataSourceConfig()
                 .url(JDBC_URL)
                 .username("sa")
@@ -1165,16 +1165,16 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.CONTINUE)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
 
         UserEntity ok1 = user("OK1", 1);
         UserEntity bad = user(null, 2); // user_name NOT NULL
         UserEntity ok2 = user("OK2", 3);
 
-        int inserted = Vostok.batchInsert(List.of(ok1, bad, ok2));
+        int inserted = Vostok.Data.batchInsert(List.of(ok1, bad, ok2));
         // 部分 JDBC 实现会在失败分片中保留部分成功记录，这里只断言不会抛异常且至少成功 1 条
         assertTrue(inserted >= 1);
-        assertTrue(Vostok.findAll(UserEntity.class).size() >= 1);
+        assertTrue(Vostok.Data.findAll(UserEntity.class).size() >= 1);
     }
 
     @Test
@@ -1191,7 +1191,7 @@ public class VostokIntegrationTest {
     @Test
     void testSqlExceptionMapping() {
         try {
-            Vostok.insert(user(null, 1));
+            Vostok.Data.insert(user(null, 1));
             fail("Expected exception");
         } catch (VKSqlException e) {
             assertNotNull(e.getSqlState());
@@ -1200,17 +1200,17 @@ public class VostokIntegrationTest {
 
     @Test
     void testMetaRefresh() {
-        long before = yueyang.vostok.meta.MetaRegistry.getLastRefreshAt();
-        Vostok.refreshMeta("yueyang.vostok");
-        long after = yueyang.vostok.meta.MetaRegistry.getLastRefreshAt();
+        long before = yueyang.vostok.data.meta.MetaRegistry.getLastRefreshAt();
+        Vostok.Data.refreshMeta("yueyang.vostok");
+        long after = yueyang.vostok.data.meta.MetaRegistry.getLastRefreshAt();
         assertTrue(after >= before);
     }
 
     @Test
     @Order(103)
     void testNotInitialized() {
-        Vostok.close();
-        assertThrows(VKStateException.class, () -> Vostok.findAll(UserEntity.class));
+        Vostok.Data.close();
+        assertThrows(VKStateException.class, () -> Vostok.Data.findAll(UserEntity.class));
 
         // re-init for remaining tests (if any)
         DataSourceConfig cfg = new DataSourceConfig()
@@ -1225,7 +1225,7 @@ public class VostokIntegrationTest {
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
-        Vostok.init(cfg, "yueyang.vostok");
+        Vostok.Data.init(cfg, "yueyang.vostok");
     }
 
     private static UserEntity user(String name, int age) {

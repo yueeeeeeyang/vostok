@@ -23,10 +23,10 @@ JDK 17+ 纯 JDBC 的零依赖 CRUD 组件（测试依赖除外），提供注解
 
 **快速上手**
 ```java
-import yueyang.vostok.annotation.*;
-import yueyang.vostok.config.*;
-import yueyang.vostok.core.Vostok;
-import yueyang.vostok.dialect.VKDialectType;
+import yueyang.vostok.data.annotation.*;
+import yueyang.vostok.data.config.*;
+import yueyang.vostok.Vostok;
+import yueyang.vostok.data.dialect.VKDialectType;
 
 @VKEntity(table = "t_user")
 public class User {
@@ -50,7 +50,7 @@ DataSourceConfig cfg = new DataSourceConfig()
     .maxWaitMs(30000)
     .validationQuery("SELECT 1");
 
-Vostok.init(cfg, "com.example.entity");
+Vostok.Data.init(cfg, "com.example.entity");
 ```
 
 **实体定义**
@@ -71,20 +71,20 @@ public class Task {
 **CRUD 基础用法**
 ```java
 User u = new User();
-Vostok.insert(u);
+Vostok.Data.insert(u);
 
 u.setName("Tom");
-Vostok.update(u);
+Vostok.Data.update(u);
 
-Vostok.delete(User.class, 1L);
+Vostok.Data.delete(User.class, 1L);
 
-User one = Vostok.findById(User.class, 1L);
-List<User> all = Vostok.findAll(User.class);
+User one = Vostok.Data.findById(User.class, 1L);
+List<User> all = Vostok.Data.findAll(User.class);
 ```
 
 **分页查询与总数**
 ```java
-import yueyang.vostok.query.*;
+import yueyang.vostok.data.query.*;
 
 VKQuery q = VKQuery.create()
     .where(VKCondition.of("name", VKOperator.LIKE, "%tom%"))
@@ -93,8 +93,8 @@ VKQuery q = VKQuery.create()
     .limit(20)
     .offset(0);
 
-List<User> list = Vostok.query(User.class, q);
-long total = Vostok.count(User.class, q);
+List<User> list = Vostok.Data.query(User.class, q);
+long total = Vostok.Data.count(User.class, q);
 ```
 说明：`count` 只统计当前条件，不受 `limit/offset` 影响。
 
@@ -114,19 +114,19 @@ VKQuery agg = VKQuery.create()
     .groupBy("age")
     .having(VKCondition.raw("COUNT(1)", VKOperator.GT, 1))
     .selectAggregates(VKAggregate.countAll("cnt"));
-List<Object[]> rows = Vostok.aggregate(User.class, agg);
+List<Object[]> rows = Vostok.Data.aggregate(User.class, agg);
 
 // 投影查询
 VKQuery proj = VKQuery.create().orderBy(VKOrder.asc("id"));
-List<User> names = Vostok.queryColumns(User.class, proj, "name");
+List<User> names = Vostok.Data.queryColumns(User.class, proj, "name");
 ```
 
 **子查询（EXISTS / IN）与白名单**
 子查询与 raw 表达式必须注册白名单，以降低 SQL 注入风险。
 ```java
-Vostok.registerRawSql("COUNT(1)", "1");
-Vostok.registerSubquery("SELECT 1 FROM t_user u2 WHERE u2.id = t_user.id AND u2.age >= ?");
-Vostok.registerSubquery("SELECT id FROM t_user WHERE age >= ?");
+Vostok.Data.registerRawSql("COUNT(1)", "1");
+Vostok.Data.registerSubquery("SELECT 1 FROM t_user u2 WHERE u2.id = t_user.id AND u2.age >= ?");
+Vostok.Data.registerSubquery("SELECT id FROM t_user WHERE age >= ?");
 
 VKQuery q1 = VKQuery.create()
     .where(VKCondition.exists("SELECT 1 FROM t_user u2 WHERE u2.id = t_user.id AND u2.age >= ?", 20));
@@ -143,46 +143,46 @@ VKQuery q3 = VKQuery.create()
 
 多数据源隔离注册示例：
 ```java
-Vostok.registerRawSql("ds2", new String[]{"COUNT(1)"});
-Vostok.registerSubquery("ds2", new String[]{"SELECT id FROM t_user WHERE age >= ?"});
+Vostok.Data.registerRawSql("ds2", new String[]{"COUNT(1)"});
+Vostok.Data.registerSubquery("ds2", new String[]{"SELECT id FROM t_user WHERE age >= ?"});
 ```
 
 **事务（传播 / 隔离 / 只读）**
 ```java
-Vostok.tx(() -> {
-    Vostok.insert(user);
-    Vostok.tx(() -> {
-        Vostok.insert(user2);
+Vostok.Data.tx(() -> {
+    Vostok.Data.insert(user);
+    Vostok.Data.tx(() -> {
+        Vostok.Data.insert(user2);
     }, VKTxPropagation.REQUIRES_NEW, VKTxIsolation.READ_COMMITTED, false);
 }, VKTxPropagation.REQUIRED, VKTxIsolation.REPEATABLE_READ, false);
 
-Vostok.tx(() -> {
-    Vostok.findAll(User.class);
+Vostok.Data.tx(() -> {
+    Vostok.Data.findAll(User.class);
 }, VKTxPropagation.SUPPORTS, VKTxIsolation.DEFAULT, true);
 ```
 说明：事务上下文仅限当前线程，异步线程不会自动传播事务。
 
 **Savepoint（默认开启）**
 ```java
-Vostok.tx(() -> {
-    Vostok.insert(u1);
+Vostok.Data.tx(() -> {
+    Vostok.Data.insert(u1);
     try {
-        Vostok.tx(() -> {
-            Vostok.insert(u2);
+        Vostok.Data.tx(() -> {
+            Vostok.Data.insert(u2);
             throw new RuntimeException("inner");
         }, VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT);
     } catch (Exception ignore) {
     }
-    Vostok.insert(u3);
+    Vostok.Data.insert(u3);
 });
 ```
 
 **批量操作与明细**
 ```java
 List<User> users = List.of(u1, u2, u3);
-int insertCount = Vostok.batchInsert(users);
+int insertCount = Vostok.Data.batchInsert(users);
 
-var detail = Vostok.batchInsertDetail(users);
+var detail = Vostok.Data.batchInsertDetail(users);
 int ok = detail.totalSuccess();
 int fail = detail.totalFail();
 ```
@@ -195,25 +195,25 @@ DataSourceConfig cfg2 = new DataSourceConfig()
     .password("")
     .driver("org.h2.Driver");
 
-Vostok.registerDataSource("ds2", cfg2);
-Vostok.withDataSource("ds2", () -> Vostok.insert(user));
+Vostok.Data.registerDataSource("ds2", cfg2);
+Vostok.Data.withDataSource("ds2", () -> Vostok.Data.insert(user));
 ```
 
 **异步上下文（VostokContext）**
 ```java
 ExecutorService pool = Executors.newFixedThreadPool(4);
 
-Vostok.withDataSource("ds2", () -> {
-    Vostok.insert(user);
-    VostokContext ctx = Vostok.captureContext();
+Vostok.Data.withDataSource("ds2", () -> {
+    Vostok.Data.insert(user);
+    VostokContext ctx = Vostok.Data.captureContext();
     CompletableFuture<Integer> future = CompletableFuture.supplyAsync(
-        Vostok.wrap(ctx, () -> Vostok.findAll(User.class).size()), pool
+        Vostok.Data.wrap(ctx, () -> Vostok.Data.findAll(User.class).size()), pool
     );
 });
 ```
 说明：
 - `VostokContext` 仅传播数据源上下文，不传播事务。
-- 事务需在异步线程内显式 `Vostok.tx(...)`。
+- 事务需在异步线程内显式 `Vostok.Data.tx(...)`。
 
 **多数据源 + 异步传递（组合示例）**
 ```java
@@ -223,7 +223,7 @@ DataSourceConfig cfg = new DataSourceConfig()
         .password("")
         .driver("org.h2.Driver")
         .dialect(VKDialectType.MYSQL);
-Vostok.init(cfg, "yueyang.vostok");
+Vostok.Data.init(cfg, "yueyang.vostok");
 
 DataSourceConfig cfg2 = new DataSourceConfig()
         .url("jdbc:h2:mem:devkit2;MODE=MySQL;DB_CLOSE_DELAY=-1")
@@ -231,23 +231,23 @@ DataSourceConfig cfg2 = new DataSourceConfig()
         .password("")
         .driver("org.h2.Driver")
         .dialect(VKDialectType.MYSQL);
-Vostok.registerDataSource("ds2", cfg2);
+Vostok.Data.registerDataSource("ds2", cfg2);
 
 ExecutorService es = Executors.newFixedThreadPool(2);
 
 // 主线程默认使用 default 数据源
-Vostok.insert(user("D1", 1));
+Vostok.Data.insert(user("D1", 1));
 
 // 在 ds2 上异步执行，并确保上下文被正确传递
-CompletableFuture<Integer> f = Vostok.withDataSource("ds2", () -> {
-    Vostok.insert(user("D2", 2));
+CompletableFuture<Integer> f = Vostok.Data.withDataSource("ds2", () -> {
+    Vostok.Data.insert(user("D2", 2));
     return CompletableFuture.supplyAsync(
-            Vostok.wrap(() -> Vostok.findAll(UserEntity.class).size()), es
+            Vostok.Data.wrap(() -> Vostok.Data.findAll(UserEntity.class).size()), es
     );
 });
 
 Integer ds2Count = f.get(3, TimeUnit.SECONDS);
-Integer ds1Count = Vostok.findAll(UserEntity.class).size();
+Integer ds1Count = Vostok.Data.findAll(UserEntity.class).size();
 
 System.out.println("ds2 size=" + ds2Count + ", default size=" + ds1Count);
 
@@ -256,7 +256,7 @@ es.shutdown();
 
 **插件拦截器**
 ```java
-Vostok.registerInterceptor(new VKInterceptor() {
+Vostok.Data.registerInterceptor(new VKInterceptor() {
     @Override
     public void beforeExecute(String sql, Object[] params) {
         if (sql != null && sql.contains("t_secret")) {
@@ -278,8 +278,8 @@ Vostok.registerInterceptor(new VKInterceptor() {
 
 **监控与诊断**
 ```java
-var metrics = Vostok.poolMetrics();
-String report = Vostok.report();
+var metrics = Vostok.Data.poolMetrics();
+String report = Vostok.Data.report();
 ```
 说明：
 - 监控开关关闭时不会执行采集逻辑，避免额外开销。
@@ -294,17 +294,17 @@ DataSourceConfig cfg = new DataSourceConfig()
 
 **元数据热更新**
 ```java
-Vostok.refreshMeta(); // 使用初始化时的包名
-Vostok.refreshMeta("com.example.entity");
+Vostok.Data.refreshMeta(); // 使用初始化时的包名
+Vostok.Data.refreshMeta("com.example.entity");
 ```
 
 **异常分层**
 ```java
 try {
-    Vostok.insert(user);
-} catch (yueyang.vostok.exception.VKSqlException e) {
+    Vostok.Data.insert(user);
+} catch (yueyang.vostok.data.exception.VKSqlException e) {
     // SQL 异常（含 SQLState/错误码）
-} catch (yueyang.vostok.exception.VKMetaException e) {
+} catch (yueyang.vostok.data.exception.VKMetaException e) {
     // 元数据异常
 }
 ```
@@ -315,8 +315,8 @@ try {
 **可插拔扫描器**
 在复杂 ClassLoader/容器环境下可替换默认扫描器：
 ```java
-Vostok.setScanner((pkgs) -> Set.of(UserEntity.class, TaskEntity.class));
-Vostok.init(cfg, "ignored.pkg");
+Vostok.Data.setScanner((pkgs) -> Set.of(UserEntity.class, TaskEntity.class));
+Vostok.Data.init(cfg, "ignored.pkg");
 ```
 
 **配置参考（DataSourceConfig）**
@@ -356,4 +356,4 @@ Vostok.init(cfg, "ignored.pkg");
 | 删除 | 131,281.90 | 63,672.31 | N/A |
 
 **全量扫描**
-如果 `Vostok.init(cfg)` 不传入包名，将扫描整个 classpath。
+如果 `Vostok.Data.init(cfg)` 不传入包名，将扫描整个 classpath。

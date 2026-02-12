@@ -19,7 +19,7 @@
 | DK-530 | TX_ERROR | 事务错误 |
 | DK-540 | CACHE_ERROR | 缓存错误 |
 
-## 异常类型（yueyang.vostok.exception）
+## 异常类型（yueyang.vostok.data.exception）
 - `VKException`：所有运行时异常的基类，包含 `VKErrorCode`
 - `VKArgumentException`：参数非法（`INVALID_ARGUMENT`）
 - `VKStateException`：状态异常（`NOT_INITIALIZED`）
@@ -33,7 +33,7 @@
 ## 异常获取与统一处理
 ```java
 try {
-    Vostok.findAll(User.class);
+    Vostok.Data.findAll(User.class);
 } catch (VKException e) {
     System.out.println(e.getCode() + " " + e.getMessage());
 }

@@ -1,8 +1,8 @@
 package yueyang.vostok;
 
-import yueyang.vostok.annotation.VKColumn;
-import yueyang.vostok.annotation.VKEntity;
-import yueyang.vostok.annotation.VKId;
+import yueyang.vostok.data.annotation.VKColumn;
+import yueyang.vostok.data.annotation.VKEntity;
+import yueyang.vostok.data.annotation.VKId;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;

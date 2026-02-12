@@ -1,8 +1,8 @@
 package yueyang.vostok;
 
 import org.junit.jupiter.api.Test;
-import yueyang.vostok.config.DataSourceConfig;
-import yueyang.vostok.jdbc.VKRetryPolicy;
+import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.jdbc.VKRetryPolicy;
 
 import java.sql.SQLException;
 

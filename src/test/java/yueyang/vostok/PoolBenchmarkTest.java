@@ -2,9 +2,9 @@ package yueyang.vostok;
 
 import org.junit.jupiter.api.Test;
 
-import yueyang.vostok.config.DataSourceConfig;
-import yueyang.vostok.dialect.VKDialectType;
-import yueyang.vostok.pool.VKDataSource;
+import yueyang.vostok.data.config.DataSourceConfig;
+import yueyang.vostok.data.dialect.VKDialectType;
+import yueyang.vostok.data.pool.VKDataSource;
 
 import java.sql.Connection;
 import java.util.concurrent.CountDownLatch;

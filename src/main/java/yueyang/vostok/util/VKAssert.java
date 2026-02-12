@@ -1,6 +1,6 @@
 package yueyang.vostok.util;
 
-import yueyang.vostok.exception.VKArgumentException;
+import yueyang.vostok.data.exception.VKArgumentException;
 
 public final class VKAssert {
     private VKAssert() {

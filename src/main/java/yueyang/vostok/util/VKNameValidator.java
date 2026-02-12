@@ -1,6 +1,6 @@
 package yueyang.vostok.util;
 
-import yueyang.vostok.exception.VKArgumentException;
+import yueyang.vostok.data.exception.VKArgumentException;
 
 import java.util.regex.Pattern;
 

@@ -1,8 +1,8 @@
 package yueyang.vostokbad;
 
-import yueyang.vostok.annotation.VKColumn;
-import yueyang.vostok.annotation.VKEntity;
-import yueyang.vostok.annotation.VKId;
+import yueyang.vostok.data.annotation.VKColumn;
+import yueyang.vostok.data.annotation.VKEntity;
+import yueyang.vostok.data.annotation.VKId;
 
 /**
  * 非法列名实体，用于安全校验测试。
