@@ -386,6 +386,45 @@ Vostok.Data.init(cfg, "ignored.pkg");
 **使用方式**
 见上方 **Web 快速上手** 示例。
 
+**路由创建示例**
+```java
+import yueyang.vostok.Vostok;
+
+Vostok.Web.init(8080)
+    .get("/ping", (req, res) -> res.text("ok"))
+    .get("/users", (req, res) -> res.json("[{\"id\":1,\"name\":\"Tom\"}]"))
+    .post("/users", (req, res) -> res.json("{\"ok\":true}"))
+    .route("PUT", "/users/1", (req, res) -> res.text("updated"))
+    .route("DELETE", "/users/1", (req, res) -> res.text("deleted"));
+
+Vostok.Web.start();
+```
+
+**中间件示例**
+```java
+import yueyang.vostok.Vostok;
+
+Vostok.Web.init(8080)
+    .use((req, res, chain) -> {
+        long start = System.currentTimeMillis();
+        res.header("X-Trace-Id", String.valueOf(start));
+        chain.next(req, res);
+        long cost = System.currentTimeMillis() - start;
+        System.out.println(req.method() + " " + req.path() + " cost=" + cost + "ms");
+    })
+    .use((req, res, chain) -> {
+        String token = req.header("x-token");
+        if (token == null || token.isEmpty()) {
+            res.status(401).text("Unauthorized");
+            return;
+        }
+        chain.next(req, res);
+    })
+    .get("/secure", (req, res) -> res.text("ok"));
+
+Vostok.Web.start();
+```
+
 **配置参考（VKWebConfig）**
 - `port`：监听端口。可传 `0` 让系统自动分配空闲端口。
 - `ioThreads`：IO 线程数（Reactor 数量）。建议 1 或少量。
