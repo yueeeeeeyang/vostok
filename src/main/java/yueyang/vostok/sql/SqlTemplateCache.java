@@ -3,25 +3,25 @@ package yueyang.vostok.sql;
 import yueyang.vostok.meta.EntityMeta;
 import yueyang.vostok.util.VKAssert;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * SQL 模板 LRU 缓存（按实体 + 类型）。
  */
 public class SqlTemplateCache {
     private final int maxSize;
-    private final Map<String, SqlTemplate> cache;
+    private final ConcurrentHashMap<String, SqlTemplate> cache;
+    private final ConcurrentLinkedQueue<String> accessQueue;
+    private final AtomicInteger size;
 
     public SqlTemplateCache(int maxSize) {
         this.maxSize = Math.max(0, maxSize);
-        this.cache = new LinkedHashMap<>(128, 0.75f, true) {
-            @Override
-            
-            protected boolean removeEldestEntry(Map.Entry<String, SqlTemplate> eldest) {
-                return SqlTemplateCache.this.maxSize > 0 && size() > SqlTemplateCache.this.maxSize;
-            }
-        };
+        this.cache = new ConcurrentHashMap<>(128);
+        this.accessQueue = new ConcurrentLinkedQueue<>();
+        this.size = new AtomicInteger(0);
     }
 
     
@@ -29,31 +29,46 @@ public class SqlTemplateCache {
         VKAssert.notNull(meta, "EntityMeta is null");
         VKAssert.notNull(type, "SqlTemplateType is null");
         String key = meta.getEntityClass().getName() + ":" + type.name();
-        synchronized (cache) {
-            SqlTemplate template = cache.get(key);
-            if (template != null) {
-                return template;
-            }
+        SqlTemplate template = cache.get(key);
+        if (template != null) {
+            return template;
         }
         SqlTemplate built = SqlTemplateBuilder.build(meta, type);
-        synchronized (cache) {
-            cache.put(key, built);
+        SqlTemplate existing = cache.putIfAbsent(key, built);
+        if (existing != null) {
+            return existing;
         }
+        accessQueue.offer(key);
+        size.incrementAndGet();
+        evictIfNeeded();
         return built;
+    }
+
+    private void evictIfNeeded() {
+        if (maxSize <= 0) {
+            return;
+        }
+        while (size.get() > maxSize) {
+            String key = accessQueue.poll();
+            if (key == null) {
+                return;
+            }
+            if (cache.remove(key) != null) {
+                size.decrementAndGet();
+            }
+        }
     }
 
     
     public int size() {
-        synchronized (cache) {
-            return cache.size();
-        }
+        return cache.size();
     }
 
     
     public void clear() {
-        synchronized (cache) {
-            cache.clear();
-        }
+        cache.clear();
+        accessQueue.clear();
+        size.set(0);
     }
 
     
