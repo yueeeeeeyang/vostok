@@ -419,8 +419,10 @@ Vostok.Data.setScanner(VKScanner::scan);
 
 **核心特性**
 - 纯 Java NIO Reactor 模式，低开销高并发
+- 多 Reactor 线程模型（Accept + IO 分离）
 - 路由 + 中间件链
 - 支持 Keep-Alive 与基础错误处理
+- 支持 Chunked 请求体与 `Expect: 100-continue`
 
 **使用方式**
 见上方 **Web 快速上手** 示例。
@@ -521,3 +523,6 @@ Vostok.Web.start();
 - `maxHeaderBytes`：请求头最大字节数，超过返回 431。
 - `maxBodyBytes`：请求体最大字节数，超过返回 413。
 - `keepAliveTimeoutMs`：Keep-Alive 空闲超时（毫秒）。
+- `maxConnections`：最大连接数，超过直接拒绝。
+- `readTimeoutMs`：读取请求体超时（毫秒）。
+- `workerQueueSize`：业务线程池队列长度。

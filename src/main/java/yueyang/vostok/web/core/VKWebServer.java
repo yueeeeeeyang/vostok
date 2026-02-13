@@ -12,6 +12,8 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -22,13 +24,15 @@ public final class VKWebServer {
     private final List<VKMiddleware> middlewares = Collections.synchronizedList(new ArrayList<>());
     private volatile VKErrorHandler errorHandler;
     private volatile boolean started = false;
-    private Selector selector;
     private ServerSocketChannel serverChannel;
-    private Thread reactorThread;
-    private VKReactor reactor;
+    private Thread acceptorThread;
+    private VKReactor[] reactors;
     private VKWorkerPool workers;
     private VKBufferPool bufferPool;
     private int boundPort;
+    private final AtomicInteger activeConnections = new AtomicInteger();
+    private volatile boolean accepting = false;
+    private int rr = 0;
 
     public VKWebServer(VKWebConfig config) {
         this.config = config;
@@ -54,19 +58,26 @@ public final class VKWebServer {
             return;
         }
         try {
-            selector = Selector.open();
             serverChannel = ServerSocketChannel.open();
-            serverChannel.configureBlocking(false);
+            serverChannel.configureBlocking(true);
             serverChannel.bind(new InetSocketAddress(config.getPort()), config.getBacklog());
             boundPort = ((InetSocketAddress) serverChannel.getLocalAddress()).getPort();
-            serverChannel.register(selector, java.nio.channels.SelectionKey.OP_ACCEPT);
 
-            workers = new VKWorkerPool(config.getWorkerThreads());
+            workers = new VKWorkerPool(config.getWorkerThreads(), config.getWorkerQueueSize());
             bufferPool = new VKBufferPool(config.getReadBufferSize(), 1024);
-            reactor = new VKReactor(this, selector, serverChannel, workers, router, middlewares, errorHandler,
-                    new VKHttpParser(config.getMaxHeaderBytes(), config.getMaxBodyBytes()), bufferPool);
-            reactorThread = new Thread(reactor, "vostok-web-reactor");
-            reactorThread.start();
+            int ioThreads = Math.max(1, config.getIoThreads());
+            reactors = new VKReactor[ioThreads];
+            for (int i = 0; i < ioThreads; i++) {
+                Selector sel = Selector.open();
+                reactors[i] = new VKReactor(this, sel, workers, router, middlewares, errorHandler,
+                        new VKHttpParser(config.getMaxHeaderBytes(), config.getMaxBodyBytes()), bufferPool, config);
+                Thread t = new Thread(reactors[i], "vostok-web-reactor-" + i);
+                t.start();
+            }
+
+            accepting = true;
+            acceptorThread = new Thread(this::acceptLoop, "vostok-web-acceptor");
+            acceptorThread.start();
             started = true;
         } catch (IOException e) {
             cleanup();
@@ -79,8 +90,16 @@ public final class VKWebServer {
             return;
         }
         started = false;
-        if (reactor != null) {
-            reactor.stop();
+        accepting = false;
+        if (acceptorThread != null) {
+            acceptorThread.interrupt();
+        }
+        if (reactors != null) {
+            for (VKReactor r : reactors) {
+                if (r != null) {
+                    r.stop();
+                }
+            }
         }
         cleanup();
     }
@@ -100,14 +119,53 @@ public final class VKWebServer {
             }
         } catch (IOException ignore) {
         }
-        try {
-            if (selector != null) {
-                selector.close();
-            }
-        } catch (IOException ignore) {
-        }
         if (workers != null) {
             workers.shutdown();
+        }
+    }
+
+    int maxConnections() {
+        return config.getMaxConnections();
+    }
+
+    int readTimeoutMs() {
+        return config.getReadTimeoutMs();
+    }
+
+    int keepAliveTimeoutMs() {
+        return config.getKeepAliveTimeoutMs();
+    }
+
+    int incConnections() {
+        return activeConnections.incrementAndGet();
+    }
+
+    int decConnections() {
+        return activeConnections.decrementAndGet();
+    }
+
+    private void acceptLoop() {
+        while (accepting) {
+            try {
+                SocketChannel ch = serverChannel.accept();
+                if (ch == null) {
+                    continue;
+                }
+                if (activeConnections.get() >= config.getMaxConnections()) {
+                    try {
+                        ch.close();
+                    } catch (IOException ignore) {
+                    }
+                    continue;
+                }
+                ch.configureBlocking(false);
+                VKReactor r = reactors[rr++ % reactors.length];
+                r.register(ch);
+            } catch (IOException e) {
+                if (!accepting) {
+                    break;
+                }
+            }
         }
     }
 }

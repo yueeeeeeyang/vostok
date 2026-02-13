@@ -12,6 +12,9 @@ public final class VKWebConfig {
     private int maxHeaderBytes = 32 * 1024;
     private int maxBodyBytes = 4 * 1024 * 1024;
     private int keepAliveTimeoutMs = 30_000;
+    private int maxConnections = 10_000;
+    private int readTimeoutMs = 15_000;
+    private int workerQueueSize = 10_000;
 
     public int getPort() {
         return port;
@@ -82,6 +85,33 @@ public final class VKWebConfig {
 
     public VKWebConfig keepAliveTimeoutMs(int keepAliveTimeoutMs) {
         this.keepAliveTimeoutMs = Math.max(1000, keepAliveTimeoutMs);
+        return this;
+    }
+
+    public int getMaxConnections() {
+        return maxConnections;
+    }
+
+    public VKWebConfig maxConnections(int maxConnections) {
+        this.maxConnections = Math.max(1, maxConnections);
+        return this;
+    }
+
+    public int getReadTimeoutMs() {
+        return readTimeoutMs;
+    }
+
+    public VKWebConfig readTimeoutMs(int readTimeoutMs) {
+        this.readTimeoutMs = Math.max(1000, readTimeoutMs);
+        return this;
+    }
+
+    public int getWorkerQueueSize() {
+        return workerQueueSize;
+    }
+
+    public VKWebConfig workerQueueSize(int workerQueueSize) {
+        this.workerQueueSize = Math.max(1, workerQueueSize);
         return this;
     }
 }

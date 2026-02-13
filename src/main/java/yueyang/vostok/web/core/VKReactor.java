@@ -1,7 +1,6 @@
 package yueyang.vostok.web.core;
 
 import yueyang.vostok.web.VKErrorHandler;
-import yueyang.vostok.web.VKHandler;
 import yueyang.vostok.web.http.VKHttpParseException;
 import yueyang.vostok.web.http.VKHttpParser;
 import yueyang.vostok.web.http.VKHttpWriter;
@@ -11,14 +10,15 @@ import yueyang.vostok.web.middleware.VKChain;
 import yueyang.vostok.web.middleware.VKMiddleware;
 import yueyang.vostok.web.route.VKRouter;
 import yueyang.vostok.web.util.VKBufferPool;
+import yueyang.vostok.web.VKWebConfig;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
-import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -26,34 +26,35 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 final class VKReactor implements Runnable {
     private final VKWebServer server;
     private final Selector selector;
-    private final ServerSocketChannel serverChannel;
     private final VKWorkerPool workers;
     private final VKRouter router;
     private final List<VKMiddleware> middlewares;
     private final VKErrorHandler errorHandler;
     private final VKHttpParser parser;
     private final VKBufferPool bufferPool;
+    private final VKWebConfig config;
     private final Queue<Runnable> pending = new ConcurrentLinkedQueue<>();
+    private final List<VKConn> connections = new ArrayList<>();
     private volatile boolean running = true;
 
     VKReactor(VKWebServer server,
               Selector selector,
-              ServerSocketChannel serverChannel,
               VKWorkerPool workers,
               VKRouter router,
               List<VKMiddleware> middlewares,
               VKErrorHandler errorHandler,
               VKHttpParser parser,
-              VKBufferPool bufferPool) {
+              VKBufferPool bufferPool,
+              VKWebConfig config) {
         this.server = server;
         this.selector = selector;
-        this.serverChannel = serverChannel;
         this.workers = workers;
         this.router = router;
         this.middlewares = middlewares;
         this.errorHandler = errorHandler;
         this.parser = parser;
         this.bufferPool = bufferPool;
+        this.config = config;
     }
 
     @Override
@@ -70,21 +71,18 @@ final class VKReactor implements Runnable {
                         continue;
                     }
                     try {
-                        if (key.isAcceptable()) {
-                            onAccept();
-                        } else {
-                            VKConn conn = (VKConn) key.attachment();
-                            if (key.isReadable()) {
-                                conn.onRead();
-                            }
-                            if (key.isWritable()) {
-                                conn.onWrite();
-                            }
+                        VKConn conn = (VKConn) key.attachment();
+                        if (key.isReadable()) {
+                            conn.onRead();
+                        }
+                        if (key.isWritable()) {
+                            conn.onWrite();
                         }
                     } catch (java.nio.channels.CancelledKeyException e) {
                         // key cancelled during processing, ignore
                     }
                 }
+                sweepIdle();
             } catch (java.nio.channels.ClosedSelectorException e) {
                 break;
             } catch (IOException e) {
@@ -99,6 +97,24 @@ final class VKReactor implements Runnable {
 
     void stop() {
         running = false;
+        selector.wakeup();
+    }
+
+    void register(SocketChannel channel) {
+        pending.add(() -> {
+            try {
+                SelectionKey key = channel.register(selector, SelectionKey.OP_READ);
+                VKConn conn = new VKConn(server, channel, key, parser, bufferPool, workers, router, middlewares, errorHandler, this, config);
+                key.attach(conn);
+                connections.add(conn);
+                server.incConnections();
+            } catch (Exception e) {
+                try {
+                    channel.close();
+                } catch (IOException ignore) {
+                }
+            }
+        });
         selector.wakeup();
     }
 
@@ -127,17 +143,29 @@ final class VKReactor implements Runnable {
         }
     }
 
-    private void onAccept() {
-        try {
-            SocketChannel channel = serverChannel.accept();
-            if (channel == null) {
-                return;
+    private void sweepIdle() {
+        if (connections.isEmpty()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        long keepAliveMs = config.getKeepAliveTimeoutMs();
+        long readTimeoutMs = config.getReadTimeoutMs();
+        for (int i = connections.size() - 1; i >= 0; i--) {
+            VKConn c = connections.get(i);
+            if (c.isClosed()) {
+                connections.remove(i);
+                continue;
             }
-            channel.configureBlocking(false);
-            SelectionKey key = channel.register(selector, SelectionKey.OP_READ);
-            VKConn conn = new VKConn(server, channel, key, parser, bufferPool, workers, router, middlewares, errorHandler, this);
-            key.attach(conn);
-        } catch (IOException ignore) {
+            long idle = now - c.lastActive();
+            if (idle > keepAliveMs) {
+                requestClose(c);
+                connections.remove(i);
+                continue;
+            }
+            if (c.waitingForBody() && (now - c.lastReadTime()) > readTimeoutMs) {
+                c.respondTimeout();
+                connections.remove(i);
+            }
         }
     }
 
@@ -158,6 +186,12 @@ final class VKReactor implements Runnable {
         private final Queue<byte[]> writeQueue = new ConcurrentLinkedQueue<>();
         private ByteBuffer currentWrite;
         private volatile boolean closeAfterWrite = false;
+        private final int readTimeoutMs;
+        private volatile long lastActive;
+        private volatile long lastRead;
+        private volatile boolean waitingBody;
+        private volatile boolean closed;
+        private volatile boolean sentContinue;
 
         VKConn(VKWebServer server,
                SocketChannel channel,
@@ -168,7 +202,8 @@ final class VKReactor implements Runnable {
                VKRouter router,
                List<VKMiddleware> middlewares,
                VKErrorHandler errorHandler,
-               VKReactor reactor) {
+               VKReactor reactor,
+               VKWebConfig config) {
             this.server = server;
             this.channel = channel;
             this.key = key;
@@ -179,7 +214,10 @@ final class VKReactor implements Runnable {
             this.middlewares = middlewares;
             this.errorHandler = errorHandler;
             this.reactor = reactor;
+            this.readTimeoutMs = config.getReadTimeoutMs();
             this.readBuffer = bufferPool.acquire();
+            this.lastActive = System.currentTimeMillis();
+            this.lastRead = lastActive;
         }
 
         SelectionKey key() {
@@ -200,6 +238,8 @@ final class VKReactor implements Runnable {
                 }
                 return;
             }
+            lastRead = System.currentTimeMillis();
+            lastActive = lastRead;
             readBuffer.flip();
             ensureCapacity(dataLen + readBuffer.remaining());
             while (readBuffer.hasRemaining()) {
@@ -210,7 +250,7 @@ final class VKReactor implements Runnable {
             while (true) {
                 VKHttpParser.ParsedRequest parsed;
                 try {
-                    parsed = parser.parse(dataBuf, dataLen, remoteAddress());
+                    parsed = parser.parse(dataBuf, dataLen, remoteAddress(), sentContinue);
                 } catch (VKHttpParseException e) {
                     respondError(e.status(), e.getMessage(), true);
                     return;
@@ -220,8 +260,15 @@ final class VKReactor implements Runnable {
                 }
 
                 if (parsed == null) {
+                    waitingBody = true;
+                    if (!sentContinue && parser.shouldSendContinue(dataBuf, dataLen)) {
+                        enqueueResponse(VKHttpWriter.writeContinue(), false);
+                        sentContinue = true;
+                    }
                     return;
                 }
+                waitingBody = false;
+                sentContinue = false;
 
                 VKRequest req = parsed.request();
                 int consumed = parsed.consumed();
@@ -262,6 +309,10 @@ final class VKReactor implements Runnable {
         }
 
         void close() {
+            if (closed) {
+                return;
+            }
+            closed = true;
             try {
                 key.cancel();
             } catch (Exception ignore) {
@@ -271,10 +322,11 @@ final class VKReactor implements Runnable {
             } catch (IOException ignore) {
             }
             bufferPool.release(readBuffer);
+            server.decConnections();
         }
 
         private void dispatch(VKRequest req) {
-            workers.submit(() -> {
+            boolean accepted = workers.submit(() -> {
                 VKResponse res = new VKResponse();
                 try {
                     var match = router.match(req.method(), req.path());
@@ -300,12 +352,21 @@ final class VKReactor implements Runnable {
                 byte[] out = VKHttpWriter.write(res, keepAlive);
                 enqueueResponse(out, !keepAlive);
             });
+            if (!accepted) {
+                VKResponse res = new VKResponse().status(503).text("Service Unavailable");
+                enqueueResponse(VKHttpWriter.write(res, false), true);
+            }
         }
 
         private void respondError(int status, String msg, boolean close) {
             VKResponse res = new VKResponse().status(status).text(msg == null ? "" : msg);
             byte[] out = VKHttpWriter.write(res, false);
             enqueueResponse(out, close);
+        }
+
+        void respondTimeout() {
+            VKResponse res = new VKResponse().status(408).text("Request Timeout");
+            enqueueResponse(VKHttpWriter.write(res, false), true);
         }
 
         private void ensureCapacity(int size) {
@@ -335,6 +396,22 @@ final class VKReactor implements Runnable {
             } catch (IOException e) {
                 return null;
             }
+        }
+
+        boolean waitingForBody() {
+            return waitingBody;
+        }
+
+        long lastActive() {
+            return lastActive;
+        }
+
+        long lastReadTime() {
+            return lastRead;
+        }
+
+        boolean isClosed() {
+            return closed;
         }
     }
 }

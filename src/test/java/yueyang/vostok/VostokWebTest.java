@@ -8,6 +8,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.Socket;
+import java.io.OutputStream;
+import java.io.InputStream;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -87,5 +91,29 @@ public class VostokWebTest {
         HttpResponse<String> res = client.send(getReq, HttpResponse.BodyHandlers.ofString());
         assertEquals(404, res.statusCode());
         assertEquals("Not Found", res.body());
+    }
+
+
+    @Test
+    void testMaxConnections() throws Exception {
+        Vostok.Web.init(new yueyang.vostok.web.VKWebConfig().port(0).maxConnections(1))
+                .get("/ping", (req, res) -> res.text("ok"));
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        try (Socket s1 = new Socket("127.0.0.1", port)) {
+            // Second connection should be rejected when maxConnections=1
+            try (Socket s2 = new Socket("127.0.0.1", port)) {
+                s2.setSoTimeout(200);
+                OutputStream out = s2.getOutputStream();
+                out.write("GET /ping HTTP/1.1\\r\\nHost: 127.0.0.1\\r\\n\\r\\n".getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                out.flush();
+                InputStream in = s2.getInputStream();
+                int r = in.read();
+                assertTrue(r == -1 || r == 0);
+            } catch (IOException ignore) {
+                // connect refused or closed is acceptable
+            }
+        }
     }
 }

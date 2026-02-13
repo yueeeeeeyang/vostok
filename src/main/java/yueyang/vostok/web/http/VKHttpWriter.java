@@ -7,6 +7,10 @@ public final class VKHttpWriter {
     private VKHttpWriter() {
     }
 
+    public static byte[] writeContinue() {
+        return "HTTP/1.1 100 Continue\r\n\r\n".getBytes(StandardCharsets.US_ASCII);
+    }
+
     public static byte[] write(VKResponse res, boolean keepAlive) {
         int status = res.status();
         String reason = reason(status);
@@ -61,8 +65,10 @@ public final class VKHttpWriter {
             case 400 -> "Bad Request";
             case 404 -> "Not Found";
             case 405 -> "Method Not Allowed";
+            case 408 -> "Request Timeout";
             case 413 -> "Payload Too Large";
             case 431 -> "Request Header Fields Too Large";
+            case 503 -> "Service Unavailable";
             case 500 -> "Internal Server Error";
             default -> "OK";
         };

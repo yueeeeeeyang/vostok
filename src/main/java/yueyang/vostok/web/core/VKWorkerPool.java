@@ -8,21 +8,26 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 final class VKWorkerPool {
-    private final ExecutorService executor;
+    private final ThreadPoolExecutor executor;
 
-    VKWorkerPool(int threads) {
+    VKWorkerPool(int threads, int queueSize) {
         this.executor = new ThreadPoolExecutor(
                 threads,
                 threads,
                 60L,
                 TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(),
+                new LinkedBlockingQueue<>(queueSize),
                 new NamedThreadFactory("vostok-web-worker")
         );
     }
 
-    void submit(Runnable task) {
-        executor.submit(task);
+    boolean submit(Runnable task) {
+        try {
+            executor.execute(task);
+            return true;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     void shutdown() {
