@@ -3,6 +3,7 @@ package yueyang.vostok.web;
 import yueyang.vostok.web.core.VKWebServer;
 import yueyang.vostok.web.middleware.VKMiddleware;
 import yueyang.vostok.web.auto.VKAutoCrud;
+import yueyang.vostok.web.auto.VKCrudStyle;
 
 /**
  * Vostok Web entry.
@@ -62,7 +63,7 @@ public class VostokWeb {
 
     public VostokWeb autoCrudApi(String... basePackages) {
         ensureServer();
-        for (var route : VKAutoCrud.build(basePackages)) {
+        for (var route : VKAutoCrud.build(VKCrudStyle.RESTFUL, basePackages)) {
             server.addRoute(route.method(), route.path(), route.handler());
         }
         return this;
@@ -70,6 +71,15 @@ public class VostokWeb {
 
     public VostokWeb autoCrudApi() {
         return autoCrudApi(new String[0]);
+    }
+
+    public VostokWeb autoCrudApi(VKCrudStyle style, String... basePackages) {
+        ensureServer();
+        VKCrudStyle s = style == null ? VKCrudStyle.RESTFUL : style;
+        for (var route : VKAutoCrud.build(s, basePackages)) {
+            server.addRoute(route.method(), route.path(), route.handler());
+        }
+        return this;
     }
 
     public VostokWeb use(VKMiddleware middleware) {

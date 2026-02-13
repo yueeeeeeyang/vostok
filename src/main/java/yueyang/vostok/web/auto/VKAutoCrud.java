@@ -19,7 +19,7 @@ public final class VKAutoCrud {
     private VKAutoCrud() {
     }
 
-    public static List<VKCrudRoute> build(String... basePackages) {
+    public static List<VKCrudRoute> build(VKCrudStyle style, String... basePackages) {
         Set<Class<?>> classes = VKScanner.scan(basePackages);
         List<VKCrudRoute> routes = new ArrayList<>();
         for (Class<?> clazz : classes) {
@@ -29,11 +29,19 @@ public final class VKAutoCrud {
             String basePath = resolvePath(clazz);
             Field idField = resolveIdField(clazz);
             Class<?> idType = idField == null ? String.class : idField.getType();
-            routes.add(new VKCrudRoute("GET", basePath, listHandler(clazz)));
-            routes.add(new VKCrudRoute("GET", basePath + "/{id}", getHandler(clazz, idType)));
-            routes.add(new VKCrudRoute("POST", basePath, insertHandler(clazz)));
-            routes.add(new VKCrudRoute("PUT", basePath + "/{id}", updateHandler(clazz, idField, idType)));
-            routes.add(new VKCrudRoute("DELETE", basePath + "/{id}", deleteHandler(clazz, idType)));
+            if (style == VKCrudStyle.TRADITIONAL) {
+                routes.add(new VKCrudRoute("GET", basePath + "/list", listHandler(clazz)));
+                routes.add(new VKCrudRoute("GET", basePath + "/get", getHandlerTraditional(clazz, idType)));
+                routes.add(new VKCrudRoute("POST", basePath + "/create", insertHandler(clazz)));
+                routes.add(new VKCrudRoute("POST", basePath + "/update", updateHandlerTraditional(clazz, idField, idType)));
+                routes.add(new VKCrudRoute("POST", basePath + "/delete", deleteHandlerTraditional(clazz, idType)));
+            } else {
+                routes.add(new VKCrudRoute("GET", basePath, listHandler(clazz)));
+                routes.add(new VKCrudRoute("GET", basePath + "/{id}", getHandler(clazz, idType)));
+                routes.add(new VKCrudRoute("POST", basePath, insertHandler(clazz)));
+                routes.add(new VKCrudRoute("PUT", basePath + "/{id}", updateHandler(clazz, idField, idType)));
+                routes.add(new VKCrudRoute("DELETE", basePath + "/{id}", deleteHandler(clazz, idType)));
+            }
         }
         return routes;
     }
@@ -96,6 +104,55 @@ public final class VKAutoCrud {
         return (req, res) -> {
             String idRaw = req.param("id");
             if (idRaw == null) {
+                res.status(400).text("Missing id");
+                return;
+            }
+            Object id = parseId(idRaw, idType);
+            int deleted = Vostok.Data.delete(clazz, id);
+            res.json("{\"deleted\":" + deleted + "}");
+        };
+    }
+
+    private static VKHandler getHandlerTraditional(Class<?> clazz, Class<?> idType) {
+        return (req, res) -> {
+            String idRaw = req.queryParam("id");
+            if (idRaw == null || idRaw.isEmpty()) {
+                res.status(400).text("Missing id");
+                return;
+            }
+            Object id = parseId(idRaw, idType);
+            Object one = Vostok.Data.findById(clazz, id);
+            if (one == null) {
+                res.status(404).text("Not Found");
+                return;
+            }
+            res.json(VKJson.toJson(one));
+        };
+    }
+
+    private static VKHandler updateHandlerTraditional(Class<?> clazz, Field idField, Class<?> idType) {
+        return (req, res) -> {
+            Object entity = parseBody(req, clazz, res);
+            if (entity == null) {
+                return;
+            }
+            String idRaw = req.queryParam("id");
+            if (idRaw != null && idField != null) {
+                Object id = parseId(idRaw, idType);
+                try {
+                    idField.set(entity, id);
+                } catch (IllegalAccessException ignore) {
+                }
+            }
+            int updated = Vostok.Data.update(entity);
+            res.json("{\"updated\":" + updated + "}");
+        };
+    }
+
+    private static VKHandler deleteHandlerTraditional(Class<?> clazz, Class<?> idType) {
+        return (req, res) -> {
+            String idRaw = req.queryParam("id");
+            if (idRaw == null || idRaw.isEmpty()) {
                 res.status(400).text("Missing id");
                 return;
             }

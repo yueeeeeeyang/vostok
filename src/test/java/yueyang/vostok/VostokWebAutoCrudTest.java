@@ -7,6 +7,7 @@ import yueyang.vostok.data.config.VKBatchFailStrategy;
 import yueyang.vostok.data.dialect.VKDialectType;
 import yueyang.vostok.data.exception.VKStateException;
 import yueyang.vostok.common.json.VKJson;
+import yueyang.vostok.web.auto.VKCrudStyle;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -89,6 +90,56 @@ public class VostokWebAutoCrudTest {
         HttpResponse<String> delRes = client.send(del, HttpResponse.BodyHandlers.ofString());
         assertEquals(200, delRes.statusCode());
         assertTrue(delRes.body().contains("\"deleted\""));
+    }
+
+    @Test
+    void testAutoCrudTraditional() throws Exception {
+        ensureData();
+
+        Vostok.Web.init(0).autoCrudApi(VKCrudStyle.TRADITIONAL);
+        Vostok.Web.start();
+
+        int port = Vostok.Web.port();
+        HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(2))
+                .build();
+
+        HttpRequest post = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/user/create"))
+                .POST(HttpRequest.BodyPublishers.ofString("{\"name\":\"Tom\",\"age\":20}"))
+                .build();
+        HttpResponse<String> postRes = client.send(post, HttpResponse.BodyHandlers.ofString());
+        assertEquals(201, postRes.statusCode());
+
+        HttpRequest list = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/user/list"))
+                .GET()
+                .build();
+        HttpResponse<String> listRes = client.send(list, HttpResponse.BodyHandlers.ofString());
+        List<?> listObj = VKJson.fromJson(listRes.body(), List.class);
+        Map<?, ?> item = (Map<?, ?>) listObj.get(0);
+        Object id = item.get("id");
+
+        HttpRequest get = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/user/get?id=" + id))
+                .GET()
+                .build();
+        HttpResponse<String> getRes = client.send(get, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, getRes.statusCode());
+
+        HttpRequest put = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/user/update?id=" + id))
+                .POST(HttpRequest.BodyPublishers.ofString("{\"name\":\"Jerry\",\"age\":21}"))
+                .build();
+        HttpResponse<String> putRes = client.send(put, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, putRes.statusCode());
+
+        HttpRequest del = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/user/delete?id=" + id))
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+        HttpResponse<String> delRes = client.send(del, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, delRes.statusCode());
     }
 
     private static void ensureData() {

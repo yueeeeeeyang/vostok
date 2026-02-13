@@ -425,7 +425,7 @@ Vostok.Data.setScanner(VKScanner::scan);
 **使用方式**
 见上方 **Web 快速上手** 示例。
 
-**自动 CRUD（零代码）**
+**自动 CRUD API（零代码）**
 在实体类添加 `@VKEntity` 后，直接开启自动 CRUD：
 ```java
 Vostok.Data.init(cfg, "com.example.entity");
@@ -437,17 +437,35 @@ Vostok.Web.init(8080).autoCrudApi();
 Vostok.Web.init(8080).autoCrudApi("com.example.entity");
 ```
 
+**风格切换**
+```java
+import yueyang.vostok.web.auto.VKCrudStyle;
+
+// 标准 RESTful（默认）
+Vostok.Web.init(8080).autoCrudApi(VKCrudStyle.RESTFUL);
+
+// 传统风格（仅 GET/POST）
+Vostok.Web.init(8080).autoCrudApi(VKCrudStyle.TRADITIONAL);
+```
+
 **路由规则**
 - 若 `@VKEntity(path = "...")` 填写了 `path`，则使用该值作为 API 前缀。
 - 未填写 `path` 时，路由前缀默认来自实体类名：去掉 `Entity` 后缀并转小驼峰。
 - 例如 `UserEntity` → `/user`，`TaskEntity` → `/task`。
 
-**自动 CRUD 映射**
+**自动 CRUD 映射（RESTful）**
 - `GET /user`：查询列表（`Vostok.Data.findAll`）
 - `GET /user/{id}`：查询单条（`Vostok.Data.findById`）
 - `POST /user`：新增（`Vostok.Data.insert`）
 - `PUT /user/{id}`：更新（`Vostok.Data.update`）
 - `DELETE /user/{id}`：删除（`Vostok.Data.delete`）
+
+**自动 CRUD 映射（传统风格，仅 GET/POST）**
+- `GET /user/list`：查询列表
+- `GET /user/get?id=1`：查询单条
+- `POST /user/create`：新增
+- `POST /user/update?id=1`：更新
+- `POST /user/delete?id=1`：删除
 
 **返回格式**
 - `GET` 返回 JSON 对象或数组。

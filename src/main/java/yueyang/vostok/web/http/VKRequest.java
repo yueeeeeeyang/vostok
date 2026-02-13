@@ -16,6 +16,7 @@ public final class VKRequest {
     private final boolean keepAlive;
     private final InetSocketAddress remoteAddress;
     private Map<String, String> params;
+    private Map<String, String> queryParams;
 
     public VKRequest(String method, String path, String query, String version,
                      Map<String, String> headers, byte[] body,
@@ -29,6 +30,7 @@ public final class VKRequest {
         this.keepAlive = keepAlive;
         this.remoteAddress = remoteAddress;
         this.params = new HashMap<>();
+        this.queryParams = null;
     }
 
     public String method() {
@@ -81,7 +83,55 @@ public final class VKRequest {
         return params.get(name);
     }
 
+    public String queryParam(String name) {
+        if (name == null) {
+            return null;
+        }
+        Map<String, String> map = ensureQueryParams();
+        return map.get(name);
+    }
+
+    public Map<String, String> queryParams() {
+        return ensureQueryParams();
+    }
+
     public void setParams(Map<String, String> params) {
         this.params = params == null ? new HashMap<>() : params;
+    }
+
+    private Map<String, String> ensureQueryParams() {
+        if (queryParams != null) {
+            return queryParams;
+        }
+        Map<String, String> map = new HashMap<>();
+        if (query != null && !query.isEmpty()) {
+            String[] parts = query.split("&");
+            for (String p : parts) {
+                if (p == null || p.isEmpty()) {
+                    continue;
+                }
+                int idx = p.indexOf('=');
+                if (idx <= 0) {
+                    map.put(decode(p), "");
+                } else {
+                    String k = decode(p.substring(0, idx));
+                    String v = decode(p.substring(idx + 1));
+                    map.put(k, v);
+                }
+            }
+        }
+        queryParams = map;
+        return map;
+    }
+
+    private String decode(String s) {
+        if (s == null) {
+            return null;
+        }
+        try {
+            return java.net.URLDecoder.decode(s, java.nio.charset.StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return s;
+        }
     }
 }
