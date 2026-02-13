@@ -16,4 +16,10 @@ public @interface VKEntity {
      * 数据库表名。
      */
     String table();
+
+    /**
+     * Web API 路径前缀（可选）。
+     * 为空时使用默认规则从类名推导。
+     */
+    String path() default "";
 }

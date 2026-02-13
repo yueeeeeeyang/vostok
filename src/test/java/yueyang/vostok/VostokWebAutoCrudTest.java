@@ -38,7 +38,7 @@ public class VostokWebAutoCrudTest {
     void testAutoCrudDefaultScan() throws Exception {
         ensureData();
 
-        Vostok.Web.init(0).autoCrud();
+        Vostok.Web.init(0).autoCrudApi();
         Vostok.Web.start();
 
         int port = Vostok.Web.port();

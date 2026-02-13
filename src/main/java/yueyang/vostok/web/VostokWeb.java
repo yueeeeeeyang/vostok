@@ -60,7 +60,7 @@ public class VostokWeb {
         return this;
     }
 
-    public VostokWeb autoCrud(String... basePackages) {
+    public VostokWeb autoCrudApi(String... basePackages) {
         ensureServer();
         for (var route : VKAutoCrud.build(basePackages)) {
             server.addRoute(route.method(), route.path(), route.handler());
@@ -68,8 +68,8 @@ public class VostokWeb {
         return this;
     }
 
-    public VostokWeb autoCrud() {
-        return autoCrud(new String[0]);
+    public VostokWeb autoCrudApi() {
+        return autoCrudApi(new String[0]);
     }
 
     public VostokWeb use(VKMiddleware middleware) {

@@ -431,14 +431,15 @@ Vostok.Data.setScanner(VKScanner::scan);
 Vostok.Data.init(cfg, "com.example.entity");
 
 // 不传包名：扫描全 classpath
-Vostok.Web.init(8080).autoCrud();
+Vostok.Web.init(8080).autoCrudApi();
 
 // 仅扫描指定包
-Vostok.Web.init(8080).autoCrud("com.example.entity");
+Vostok.Web.init(8080).autoCrudApi("com.example.entity");
 ```
 
 **路由规则**
-- 路由前缀默认来自实体类名：去掉 `Entity` 后缀并转小驼峰。
+- 若 `@VKEntity(path = "...")` 填写了 `path`，则使用该值作为 API 前缀。
+- 未填写 `path` 时，路由前缀默认来自实体类名：去掉 `Entity` 后缀并转小驼峰。
 - 例如 `UserEntity` → `/user`，`TaskEntity` → `/task`。
 
 **自动 CRUD 映射**

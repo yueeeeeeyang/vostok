@@ -170,6 +170,14 @@ public final class VKAutoCrud {
     }
 
     private static String resolvePath(Class<?> clazz) {
+        VKEntity entity = clazz.getAnnotation(VKEntity.class);
+        if (entity != null) {
+            String path = entity.path();
+            if (path != null && !path.trim().isEmpty()) {
+                String p = path.trim();
+                return p.startsWith("/") ? p : "/" + p;
+            }
+        }
         String name = clazz.getSimpleName();
         if (name.endsWith("Entity") && name.length() > 6) {
             name = name.substring(0, name.length() - 6);
