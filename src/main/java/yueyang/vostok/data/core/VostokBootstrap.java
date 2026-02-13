@@ -6,7 +6,7 @@ import yueyang.vostok.data.ds.VKDataSourceRegistry;
 import yueyang.vostok.data.meta.MetaRegistry;
 import yueyang.vostok.data.plugin.VKInterceptor;
 import yueyang.vostok.data.plugin.VKInterceptorRegistry;
-import yueyang.vostok.data.scan.ClassScanner;
+import yueyang.vostok.common.scan.VKScanner;
 import yueyang.vostok.data.sql.VKSqlWhitelist;
 import yueyang.vostok.util.VKAssert;
 import yueyang.vostok.util.VKLog;
@@ -90,7 +90,7 @@ public final class VostokBootstrap {
         }
     }
 
-    public static void setScanner(ClassScanner.EntityScanner scanner) {
+    public static void setScanner(VKScanner.EntityScanner scanner) {
         VKAssert.notNull(scanner, "EntityScanner is null");
         VostokRuntime.SCANNER = scanner;
     }

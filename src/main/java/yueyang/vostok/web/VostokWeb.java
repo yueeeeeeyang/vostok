@@ -2,6 +2,7 @@ package yueyang.vostok.web;
 
 import yueyang.vostok.web.core.VKWebServer;
 import yueyang.vostok.web.middleware.VKMiddleware;
+import yueyang.vostok.web.auto.VKAutoCrud;
 
 /**
  * Vostok Web entry.
@@ -57,6 +58,18 @@ public class VostokWeb {
         ensureServer();
         server.addRoute(method, path, handler);
         return this;
+    }
+
+    public VostokWeb autoCrud(String... basePackages) {
+        ensureServer();
+        for (var route : VKAutoCrud.build(basePackages)) {
+            server.addRoute(route.method(), route.path(), route.handler());
+        }
+        return this;
+    }
+
+    public VostokWeb autoCrud() {
+        return autoCrud(new String[0]);
     }
 
     public VostokWeb use(VKMiddleware middleware) {

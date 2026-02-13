@@ -6,6 +6,7 @@ Vostok 是一个面向 JDK 17+ 的全能框架，当前包含高性能数据访�
 当前项目仅用于实验和技术验证，不建议用于生产环境。
 
 **模块一览**
+- Common：通用注解、实体扫描与 JSON 序列化。
 - Data：纯 JDBC 的零依赖 ORM/CRUD 组件，内建连接池、事务、SQL 构建与多数据源。
 - Web：轻量高性能 Web 服务器，支持中间件与基础路由。
 
@@ -15,7 +16,10 @@ Vostok 是一个面向 JDK 17+ 的全能框架，当前包含高性能数据访�
 
 **Data 快速上手**
 ```java
-import yueyang.vostok.data.annotation.*;
+import yueyang.vostok.common.annotation.VKEntity;
+import yueyang.vostok.data.annotation.VKId;
+import yueyang.vostok.data.annotation.VKColumn;
+import yueyang.vostok.data.annotation.VKIgnore;
 import yueyang.vostok.data.*;
 import yueyang.vostok.Vostok;
 import yueyang.vostok.data.dialect.VKDialectType;
@@ -56,6 +60,36 @@ Vostok.Web.init(8080)
 
 Vostok.Web.start();
 ```
+
+**Common 模块**
+
+Common 模块提供通用注解、实体扫描与 JSON 能力，供 Data/Web 共同使用。
+
+**VKEntity（通用实体注解）**
+- 路径：`yueyang.vostok.common.annotation.VKEntity`
+- 用于标记实体类，Data 与 Web 都会根据它进行扫描与解析。
+
+**实体扫描（VKScanner）**
+```java
+import yueyang.vostok.common.scan.VKScanner;
+
+// 扫描指定包
+var entities = VKScanner.scan("com.example.entity");
+
+// 不传包名则扫描全 classpath
+var allEntities = VKScanner.scan();
+```
+
+**JSON 序列化 / 反序列化（支持嵌套对象）**
+```java
+import yueyang.vostok.common.json.VKJson;
+
+String json = VKJson.toJson(obj);
+MyType obj2 = VKJson.fromJson(json, MyType.class);
+```
+说明：
+- 支持嵌套对象、数组、List、Map、基础类型。
+- JSON 与实体字段名一一对应（无第三方依赖）。
 
 **Data 模块**
 
@@ -333,8 +367,13 @@ try {
 **可插拔扫描器**
 在复杂 ClassLoader/容器环境下可替换默认扫描器：
 ```java
+import yueyang.vostok.common.scan.VKScanner;
+
 Vostok.Data.setScanner((pkgs) -> Set.of(UserEntity.class, TaskEntity.class));
 Vostok.Data.init(cfg, "ignored.pkg");
+
+// 恢复默认扫描器
+Vostok.Data.setScanner(VKScanner::scan);
 ```
 
 **配置参考（VKDataConfig）**
@@ -385,6 +424,35 @@ Vostok.Data.init(cfg, "ignored.pkg");
 
 **使用方式**
 见上方 **Web 快速上手** 示例。
+
+**自动 CRUD（零代码）**
+在实体类添加 `@VKEntity` 后，直接开启自动 CRUD：
+```java
+Vostok.Data.init(cfg, "com.example.entity");
+
+// 不传包名：扫描全 classpath
+Vostok.Web.init(8080).autoCrud();
+
+// 仅扫描指定包
+Vostok.Web.init(8080).autoCrud("com.example.entity");
+```
+
+**路由规则**
+- 路由前缀默认来自实体类名：去掉 `Entity` 后缀并转小驼峰。
+- 例如 `UserEntity` → `/user`，`TaskEntity` → `/task`。
+
+**自动 CRUD 映射**
+- `GET /user`：查询列表（`Vostok.Data.findAll`）
+- `GET /user/{id}`：查询单条（`Vostok.Data.findById`）
+- `POST /user`：新增（`Vostok.Data.insert`）
+- `PUT /user/{id}`：更新（`Vostok.Data.update`）
+- `DELETE /user/{id}`：删除（`Vostok.Data.delete`）
+
+**返回格式**
+- `GET` 返回 JSON 对象或数组。
+- `POST` 返回 `{"inserted":n}` 且状态码 201。
+- `PUT` 返回 `{"updated":n}`。
+- `DELETE` 返回 `{"deleted":n}`。
 
 **路由创建示例**
 ```java

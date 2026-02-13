@@ -13,7 +13,7 @@ import yueyang.vostok.data.pool.VKPoolMetrics;
 import yueyang.vostok.data.plugin.VKInterceptor;
 import yueyang.vostok.data.query.VKAggregate;
 import yueyang.vostok.data.query.VKQuery;
-import yueyang.vostok.data.scan.ClassScanner;
+import yueyang.vostok.common.scan.VKScanner;
 import yueyang.vostok.util.VKAssert;
 
 import java.util.List;
@@ -44,7 +44,7 @@ public class VostokData {
         VostokBootstrap.refreshMeta(basePackages);
     }
 
-    public static void setScanner(ClassScanner.EntityScanner scanner) {
+    public static void setScanner(VKScanner.EntityScanner scanner) {
         VostokBootstrap.setScanner(scanner);
     }
 

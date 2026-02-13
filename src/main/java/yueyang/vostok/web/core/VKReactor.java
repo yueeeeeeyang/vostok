@@ -277,13 +277,15 @@ final class VKReactor implements Runnable {
             workers.submit(() -> {
                 VKResponse res = new VKResponse();
                 try {
-                    VKHandler handler = router.match(req.method(), req.path());
-                    if (handler == null) {
+                    var match = router.match(req.method(), req.path());
+                    if (match == null || match.handler() == null) {
                         res.status(404).text("Not Found");
                     } else if (middlewares.isEmpty()) {
-                        handler.handle(req, res);
+                        req.setParams(match.params());
+                        match.handler().handle(req, res);
                     } else {
-                        VKChain chain = new VKChain(middlewares, handler);
+                        req.setParams(match.params());
+                        VKChain chain = new VKChain(middlewares, match.handler());
                         chain.next(req, res);
                     }
                 } catch (Throwable t) {

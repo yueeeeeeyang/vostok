@@ -1,7 +1,7 @@
 package yueyang.vostok.data.core;
 
 import yueyang.vostok.data.ds.VKDataSourceRegistry;
-import yueyang.vostok.data.scan.ClassScanner;
+import yueyang.vostok.common.scan.VKScanner;
 import yueyang.vostok.data.sql.VKSqlWhitelist;
 
 /**
@@ -12,7 +12,7 @@ final class VostokRuntime {
     static volatile boolean initialized = false;
     static final ThreadLocal<String> DS_CONTEXT = new ThreadLocal<>();
     static volatile String[] initPackages = new String[0];
-    static volatile ClassScanner.EntityScanner SCANNER = ClassScanner::scan;
+    static volatile VKScanner.EntityScanner SCANNER = VKScanner::scan;
 
     static {
         VKSqlWhitelist.setDataSourceNameSupplier(() -> {

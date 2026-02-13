@@ -1,4 +1,4 @@
-package yueyang.vostok.data.scan;
+package yueyang.vostok.common.scan;
 
 import yueyang.vostok.util.VKLog;
 
@@ -15,8 +15,8 @@ import java.util.Set;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
-public final class ClassScanner {
-    private ClassScanner() {
+public final class VKScanner {
+    private VKScanner() {
     }
 
     @FunctionalInterface
@@ -29,7 +29,7 @@ public final class ClassScanner {
         Set<Class<?>> result = new HashSet<>();
         ClassLoader cl = Thread.currentThread().getContextClassLoader();
         if (cl == null) {
-            cl = ClassScanner.class.getClassLoader();
+            cl = VKScanner.class.getClassLoader();
         }
 
         if (prefixes.isEmpty()) {
@@ -195,7 +195,7 @@ public final class ClassScanner {
         try {
             ClassLoader cl = Thread.currentThread().getContextClassLoader();
             if (cl == null) {
-                cl = ClassScanner.class.getClassLoader();
+                cl = VKScanner.class.getClassLoader();
             }
             Class<?> clazz = Class.forName(className, false, cl);
             result.add(clazz);

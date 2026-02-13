@@ -15,6 +15,7 @@ public final class VKRequest {
     private final byte[] body;
     private final boolean keepAlive;
     private final InetSocketAddress remoteAddress;
+    private Map<String, String> params;
 
     public VKRequest(String method, String path, String query, String version,
                      Map<String, String> headers, byte[] body,
@@ -27,6 +28,7 @@ public final class VKRequest {
         this.body = body == null ? new byte[0] : body;
         this.keepAlive = keepAlive;
         this.remoteAddress = remoteAddress;
+        this.params = new HashMap<>();
     }
 
     public String method() {
@@ -70,5 +72,16 @@ public final class VKRequest {
 
     public InetSocketAddress remoteAddress() {
         return remoteAddress;
+    }
+
+    public String param(String name) {
+        if (name == null || params == null) {
+            return null;
+        }
+        return params.get(name);
+    }
+
+    public void setParams(Map<String, String> params) {
+        this.params = params == null ? new HashMap<>() : params;
     }
 }
