@@ -17,6 +17,7 @@ public final class VKRequest {
     private final InetSocketAddress remoteAddress;
     private Map<String, String> params;
     private Map<String, String> queryParams;
+    private String traceId;
 
     public VKRequest(String method, String path, String query, String version,
                      Map<String, String> headers, byte[] body,
@@ -31,6 +32,7 @@ public final class VKRequest {
         this.remoteAddress = remoteAddress;
         this.params = new HashMap<>();
         this.queryParams = null;
+        this.traceId = null;
     }
 
     public String method() {
@@ -74,6 +76,14 @@ public final class VKRequest {
 
     public InetSocketAddress remoteAddress() {
         return remoteAddress;
+    }
+
+    public String traceId() {
+        return traceId;
+    }
+
+    public void setTraceId(String traceId) {
+        this.traceId = traceId;
     }
 
     public String param(String name) {

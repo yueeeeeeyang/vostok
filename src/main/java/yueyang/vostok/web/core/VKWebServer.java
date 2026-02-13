@@ -136,6 +136,10 @@ public final class VKWebServer {
         return config.getKeepAliveTimeoutMs();
     }
 
+    boolean accessLogEnabled() {
+        return config.isAccessLogEnabled();
+    }
+
     int incConnections() {
         return activeConnections.incrementAndGet();
     }

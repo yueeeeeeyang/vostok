@@ -12,6 +12,21 @@ public final class VKHttpWriter {
     }
 
     public static byte[] write(VKResponse res, boolean keepAlive) {
+        byte[] head = writeHead(res, keepAlive);
+        int status = res.status();
+        String reason = reason(status);
+        byte[] body = res.body();
+        int contentLength = body == null ? 0 : body.length;
+
+        byte[] out = new byte[head.length + contentLength];
+        System.arraycopy(head, 0, out, 0, head.length);
+        if (contentLength > 0) {
+            System.arraycopy(body, 0, out, head.length, contentLength);
+        }
+        return out;
+    }
+
+    public static byte[] writeHead(VKResponse res, boolean keepAlive) {
         int status = res.status();
         String reason = reason(status);
         byte[] body = res.body();
@@ -47,14 +62,7 @@ public final class VKHttpWriter {
         }
 
         sb.append("\r\n");
-        byte[] head = sb.toString().getBytes(StandardCharsets.US_ASCII);
-
-        byte[] out = new byte[head.length + contentLength];
-        System.arraycopy(head, 0, out, 0, head.length);
-        if (contentLength > 0) {
-            System.arraycopy(body, 0, out, head.length, contentLength);
-        }
-        return out;
+        return sb.toString().getBytes(StandardCharsets.US_ASCII);
     }
 
     private static String reason(int status) {

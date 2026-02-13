@@ -423,6 +423,9 @@ Vostok.Data.setScanner(VKScanner::scan);
 - 路由 + 中间件链
 - 支持 Keep-Alive 与基础错误处理
 - 支持 Chunked 请求体与 `Expect: 100-continue`
+- 内置访问日志（AccessLog）
+- TraceId 贯穿请求链
+- 支持静态资源目录映射
 
 **使用方式**
 见上方 **Web 快速上手** 示例。
@@ -489,6 +492,19 @@ Vostok.Web.init(8080)
 Vostok.Web.start();
 ```
 
+**静态资源**
+```java
+Vostok.Web.init(8080)
+    .staticDir("/static", "/var/www");
+```
+访问 `/static/app.js` 将映射到 `/var/www/app.js`。
+
+**TraceId**
+- 默认生成 `X-Trace-Id` 返回头。
+- 如果请求中携带 `X-Trace-Id`，将原样透传。
+
+**AccessLog**
+- 默认开启，可通过 `VKWebConfig.accessLogEnabled(false)` 关闭。
 **中间件示例**
 ```java
 import yueyang.vostok.Vostok;
@@ -526,3 +542,4 @@ Vostok.Web.start();
 - `maxConnections`：最大连接数，超过直接拒绝。
 - `readTimeoutMs`：读取请求体超时（毫秒）。
 - `workerQueueSize`：业务线程池队列长度。
+- `accessLogEnabled`：AccessLog 开关（默认开启）。

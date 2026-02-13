@@ -15,6 +15,7 @@ public final class VKWebConfig {
     private int maxConnections = 10_000;
     private int readTimeoutMs = 15_000;
     private int workerQueueSize = 10_000;
+    private boolean accessLogEnabled = true;
 
     public int getPort() {
         return port;
@@ -112,6 +113,15 @@ public final class VKWebConfig {
 
     public VKWebConfig workerQueueSize(int workerQueueSize) {
         this.workerQueueSize = Math.max(1, workerQueueSize);
+        return this;
+    }
+
+    public boolean isAccessLogEnabled() {
+        return accessLogEnabled;
+    }
+
+    public VKWebConfig accessLogEnabled(boolean accessLogEnabled) {
+        this.accessLogEnabled = accessLogEnabled;
         return this;
     }
 }

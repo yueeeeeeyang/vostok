@@ -4,6 +4,7 @@ import yueyang.vostok.web.core.VKWebServer;
 import yueyang.vostok.web.middleware.VKMiddleware;
 import yueyang.vostok.web.auto.VKAutoCrud;
 import yueyang.vostok.web.auto.VKCrudStyle;
+import yueyang.vostok.web.asset.VKStaticHandler;
 
 /**
  * Vostok Web entry.
@@ -85,6 +86,16 @@ public class VostokWeb {
     public VostokWeb use(VKMiddleware middleware) {
         ensureServer();
         server.addMiddleware(middleware);
+        return this;
+    }
+
+    public VostokWeb staticDir(String urlPrefix, String directory) {
+        ensureServer();
+        String prefix = urlPrefix == null ? "/" : urlPrefix;
+        VKStaticHandler handler = new VKStaticHandler(prefix, java.nio.file.Path.of(directory));
+        String p = prefix.endsWith("/") ? prefix.substring(0, prefix.length() - 1) : prefix;
+        server.addRoute("GET", p + "/{*path}", handler);
+        server.addRoute("GET", p, handler);
         return this;
     }
 

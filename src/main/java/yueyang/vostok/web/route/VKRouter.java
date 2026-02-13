@@ -54,6 +54,7 @@ public final class VKRouter {
         private final String[] segments;
         private final String[] paramNames;
         private final VKHandler handler;
+        private int wildcardIndex = -1;
 
         DynamicRoute(String path, VKHandler handler) {
             this.handler = handler;
@@ -68,6 +69,14 @@ public final class VKRouter {
                 } else if (seg.startsWith("{") && seg.endsWith("}") && seg.length() > 2) {
                     paramNames[i] = seg.substring(1, seg.length() - 1);
                     segments[i] = null;
+                } else if ("*".equals(seg) || "{*}".equals(seg) || seg.startsWith("{*")) {
+                    String name = "*";
+                    if (seg.startsWith("{*") && seg.endsWith("}") && seg.length() > 3) {
+                        name = seg.substring(2, seg.length() - 1);
+                    }
+                    paramNames[i] = name;
+                    segments[i] = null;
+                    wildcardIndex = i;
                 } else {
                     segments[i] = seg;
                 }
@@ -76,19 +85,34 @@ public final class VKRouter {
 
         Map<String, String> match(String path) {
             String[] parts = split(path);
-            if (parts.length != segments.length) {
-                return null;
-            }
             Map<String, String> params = new HashMap<>();
-            for (int i = 0; i < segments.length; i++) {
+            if (segments.length == 0) {
+                return parts.length == 0 ? params : null;
+            }
+            int i = 0;
+            for (; i < segments.length; i++) {
                 String literal = segments[i];
+                if (wildcardIndex == i) {
+                    StringBuilder rest = new StringBuilder();
+                    for (int j = i; j < parts.length; j++) {
+                        if (j > i) {
+                            rest.append('/');
+                        }
+                        rest.append(parts[j]);
+                    }
+                    params.put(paramNames[i] == null ? "*" : paramNames[i], rest.toString());
+                    return params;
+                }
+                if (i >= parts.length) {
+                    return null;
+                }
                 if (literal == null) {
                     params.put(paramNames[i], parts[i]);
                 } else if (!literal.equals(parts[i])) {
                     return null;
                 }
             }
-            return params;
+            return i == parts.length ? params : null;
         }
 
         private static String[] split(String path) {

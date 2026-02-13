@@ -12,6 +12,8 @@ import java.net.Socket;
 import java.io.OutputStream;
 import java.io.InputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -115,5 +117,28 @@ public class VostokWebTest {
                 // connect refused or closed is acceptable
             }
         }
+    }
+
+    @Test
+    void testStaticAndTraceId() throws Exception {
+        Path dir = Files.createTempDirectory("vkstatic");
+        Path file = dir.resolve("hello.txt");
+        Files.writeString(file, "hello");
+
+        Vostok.Web.init(0)
+                .staticDir("/static", dir.toString());
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/static/hello.txt"))
+                .header("X-Trace-Id", "trace-123")
+                .GET()
+                .build();
+        HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, res.statusCode());
+        assertEquals("hello", res.body());
+        assertEquals("trace-123", res.headers().firstValue("X-Trace-Id").orElse(""));
     }
 }
