@@ -22,6 +22,8 @@ public class VKDataConfig {
     private boolean validateDdl = false;
     /** DDL 校验的 schema（可选） */
     private String ddlSchema;
+    /** 初始化/刷新时是否自动创建缺失表 */
+    private boolean autoCreateTable = false;
     /** 最小空闲连接数 */
     private int minIdle = 1;
     /** 最大活动连接数 */
@@ -142,6 +144,15 @@ public class VKDataConfig {
     
     public VKDataConfig validateDdl(boolean validateDdl) {
         this.validateDdl = validateDdl;
+        return this;
+    }
+
+    public boolean isAutoCreateTable() {
+        return autoCreateTable;
+    }
+
+    public VKDataConfig autoCreateTable(boolean autoCreateTable) {
+        this.autoCreateTable = autoCreateTable;
         return this;
     }
 

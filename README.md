@@ -395,6 +395,7 @@ Vostok.Data.setScanner(VKScanner::scan);
 - `slowSqlMs` / `slowSqlTopN`：慢 SQL 阈值与 TopN
 - `sqlMetricsEnabled`：是否统计 SQL 耗时分布
 - `validateDdl` / `ddlSchema`：DDL 校验
+- `autoCreateTable`：初始化/refreshMeta 时自动创建缺失表（默认关闭）
 - `savepointEnabled`：是否启用 Savepoint
 - `txTimeoutMs`：事务超时控制
 - `queryTimeoutMs`：非事务 SQL 超时（毫秒）

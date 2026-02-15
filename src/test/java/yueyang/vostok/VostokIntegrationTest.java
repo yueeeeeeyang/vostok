@@ -1151,6 +1151,49 @@ public class VostokIntegrationTest {
     }
 
     @Test
+    @Order(102)
+    void testAutoCreateTableOnInit() {
+        Vostok.Data.close();
+        String url = "jdbc:h2:mem:ddlcreate;MODE=MySQL;DB_CLOSE_DELAY=-1";
+        VKDataConfig cfg = new VKDataConfig()
+                .url(url)
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.MYSQL)
+                .autoCreateTable(true)
+                .validateDdl(true);
+        Vostok.Data.init(cfg, "yueyang.vostok");
+        int inserted = Vostok.Data.insert(user("Auto", 1));
+        assertEquals(1, inserted);
+    }
+
+    @Test
+    @Order(103)
+    void testAutoCreateTableOnRefreshMeta() throws Exception {
+        Vostok.Data.close();
+        String url = "jdbc:h2:mem:ddlrefresh;MODE=MySQL;DB_CLOSE_DELAY=-1";
+        VKDataConfig cfg = new VKDataConfig()
+                .url(url)
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.MYSQL)
+                .autoCreateTable(true);
+        Vostok.Data.init(cfg, "yueyang.vostok");
+        Vostok.Data.insert(user("Auto2", 2));
+
+        try (java.sql.Connection conn = java.sql.DriverManager.getConnection(url, "sa", "");
+             java.sql.Statement stmt = conn.createStatement()) {
+            stmt.execute("DROP TABLE t_user");
+        }
+
+        Vostok.Data.refreshMeta("yueyang.vostok");
+        int inserted = Vostok.Data.insert(user("Auto3", 3));
+        assertEquals(1, inserted);
+    }
+
+    @Test
     void testBatchFailStrategyContinue() {
         Vostok.Data.close();
         VKDataConfig cfg = new VKDataConfig()

@@ -52,6 +52,9 @@ public final class VostokBootstrap {
                 MetaRegistry.refreshAll(classes, VKDataSourceRegistry.all().entrySet().stream()
                         .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().getConfig())));
 
+                if (config.isAutoCreateTable()) {
+                    autoCreateTables();
+                }
                 if (config.isValidateDdl()) {
                     VKDdlValidator.validate(VostokInternal.currentHolder().getDataSource(), MetaRegistry.all(), config.getDdlSchema());
                 }
@@ -71,6 +74,9 @@ public final class VostokBootstrap {
         VostokInternal.validateConfig(config);
         VKDataSourceRegistry.register(name, config);
         MetaRegistry.registerDataSource(name, config);
+        if (config.isAutoCreateTable()) {
+            VKDdlValidator.createMissingTables(VKDataSourceRegistry.get(name).getDataSource(), MetaRegistry.all(), config.getDdlSchema(), config);
+        }
         if (config.isValidateDdl()) {
             VKDdlValidator.validate(VKDataSourceRegistry.get(name).getDataSource(), MetaRegistry.all(), config.getDdlSchema());
         }
@@ -85,8 +91,19 @@ public final class VostokBootstrap {
         Set<Class<?>> classes = VostokRuntime.SCANNER.scan(basePackages);
         MetaRegistry.refreshAll(classes, VKDataSourceRegistry.all().entrySet().stream()
                 .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().getConfig())));
+        if (VostokInternal.currentConfig().isAutoCreateTable()) {
+            autoCreateTables();
+        }
         if (VostokInternal.currentConfig().isValidateDdl()) {
             VKDdlValidator.validate(VostokInternal.currentHolder().getDataSource(), MetaRegistry.all(), VostokInternal.currentConfig().getDdlSchema());
+        }
+    }
+
+    private static void autoCreateTables() {
+        for (Map.Entry<String, yueyang.vostok.data.ds.VKDataSourceHolder> entry : VKDataSourceRegistry.allHolders().entrySet()) {
+            var holder = entry.getValue();
+            var config = holder.getConfig();
+            VKDdlValidator.createMissingTables(holder.getDataSource(), MetaRegistry.all(), config.getDdlSchema(), config);
         }
     }
 
