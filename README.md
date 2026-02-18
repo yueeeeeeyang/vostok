@@ -535,6 +535,24 @@ public class DataApiDemo {
 }
 ```
 
+### 2.2.1 Data 日志接入说明
+
+- Data 模块日志统一直接调用 `Vostok.Log` 接口（`info/warn/error/debug/trace`）。
+- Data 模块不定义独立日志门面，也不强制使用 `Vostok.Log.logger("data-xxx")` 自定义 logger。
+- Data 日志默认写入 Log 模块当前默认 logger 对应文件（通常由 `VKLogConfig.filePrefix(...)` 决定）。
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.log.VKLogConfig;
+
+Vostok.Log.init(new VKLogConfig()
+    .outputDir("logs")
+    .filePrefix("app")
+    .consoleEnabled(true));
+
+// 后续 Data 内部日志将统一进入 app.log（及滚动文件）
+```
+
 ## 2.3 配置详解（VKDataConfig）
 
 ```java
