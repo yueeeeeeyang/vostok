@@ -3,6 +3,7 @@ package yueyang.vostok.file;
 import yueyang.vostok.file.exception.VKFileErrorCode;
 import yueyang.vostok.file.exception.VKFileException;
 
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -162,12 +163,28 @@ public class VostokFile {
         return store().readRangeTo(path, offset, length, output);
     }
 
+    public static long readTo(String path, OutputStream output) {
+        return store().readTo(path, output);
+    }
+
     public static void writeBytes(String path, byte[] content) {
         store().writeBytes(path, content);
     }
 
     public static void appendBytes(String path, byte[] content) {
         store().appendBytes(path, content);
+    }
+
+    public static long writeFrom(String path, InputStream input) {
+        return store().writeFrom(path, input);
+    }
+
+    public static long writeFrom(String path, InputStream input, boolean replaceExisting) {
+        return store().writeFrom(path, input, replaceExisting);
+    }
+
+    public static long appendFrom(String path, InputStream input) {
+        return store().appendFrom(path, input);
     }
 
     public static byte[] thumbnail(String imagePath, VKThumbnailOptions options) {

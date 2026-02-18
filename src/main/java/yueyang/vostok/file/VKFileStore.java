@@ -1,5 +1,6 @@
 package yueyang.vostok.file;
 
+import java.io.InputStream;
 import java.time.Instant;
 import java.util.List;
 import java.util.function.Predicate;
@@ -26,9 +27,17 @@ public interface VKFileStore {
 
     long readRangeTo(String path, long offset, long length, OutputStream output);
 
+    long readTo(String path, OutputStream output);
+
     void writeBytes(String path, byte[] content);
 
     void appendBytes(String path, byte[] content);
+
+    long writeFrom(String path, InputStream input);
+
+    long writeFrom(String path, InputStream input, boolean replaceExisting);
+
+    long appendFrom(String path, InputStream input);
 
     byte[] thumbnail(String imagePath, VKThumbnailOptions options);
 

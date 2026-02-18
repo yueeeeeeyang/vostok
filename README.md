@@ -761,6 +761,25 @@ public interface Vostok.Web {
      */
     public VostokWeb rateLimit(VKHttpMethod method, String path, VKRateLimitConfig config);
 
+    /**
+     * 注册 WebSocket 路由（使用全局 WebSocket 配置）。
+     *
+     * - path：路由路径，类型为 String，例如 "/ws"。
+     * - handler：WebSocket 处理器，类型为 VKWebSocketHandler。
+     * - 返回值：VostokWeb（支持链式调用）。
+     */
+    public VostokWeb websocket(String path, VKWebSocketHandler handler);
+
+    /**
+     * 注册 WebSocket 路由（使用路由级 WebSocket 配置）。
+     *
+     * - path：路由路径，类型为 String。
+     * - config：WebSocket 配置，类型为 VKWebSocketConfig。
+     * - handler：WebSocket 处理器，类型为 VKWebSocketHandler。
+     * - 返回值：VostokWeb（支持链式调用）。
+     */
+    public VostokWeb websocket(String path, VKWebSocketConfig config, VKWebSocketHandler handler);
+
 }
 ```
 
@@ -845,6 +864,9 @@ import yueyang.vostok.web.auto.VKCrudStyle;
 import yueyang.vostok.web.http.VKCookie;
 import yueyang.vostok.web.rate.VKRateLimitConfig;
 import yueyang.vostok.web.rate.VKRateLimitKeyStrategy;
+import yueyang.vostok.web.websocket.VKWebSocketConfig;
+import yueyang.vostok.web.websocket.VKWebSocketHandler;
+import yueyang.vostok.web.websocket.VKWebSocketSession;
 
 public class WebApiDemo {
     public static void main(String[] args) {
@@ -870,6 +892,12 @@ public class WebApiDemo {
                         .capacity(20)
                         .refillTokens(20)
                         .refillPeriodMs(1000))
+                .websocket("/ws", new VKWebSocketConfig().pingIntervalMs(15_000), new VKWebSocketHandler() {
+                    @Override
+                    public void onText(VKWebSocketSession session, String text) {
+                        session.sendText("echo:" + text);
+                    }
+                })
                 .error((err, req, res) -> res.status(500).text("custom error"));
 
         Vostok.Web.start();
@@ -928,6 +956,94 @@ public class WebCookieMultipartDemo {
 }
 ```
 
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.web.VKWebConfig;
+import yueyang.vostok.web.http.VKUploadedFile;
+
+import java.nio.file.Path;
+
+/**
+ * Multipart 详细示例：展示从 request 获取上传对象后如何使用。
+ */
+public class WebMultipartDetailDemo {
+    public static void main(String[] args) {
+        VKWebConfig cfg = new VKWebConfig()
+                .port(8080)
+                .multipartEnabled(true)
+                // 小于 64KB 的文件留在内存；超过阈值自动落临时文件
+                .multipartInMemoryThresholdBytes(64 * 1024)
+                .multipartTempDir("/tmp/vostok-upload")
+                .multipartMaxParts(128)
+                .multipartMaxFileSizeBytes(50L * 1024 * 1024)
+                .multipartMaxTotalBytes(100L * 1024 * 1024);
+
+        Vostok.Web.init(cfg)
+                .post("/upload/detail", (req, res) -> {
+                    if (!req.isMultipart()) {
+                        res.status(400).text("content-type must be multipart/form-data");
+                        return;
+                    }
+
+                    // 1) 读取普通表单字段
+                    String bizType = req.formField("bizType");
+                    String owner = req.formField("owner");
+
+                    // 2) 读取文件字段（单文件）
+                    VKUploadedFile avatar = req.file("avatar");
+                    if (avatar == null) {
+                        res.status(400).text("avatar is required");
+                        return;
+                    }
+
+                    // 3) 读取多文件字段（同名 input）
+                    var attachments = req.files("attachments");
+
+                    // 4) 使用上传对象：元信息
+                    String avatarName = avatar.fileName();
+                    long avatarSize = avatar.size();
+                    String avatarType = avatar.contentType();
+                    boolean avatarInMemory = avatar.inMemory();
+
+                    // 5) 使用上传对象：保存到业务目录
+                    Path saveTo = Path.of("/tmp/biz-upload", avatarName);
+                    avatar.transferTo(saveTo);
+
+                    // 6) 也可直接取字节 / 输入流
+                    byte[] avatarBytes = avatar.bytes();
+                    int bytesLen = avatarBytes.length;
+                    try (var in = avatar.inputStream()) {
+                        // do something
+                    } catch (Exception e) {
+                        res.status(500).text("read upload stream failed");
+                        return;
+                    }
+
+                    res.json("{\"ok\":true,\"bizType\":\"" + bizType
+                            + "\",\"owner\":\"" + owner
+                            + "\",\"avatarName\":\"" + avatarName
+                            + "\",\"avatarType\":\"" + avatarType
+                            + "\",\"avatarSize\":" + avatarSize
+                            + ",\"avatarInMemory\":" + avatarInMemory
+                            + ",\"avatarBytes\":" + bytesLen
+                            + ",\"attachments\":" + attachments.size() + "}");
+                });
+
+        Vostok.Web.start();
+    }
+}
+```
+
+```bash
+# 触发上面 /upload/detail 的示例请求
+curl -X POST "http://127.0.0.1:8080/upload/detail" \
+  -F "bizType=image" \
+  -F "owner=neo" \
+  -F "avatar=@/path/to/avatar.png" \
+  -F "attachments=@/path/to/a.pdf" \
+  -F "attachments=@/path/to/b.pdf"
+```
+
 ## 3.3 配置详解（VKWebConfig）
 
 ```java
@@ -973,7 +1089,23 @@ VKWebConfig cfg = new VKWebConfig()
     // multipart 总字节数限制。默认 32MB；内部最小 1024。
     .multipartMaxTotalBytes(32L * 1024 * 1024)
     // 限流清理间隔（当前版本用于配置保留，单位毫秒）。默认 60000；内部最小 1000。
-    .rateLimitCleanupIntervalMs(60_000);
+    .rateLimitCleanupIntervalMs(60_000)
+    // 是否启用 WebSocket。默认 true。
+    .websocketEnabled(true)
+    // WebSocket 单帧最大 payload（字节）。默认 1MB。
+    .websocketMaxFramePayloadBytes(1024 * 1024)
+    // WebSocket 单消息最大字节。默认 4MB。
+    .websocketMaxMessageBytes(4 * 1024 * 1024)
+    // WebSocket 连接写队列最大帧数。默认 1024。
+    .websocketMaxPendingFrames(1024)
+    // WebSocket 连接写队列最大字节。默认 8MB。
+    .websocketMaxPendingBytes(8 * 1024 * 1024)
+    // WebSocket ping 间隔毫秒。默认 30000。
+    .websocketPingIntervalMs(30_000)
+    // WebSocket pong 超时毫秒。默认 10000。
+    .websocketPongTimeoutMs(10_000)
+    // WebSocket 空闲超时毫秒。默认 120000。
+    .websocketIdleTimeoutMs(120_000);
 ```
 
 ---
@@ -1126,6 +1258,15 @@ public interface Vostok.File {
     public static long readRangeTo(String path, long offset, long length, OutputStream output);
 
     /**
+     * 整文件流式读取到输出流，适合大文件导出/转发。
+     *
+     * - path：文件路径，类型为 String。
+     * - output：输出流，类型为 OutputStream，不能为空。
+     * - 返回值：long（实际写出的字节数）。
+     */
+    public static long readTo(String path, OutputStream output);
+
+    /**
      * 写入二进制文件（不存在则创建，存在则覆盖）。
      *
      * - path：文件路径，类型为 String。
@@ -1140,6 +1281,34 @@ public interface Vostok.File {
      * - content：二进制内容，类型为 byte[]，不能为空。
      */
     public static void appendBytes(String path, byte[] content);
+
+    /**
+     * 从输入流写入文件（默认覆盖已存在文件）。
+     *
+     * - path：目标文件路径，类型为 String。
+     * - input：输入流，类型为 InputStream，不能为空。
+     * - 返回值：long（实际写入字节数）。
+     */
+    public static long writeFrom(String path, InputStream input);
+
+    /**
+     * 从输入流写入文件（可指定是否覆盖）。
+     *
+     * - path：目标文件路径，类型为 String。
+     * - input：输入流，类型为 InputStream，不能为空。
+     * - replaceExisting：是否覆盖已存在文件，类型为 boolean。
+     * - 返回值：long（实际写入字节数）。
+     */
+    public static long writeFrom(String path, InputStream input, boolean replaceExisting);
+
+    /**
+     * 从输入流追加写入文件末尾。
+     *
+     * - path：目标文件路径，类型为 String。
+     * - input：输入流，类型为 InputStream，不能为空。
+     * - 返回值：long（实际写入字节数）。
+     */
+    public static long appendFrom(String path, InputStream input);
 
     /**
      * 生成图片缩略图并以字节数组返回。
@@ -1465,7 +1634,12 @@ public class FileApiDemo {
         byte[] part = Vostok.File.readRange("b.bin", 1, 2);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         long copied = Vostok.File.readRangeTo("b.bin", 0, 10, out);
+        ByteArrayOutputStream out2 = new ByteArrayOutputStream();
+        long copied2 = Vostok.File.readTo("b.bin", out2);
         Vostok.File.appendBytes("b.bin", new byte[]{6,7});
+        long w1 = Vostok.File.writeFrom("stream/in.bin", new java.io.ByteArrayInputStream(new byte[]{1,2,3}));
+        long w2 = Vostok.File.writeFrom("stream/in2.bin", new java.io.ByteArrayInputStream(new byte[]{4,5}), true);
+        long w3 = Vostok.File.appendFrom("stream/in2.bin", new java.io.ByteArrayInputStream(new byte[]{6,7}));
         byte[] tb1 = Vostok.File.thumbnail("img/origin.png",
                 VKThumbnailOptions.builder(200, 200)
                         .mode(VKThumbnailMode.FIT)

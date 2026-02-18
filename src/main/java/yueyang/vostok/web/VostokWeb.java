@@ -6,6 +6,8 @@ import yueyang.vostok.web.auto.VKAutoCrud;
 import yueyang.vostok.web.auto.VKCrudStyle;
 import yueyang.vostok.web.asset.VKStaticHandler;
 import yueyang.vostok.web.rate.VKRateLimitConfig;
+import yueyang.vostok.web.websocket.VKWebSocketConfig;
+import yueyang.vostok.web.websocket.VKWebSocketHandler;
 
 /**
  * Vostok Web entry.
@@ -115,6 +117,16 @@ public class VostokWeb {
     public VostokWeb rateLimit(VKHttpMethod method, String path, VKRateLimitConfig config) {
         ensureServer();
         server.setRouteRateLimit(method, path, config);
+        return this;
+    }
+
+    public VostokWeb websocket(String path, VKWebSocketHandler handler) {
+        return websocket(path, null, handler);
+    }
+
+    public VostokWeb websocket(String path, VKWebSocketConfig config, VKWebSocketHandler handler) {
+        ensureServer();
+        server.addWebSocket(path, config, handler);
         return this;
     }
 

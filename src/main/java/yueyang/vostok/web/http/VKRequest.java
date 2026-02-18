@@ -180,13 +180,13 @@ public final class VKRequest {
         this.params = params == null ? new HashMap<>() : params;
     }
 
-    public void applyMultipart(VKMultipartParser.VKMultipartData data) {
+    public void applyMultipart(VKMultipartData data) {
         if (data == null) {
             return;
         }
-        this.formFields = new HashMap<>(data.fields);
-        this.multipartFiles = new HashMap<>(data.files);
-        this.allFiles = new ArrayList<>(data.all);
+        this.formFields = new HashMap<>(data.fields());
+        this.multipartFiles = new HashMap<>(data.files());
+        this.allFiles = new ArrayList<>(data.all());
     }
 
     public void cleanupUploads() {

@@ -136,7 +136,7 @@ public class VostokWebTest {
                 .GET()
                 .build();
         HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, res.statusCode());
+        assertEquals(200, res.statusCode(), res.body());
         assertEquals("hello", res.body());
         assertEquals("trace-123", res.headers().firstValue("X-Trace-Id").orElse(""));
     }
@@ -300,6 +300,72 @@ public class VostokWebTest {
         assertTrue(res.body().contains("\"name\":\"neo\""));
         assertTrue(res.body().contains("\"file\":\"a.txt\""));
         assertTrue(res.body().contains("\"mem\":false"));
+    }
+
+    @Test
+    void testMultipartUploadStreamingChunks() throws Exception {
+        yueyang.vostok.web.VKWebConfig cfg = new yueyang.vostok.web.VKWebConfig()
+                .port(0)
+                .multipartEnabled(true)
+                .multipartInMemoryThresholdBytes(8);
+
+        Vostok.Web.init(cfg)
+                .post("/upload-chunk", (req, res) -> {
+                    var f = req.file("file");
+                    if (f == null) {
+                        res.status(500).text("missing file");
+                        return;
+                    }
+                    res.text(req.formField("name") + ":" + f.fileName() + ":" + f.size());
+                });
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        String boundary = "----vk-stream-boundary";
+        String body = "--" + boundary + "\r\n" +
+                "Content-Disposition: form-data; name=\"name\"\r\n\r\n" +
+                "neo\r\n" +
+                "--" + boundary + "\r\n" +
+                "Content-Disposition: form-data; name=\"file\"; filename=\"chunk.txt\"\r\n" +
+                "Content-Type: text/plain\r\n\r\n" +
+                "abcdefg0123456789\r\n" +
+                "--" + boundary + "--\r\n";
+        byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+
+        try (Socket socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(2000);
+            OutputStream out = socket.getOutputStream();
+            InputStream in = socket.getInputStream();
+
+            String head = "POST /upload-chunk HTTP/1.1\r\n"
+                    + "Host: 127.0.0.1\r\n"
+                    + "Content-Type: multipart/form-data; boundary=" + boundary + "\r\n"
+                    + "Content-Length: " + bodyBytes.length + "\r\n\r\n";
+            out.write(head.getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+
+            for (int i = 0; i < bodyBytes.length; i += 7) {
+                int n = Math.min(7, bodyBytes.length - i);
+                out.write(bodyBytes, i, n);
+                out.flush();
+            }
+
+            StringBuilder sb = new StringBuilder();
+            byte[] buf = new byte[2048];
+            for (int i = 0; i < 4; i++) {
+                int n = in.read(buf);
+                if (n <= 0) {
+                    break;
+                }
+                sb.append(new String(buf, 0, n, StandardCharsets.UTF_8));
+                if (sb.indexOf("neo:chunk.txt:17") >= 0) {
+                    break;
+                }
+            }
+            String raw = sb.toString();
+            assertTrue(raw.contains("200 OK"), raw);
+            assertTrue(raw.contains("neo:chunk.txt:17"), raw);
+        }
     }
 
     @Test

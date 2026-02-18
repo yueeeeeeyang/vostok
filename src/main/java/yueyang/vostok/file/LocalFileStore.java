@@ -199,6 +199,18 @@ public final class LocalFileStore implements VKFileStore {
     }
 
     @Override
+    public long readTo(String path, OutputStream output) {
+        requireNotNull(output, "OutputStream is null");
+        Path p = resolve(path);
+        requireFile(p, path);
+        try (InputStream in = Files.newInputStream(p, StandardOpenOption.READ)) {
+            return transferCount(in, output);
+        } catch (IOException e) {
+            throw io("Read to output failed: " + path, e);
+        }
+    }
+
+    @Override
     public void writeBytes(String path, byte[] content) {
         requireNotNull(content, "Content bytes is null");
         Path p = resolve(path);
@@ -219,6 +231,42 @@ public final class LocalFileStore implements VKFileStore {
             Files.write(p, content, StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
         } catch (IOException e) {
             throw io("Append bytes failed: " + path, e);
+        }
+    }
+
+    @Override
+    public long writeFrom(String path, InputStream input) {
+        return writeFrom(path, input, true);
+    }
+
+    @Override
+    public long writeFrom(String path, InputStream input, boolean replaceExisting) {
+        requireNotNull(input, "InputStream is null");
+        Path p = resolve(path);
+        try {
+            ensureParent(p);
+            StandardOpenOption[] opts = replaceExisting
+                    ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE}
+                    : new StandardOpenOption[]{StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE};
+            try (OutputStream out = Files.newOutputStream(p, opts)) {
+                return transferCount(input, out);
+            }
+        } catch (IOException e) {
+            throw io("Write from stream failed: " + path, e);
+        }
+    }
+
+    @Override
+    public long appendFrom(String path, InputStream input) {
+        requireNotNull(input, "InputStream is null");
+        Path p = resolve(path);
+        try {
+            ensureParent(p);
+            try (OutputStream out = Files.newOutputStream(p, StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE)) {
+                return transferCount(input, out);
+            }
+        } catch (IOException e) {
+            throw io("Append from stream failed: " + path, e);
         }
     }
 
@@ -767,6 +815,17 @@ public final class LocalFileStore implements VKFileStore {
         while ((n = in.read(buffer)) != -1) {
             out.write(buffer, 0, n);
         }
+    }
+
+    private long transferCount(InputStream in, OutputStream out) throws IOException {
+        byte[] buffer = new byte[STREAM_BUFFER_SIZE];
+        long total = 0L;
+        int n;
+        while ((n = in.read(buffer)) != -1) {
+            out.write(buffer, 0, n);
+            total += n;
+        }
+        return total;
     }
 
     private long transferWithLimits(InputStream in,

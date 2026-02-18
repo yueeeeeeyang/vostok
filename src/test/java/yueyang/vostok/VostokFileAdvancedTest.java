@@ -11,6 +11,7 @@ import yueyang.vostok.file.exception.VKFileErrorCode;
 import yueyang.vostok.file.exception.VKFileException;
 
 import java.io.ByteArrayOutputStream;
+import java.io.ByteArrayInputStream;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
@@ -206,6 +207,39 @@ public class VostokFileAdvancedTest {
         byte[] expected = new byte[128 * 1024];
         System.arraycopy(payload, 1024, expected, 0, expected.length);
         assertArrayEquals(expected, out.toByteArray());
+    }
+
+    @Test
+    void testStreamReadWriteAppend() throws Exception {
+        init();
+        byte[] payload = new byte[512 * 1024];
+        for (int i = 0; i < payload.length; i++) {
+            payload[i] = (byte) (i % 251);
+        }
+
+        long w = Vostok.File.writeFrom("stream/big.bin", new ByteArrayInputStream(payload));
+        assertEquals(payload.length, w);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        long r = Vostok.File.readTo("stream/big.bin", out);
+        assertEquals(payload.length, r);
+        assertArrayEquals(payload, out.toByteArray());
+
+        byte[] tail = new byte[]{9, 8, 7, 6};
+        long a = Vostok.File.appendFrom("stream/big.bin", new ByteArrayInputStream(tail));
+        assertEquals(tail.length, a);
+        byte[] all = Vostok.File.readBytes("stream/big.bin");
+        assertEquals(payload.length + tail.length, all.length);
+        assertEquals(9, all[payload.length]);
+    }
+
+    @Test
+    void testWriteFromNoReplace() {
+        init();
+        Vostok.File.write("stream/a.txt", "a");
+        VKFileException ex = assertThrows(VKFileException.class, () ->
+                Vostok.File.writeFrom("stream/a.txt", new ByteArrayInputStream(new byte[]{1}), false));
+        assertEquals(VKFileErrorCode.IO_ERROR, ex.getErrorCode());
     }
 
     @Test

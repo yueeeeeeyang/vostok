@@ -60,6 +60,15 @@ public final class VKHttpParser {
         return info.expectContinue && (info.contentLength > 0 || info.chunked);
     }
 
+    public ParsedHeaders parseHeadersOnly(byte[] buf, int len) {
+        HeaderInfo info = parseHeaders(buf, len);
+        if (info == null) {
+            return null;
+        }
+        return new ParsedHeaders(info.method, info.path, info.query, info.version, info.headers, info.contentLength,
+                info.headerEnd, info.keepAlive, info.chunked, info.expectContinue);
+    }
+
     private HeaderInfo parseHeaders(byte[] buf, int len) {
         int headerEnd = indexOfHeaderEnd(buf, len, 0);
         if (headerEnd < 0) {
@@ -403,6 +412,73 @@ public final class VKHttpParser {
     private record HeaderInfo(String method, String path, String query, String version,
                               Map<String, String> headers, int contentLength, int headerEnd,
                               boolean keepAlive, boolean chunked, boolean expectContinue) {
+    }
+
+    public static final class ParsedHeaders {
+        private final String method;
+        private final String path;
+        private final String query;
+        private final String version;
+        private final Map<String, String> headers;
+        private final int contentLength;
+        private final int headerEnd;
+        private final boolean keepAlive;
+        private final boolean chunked;
+        private final boolean expectContinue;
+
+        ParsedHeaders(String method, String path, String query, String version, Map<String, String> headers,
+                      int contentLength, int headerEnd, boolean keepAlive, boolean chunked, boolean expectContinue) {
+            this.method = method;
+            this.path = path;
+            this.query = query;
+            this.version = version;
+            this.headers = headers;
+            this.contentLength = contentLength;
+            this.headerEnd = headerEnd;
+            this.keepAlive = keepAlive;
+            this.chunked = chunked;
+            this.expectContinue = expectContinue;
+        }
+
+        public String method() {
+            return method;
+        }
+
+        public String path() {
+            return path;
+        }
+
+        public String query() {
+            return query;
+        }
+
+        public String version() {
+            return version;
+        }
+
+        public Map<String, String> headers() {
+            return headers;
+        }
+
+        public int contentLength() {
+            return contentLength;
+        }
+
+        public int headerEnd() {
+            return headerEnd;
+        }
+
+        public boolean keepAlive() {
+            return keepAlive;
+        }
+
+        public boolean chunked() {
+            return chunked;
+        }
+
+        public boolean expectContinue() {
+            return expectContinue;
+        }
     }
 
     public static final class ParsedRequest {

@@ -13,6 +13,9 @@ import yueyang.vostok.web.route.VKRouter;
 import yueyang.vostok.web.route.VKRouteMatch;
 import yueyang.vostok.web.util.VKBufferPool;
 import yueyang.vostok.web.http.VKHttpParser;
+import yueyang.vostok.web.websocket.VKWebSocketConfig;
+import yueyang.vostok.web.websocket.VKWebSocketEndpoint;
+import yueyang.vostok.web.websocket.VKWebSocketHandler;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -44,6 +47,7 @@ public final class VKWebServer {
     private int rr = 0;
     private volatile VKRateLimiter globalRateLimiter;
     private final Map<String, VKRateLimiter> routeRateLimiters = new ConcurrentHashMap<>();
+    private final Map<String, VKWebSocketEndpoint> webSockets = new ConcurrentHashMap<>();
 
     public VKWebServer(VKWebConfig config) {
         this.config = config;
@@ -56,6 +60,14 @@ public final class VKWebServer {
 
     public void addMiddleware(VKMiddleware middleware) {
         middlewares.add(middleware);
+    }
+
+    public void addWebSocket(String path, VKWebSocketConfig wsConfig, VKWebSocketHandler handler) {
+        if (path == null || handler == null) {
+            return;
+        }
+        VKWebSocketConfig cfg = wsConfig == null ? defaultWebSocketConfig() : wsConfig;
+        webSockets.put(normalizePath(path), new VKWebSocketEndpoint(normalizePath(path), cfg, handler));
     }
 
     public void setErrorHandler(VKErrorHandler handler) {
@@ -141,6 +153,10 @@ public final class VKWebServer {
         }
         String key = routeLimitKey(method.name(), path);
         routeRateLimiters.put(key, new VKRateLimiter(config));
+    }
+
+    VKWebSocketEndpoint findWebSocket(String path) {
+        return webSockets.get(normalizePath(path));
     }
 
     boolean tryRateLimit(VKRequest req, VKRouteMatch match, VKResponse res) {
@@ -233,10 +249,29 @@ public final class VKWebServer {
 
     private String routeLimitKey(String method, String path) {
         String m = method == null ? "GET" : method.toUpperCase();
+        String p = normalizePath(path);
+        return m + " " + p;
+    }
+
+    private VKWebSocketConfig defaultWebSocketConfig() {
+        return new VKWebSocketConfig()
+                .maxFramePayloadBytes(config.getWebsocketMaxFramePayloadBytes())
+                .maxMessageBytes(config.getWebsocketMaxMessageBytes())
+                .maxPendingFrames(config.getWebsocketMaxPendingFrames())
+                .maxPendingBytes(config.getWebsocketMaxPendingBytes())
+                .pingIntervalMs(config.getWebsocketPingIntervalMs())
+                .pongTimeoutMs(config.getWebsocketPongTimeoutMs())
+                .idleTimeoutMs(config.getWebsocketIdleTimeoutMs());
+    }
+
+    private String normalizePath(String path) {
+        if (path == null || path.isEmpty()) {
+            return "/";
+        }
         String p = path.startsWith("/") ? path : "/" + path;
         if (p.length() > 1 && p.endsWith("/")) {
             p = p.substring(0, p.length() - 1);
         }
-        return m + " " + p;
+        return p;
     }
 }

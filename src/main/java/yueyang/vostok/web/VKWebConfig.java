@@ -24,6 +24,14 @@ public final class VKWebConfig {
     private long multipartMaxFileSizeBytes = 16L * 1024 * 1024;
     private long multipartMaxTotalBytes = 32L * 1024 * 1024;
     private int rateLimitCleanupIntervalMs = 60_000;
+    private boolean websocketEnabled = true;
+    private int websocketMaxFramePayloadBytes = 1024 * 1024;
+    private int websocketMaxMessageBytes = 4 * 1024 * 1024;
+    private int websocketMaxPendingFrames = 1024;
+    private int websocketMaxPendingBytes = 8 * 1024 * 1024;
+    private int websocketPingIntervalMs = 30_000;
+    private int websocketPongTimeoutMs = 10_000;
+    private int websocketIdleTimeoutMs = 120_000;
 
     public int getPort() {
         return port;
@@ -204,6 +212,78 @@ public final class VKWebConfig {
 
     public VKWebConfig rateLimitCleanupIntervalMs(int rateLimitCleanupIntervalMs) {
         this.rateLimitCleanupIntervalMs = Math.max(1000, rateLimitCleanupIntervalMs);
+        return this;
+    }
+
+    public boolean isWebsocketEnabled() {
+        return websocketEnabled;
+    }
+
+    public VKWebConfig websocketEnabled(boolean websocketEnabled) {
+        this.websocketEnabled = websocketEnabled;
+        return this;
+    }
+
+    public int getWebsocketMaxFramePayloadBytes() {
+        return websocketMaxFramePayloadBytes;
+    }
+
+    public VKWebConfig websocketMaxFramePayloadBytes(int websocketMaxFramePayloadBytes) {
+        this.websocketMaxFramePayloadBytes = Math.max(1024, websocketMaxFramePayloadBytes);
+        return this;
+    }
+
+    public int getWebsocketMaxMessageBytes() {
+        return websocketMaxMessageBytes;
+    }
+
+    public VKWebConfig websocketMaxMessageBytes(int websocketMaxMessageBytes) {
+        this.websocketMaxMessageBytes = Math.max(1024, websocketMaxMessageBytes);
+        return this;
+    }
+
+    public int getWebsocketMaxPendingFrames() {
+        return websocketMaxPendingFrames;
+    }
+
+    public VKWebConfig websocketMaxPendingFrames(int websocketMaxPendingFrames) {
+        this.websocketMaxPendingFrames = Math.max(16, websocketMaxPendingFrames);
+        return this;
+    }
+
+    public int getWebsocketMaxPendingBytes() {
+        return websocketMaxPendingBytes;
+    }
+
+    public VKWebConfig websocketMaxPendingBytes(int websocketMaxPendingBytes) {
+        this.websocketMaxPendingBytes = Math.max(1024, websocketMaxPendingBytes);
+        return this;
+    }
+
+    public int getWebsocketPingIntervalMs() {
+        return websocketPingIntervalMs;
+    }
+
+    public VKWebConfig websocketPingIntervalMs(int websocketPingIntervalMs) {
+        this.websocketPingIntervalMs = Math.max(1000, websocketPingIntervalMs);
+        return this;
+    }
+
+    public int getWebsocketPongTimeoutMs() {
+        return websocketPongTimeoutMs;
+    }
+
+    public VKWebConfig websocketPongTimeoutMs(int websocketPongTimeoutMs) {
+        this.websocketPongTimeoutMs = Math.max(1000, websocketPongTimeoutMs);
+        return this;
+    }
+
+    public int getWebsocketIdleTimeoutMs() {
+        return websocketIdleTimeoutMs;
+    }
+
+    public VKWebConfig websocketIdleTimeoutMs(int websocketIdleTimeoutMs) {
+        this.websocketIdleTimeoutMs = Math.max(1000, websocketIdleTimeoutMs);
         return this;
     }
 }
