@@ -7,7 +7,7 @@ import java.nio.charset.StandardCharsets;
  * File module configuration.
  */
 public final class VKFileConfig {
-    private String mode = LocalTextFileStore.MODE;
+    private String mode = LocalFileStore.MODE;
     private String baseDir = System.getProperty("user.dir", ".");
     private Charset charset = StandardCharsets.UTF_8;
     private long unzipMaxEntries = -1;

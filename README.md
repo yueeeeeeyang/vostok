@@ -1446,7 +1446,7 @@ public class FileApiDemo {
         boolean s = Vostok.File.started();
         VKFileConfig cfg = Vostok.File.config();
 
-        Vostok.File.registerStore("local2", new LocalTextFileStore(java.nio.file.Path.of("/tmp/vostok-files-2")));
+        Vostok.File.registerStore("local2", new LocalFileStore(java.nio.file.Path.of("/tmp/vostok-files-2")));
         Vostok.File.setDefaultMode("local");
         String d = Vostok.File.defaultMode();
         Set<String> ms = Vostok.File.modes();

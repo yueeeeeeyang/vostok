@@ -59,7 +59,7 @@ import javax.imageio.stream.ImageOutputStream;
 /**
  * Default local text file store.
  */
-public final class LocalTextFileStore implements VKFileStore {
+public final class LocalFileStore implements VKFileStore {
     public static final String MODE = "local";
     private static final int STREAM_BUFFER_SIZE = 8 * 1024;
 
@@ -67,11 +67,11 @@ public final class LocalTextFileStore implements VKFileStore {
     private final Charset charset;
     private final Set<VKFileWatchHandle> activeWatches = ConcurrentHashMap.newKeySet();
 
-    public LocalTextFileStore(Path root) {
+    public LocalFileStore(Path root) {
         this(root, StandardCharsets.UTF_8);
     }
 
-    public LocalTextFileStore(Path root, Charset charset) {
+    public LocalFileStore(Path root, Charset charset) {
         requireNotNull(root, "Root path is null");
         requireNotNull(charset, "Charset is null");
         this.root = root.toAbsolutePath().normalize();

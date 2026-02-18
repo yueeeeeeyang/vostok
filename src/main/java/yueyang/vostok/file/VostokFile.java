@@ -48,9 +48,9 @@ public class VostokFile {
             }
 
             String mode = normalizeMode(fileConfig.getMode());
-            if (LocalTextFileStore.MODE.equals(mode)) {
-                STORES.put(LocalTextFileStore.MODE,
-                        new LocalTextFileStore(Path.of(fileConfig.getBaseDir()), fileConfig.getCharset()));
+            if (LocalFileStore.MODE.equals(mode)) {
+                STORES.put(LocalFileStore.MODE,
+                        new LocalFileStore(Path.of(fileConfig.getBaseDir()), fileConfig.getCharset()));
             } else if (!STORES.containsKey(mode)) {
                 throw new VKFileException(VKFileErrorCode.CONFIG_ERROR,
                         "File mode is not registered: " + mode + ". Register store first.");
