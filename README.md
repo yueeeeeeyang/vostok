@@ -1564,3 +1564,193 @@ public class LogApiDemo {
     }
 }
 ```
+
+# 5. 配置详解
+
+本节按配置类给出“完整配置代码清单”，并在每一个配置项上用行内注释说明用途、默认值、建议和约束。
+
+## 5.1 VKDataConfig 全量配置项
+
+```java
+import yueyang.vostok.data.VKDataConfig;
+import yueyang.vostok.data.config.VKBatchFailStrategy;
+import yueyang.vostok.data.dialect.VKDialectType;
+
+VKDataConfig cfg = new VKDataConfig()
+    // JDBC URL。必填；示例：jdbc:mysql://127.0.0.1:3306/demo
+    .url("jdbc:mysql://127.0.0.1:3306/demo")
+    // 数据库用户名。必填。
+    .username("root")
+    // 数据库密码。可为空字符串。
+    .password("123456")
+    // JDBC 驱动类名。必填；例如 com.mysql.cj.jdbc.Driver。
+    .driver("com.mysql.cj.jdbc.Driver")
+    // SQL 方言。可选；不设置时按 URL 自动推断。常见：MYSQL/POSTGRESQL/ORACLE/SQLSERVER/DB2。
+    .dialect(VKDialectType.MYSQL)
+    // 是否执行 DDL 校验。默认 false；开启后初始化时会检查实体与表结构一致性。
+    .validateDdl(false)
+    // DDL 校验 schema。默认 null；多 schema 数据库建议显式设置。
+    .ddlSchema(null)
+    // 初始化/refreshMeta 时是否自动创建缺失表。默认 false。
+    .autoCreateTable(false)
+    // 最小空闲连接数。默认 1；应 <= maxActive。
+    .minIdle(1)
+    // 最大活动连接数。默认 10；池并发上限。
+    .maxActive(10)
+    // 借连接最大等待毫秒。默认 30000；超时将抛异常。
+    .maxWaitMs(30000)
+    // 借出连接时是否校验可用性。默认 false；开启会增加延迟。
+    .testOnBorrow(false)
+    // 归还连接时是否校验可用性。默认 false；开启会增加开销。
+    .testOnReturn(false)
+    // 连接校验 SQL。默认 null；设置后优先于 Connection.isValid。
+    .validationQuery("SELECT 1")
+    // 校验超时秒数。默认 2；用于 validationQuery 或 isValid。
+    .validationTimeoutSec(2)
+    // 空闲校验与回收间隔毫秒。默认 0（关闭）；>0 时启用周期任务。
+    .idleValidationIntervalMs(0)
+    // 是否预热连接池。默认 true；初始化时预建 minIdle 连接。
+    .preheatEnabled(true)
+    // 空闲连接超时毫秒。默认 0（不回收）；>0 时会回收长时间空闲连接。
+    .idleTimeoutMs(0)
+    // 连接泄露检测阈值毫秒。默认 0（不检测）；>0 时超阈值打印告警。
+    .leakDetectMs(0)
+    // 每连接 PreparedStatement 缓存大小。默认 50；0 表示不缓存。
+    .statementCacheSize(50)
+    // 每数据源 SQL 模板缓存大小。默认 200；0 表示不缓存模板。
+    .sqlTemplateCacheSize(200)
+    // 是否启用 SQL 异常重试。默认 false；只对可重试异常生效。
+    .retryEnabled(false)
+    // 最大重试次数。默认 2；仅在 retryEnabled=true 时生效。
+    .maxRetries(2)
+    // 指数退避基数毫秒。默认 50；第 N 次重试延迟按指数增长。
+    .retryBackoffBaseMs(50)
+    // 指数退避最大毫秒。默认 2000；防止退避时间无限增长。
+    .retryBackoffMaxMs(2000)
+    // 可重试 SQLState 前缀白名单。默认 {"08","40","57"}；按数据库可调整。
+    .retrySqlStatePrefixes("08", "40", "57")
+    // 批处理分片大小。默认 500；大批量写入时按此拆分。
+    .batchSize(500)
+    // 批处理失败策略。默认 FAIL_FAST；CONTINUE 表示跳过失败分片继续。
+    .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
+    // 是否打印 SQL 文本。默认 false；排障时可开启。
+    .logSql(false)
+    // 是否打印 SQL 参数。默认 false；注意敏感信息暴露风险。
+    .logParams(false)
+    // 慢 SQL 阈值毫秒。默认 0（关闭）；>0 时超阈值记录慢 SQL。
+    .slowSqlMs(0)
+    // 是否启用 SQL 耗时分布统计。默认 true；可用于 report/pool 诊断。
+    .sqlMetricsEnabled(true)
+    // 慢 SQL TopN 数量。默认 0（关闭）；>0 时保留最慢 N 条。
+    .slowSqlTopN(0)
+    // 是否启用事务 savepoint。默认 true；用于嵌套事务回滚点。
+    .savepointEnabled(true)
+    // 事务超时毫秒。默认 0（不限制）；>0 时超时会触发回滚。
+    .txTimeoutMs(0)
+    // 非事务 SQL 超时毫秒。默认 0（不限制）；>0 会设置 Statement timeout。
+    .queryTimeoutMs(0);
+```
+
+## 5.2 VKWebConfig 全量配置项
+
+```java
+import yueyang.vostok.web.VKWebConfig;
+
+VKWebConfig cfg = new VKWebConfig()
+    // 监听端口。默认 8080；设为 0 表示随机可用端口。
+    .port(8080)
+    // IO Reactor 线程数。默认 1；内部会强制 >=1。
+    .ioThreads(1)
+    // 业务线程池线程数。默认 max(2, CPU*2)；内部会强制 >=1。
+    .workerThreads(Math.max(2, Runtime.getRuntime().availableProcessors() * 2))
+    // ServerSocket backlog。默认 1024；内部会强制 >=1。
+    .backlog(1024)
+    // 每连接读缓冲区大小（字节）。默认 16KB；内部最小 1024。
+    .readBufferSize(16 * 1024)
+    // 最大请求头字节数。默认 32KB；内部最小 4096。
+    .maxHeaderBytes(32 * 1024)
+    // 最大请求体字节数。默认 4MB；内部最小 1024。
+    .maxBodyBytes(4 * 1024 * 1024)
+    // Keep-Alive 空闲超时毫秒。默认 30000；内部最小 1000。
+    .keepAliveTimeoutMs(30_000)
+    // 最大连接数。默认 10000；超出后新连接会被拒绝。内部最小 1。
+    .maxConnections(10_000)
+    // 读请求超时毫秒。默认 15000；内部最小 1000。
+    .readTimeoutMs(15_000)
+    // 业务线程池队列长度。默认 10000；内部最小 1。
+    .workerQueueSize(10_000)
+    // 是否启用 AccessLog。默认 true。
+    .accessLogEnabled(true)
+    // AccessLog 异步队列长度。默认 8192；内部最小 256。
+    .accessLogQueueSize(8_192);
+```
+
+## 5.3 VKFileConfig 全量配置项
+
+```java
+import yueyang.vostok.file.VKFileConfig;
+import java.nio.charset.StandardCharsets;
+
+VKFileConfig cfg = new VKFileConfig()
+    // 文件模式。默认 "local"；自定义存储需先 registerStore 再切换模式。
+    .mode("local")
+    // 基础目录。默认 System.getProperty("user.dir", ".")；所有相对路径都基于该目录。
+    .baseDir("/tmp/vostok-files")
+    // 文本读写字符集。默认 UTF-8。
+    .charset(StandardCharsets.UTF_8)
+    // 解压最大文件条目数。默认 -1（不限制）；建议生产环境设置上限防 zip bomb。
+    .unzipMaxEntries(-1)
+    // 解压总解压字节上限。默认 -1（不限制）；建议设置防止磁盘打满。
+    .unzipMaxTotalUncompressedBytes(-1)
+    // 单文件解压字节上限。默认 -1（不限制）；建议设置防止异常大文件。
+    .unzipMaxEntryUncompressedBytes(-1)
+    // watch(path, listener) 的默认递归策略。默认 false。
+    .watchRecursiveDefault(false);
+```
+
+## 5.4 VKLogConfig 全量配置项
+
+```java
+import yueyang.vostok.log.*;
+
+VKLogConfig cfg = new VKLogConfig()
+    // 日志级别。默认 INFO。
+    .level(VKLogLevel.INFO)
+    // 日志输出目录。默认 "logs"。
+    .outputDir("logs")
+    // 活跃日志文件前缀。默认 "vostok"；当前文件名形如 vostok.log。
+    .filePrefix("vostok")
+    // 单日志文件大小上限（MB 方式设置）。
+    // 默认底层值为 64MB（maxFileSizeBytes = 64 * 1024 * 1024）。
+    .maxFileSizeMb(64)
+    // 单日志文件大小上限（字节方式设置）。和 maxFileSizeMb 二选一即可。
+    .maxFileSizeBytes(64L * 1024 * 1024)
+    // 滚动文件最大保留数量。默认 20；0 表示不按数量限制。
+    .maxBackups(20)
+    // 滚动文件最大保留天数。默认 30；0 表示不按天数限制。
+    .maxBackupDays(30)
+    // 总日志体积上限（MB 方式设置）。默认 1024MB。
+    .maxTotalSizeMb(1024)
+    // 总日志体积上限（字节方式设置）。和 maxTotalSizeMb 二选一即可。
+    .maxTotalSizeBytes(1024L * 1024 * 1024)
+    // 是否同时输出控制台。默认 true。
+    .consoleEnabled(true)
+    // 异步队列容量。默认 32768（1 << 15）；容量不足会触发队列满策略。
+    .queueCapacity(1 << 15)
+    // 队列满策略。默认 DROP；可选 BLOCK / SYNC_FALLBACK。
+    .queueFullPolicy(VKLogQueueFullPolicy.DROP)
+    // 异步刷新间隔毫秒。默认 1000。
+    .flushIntervalMs(1000)
+    // 每批次最大刷盘条数。默认 256。
+    .flushBatchSize(256)
+    // 关闭等待超时毫秒。默认 5000。
+    .shutdownTimeoutMs(5000)
+    // fsync 策略。默认 NEVER；可选 EVERY_WRITE / EVERY_FLUSH。
+    .fsyncPolicy(VKLogFsyncPolicy.NEVER)
+    // 滚动周期。默认 DAILY；可选 HOURLY / NONE。
+    .rollInterval(VKLogRollInterval.DAILY)
+    // 是否压缩滚动文件。默认 false；true 时生成 .gz。
+    .compressRolledFiles(false)
+    // 文件写失败后的重试间隔毫秒。默认 3000。
+    .fileRetryIntervalMs(3000);
+```
