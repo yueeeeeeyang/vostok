@@ -15,9 +15,11 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class VostokWebTest {
@@ -222,5 +224,118 @@ public class VostokWebTest {
             String raw = n <= 0 ? "" : new String(buf, 0, n, StandardCharsets.US_ASCII);
             assertTrue(raw.contains("408"));
         }
+    }
+
+    @Test
+    void testCookieReadWrite() throws Exception {
+        Vostok.Web.init(0)
+                .get("/cookie", (req, res) -> {
+                    String sid = req.cookie("sid");
+                    res.cookie("k1", "v1")
+                            .cookie(new yueyang.vostok.web.http.VKCookie("k2", "v2")
+                                    .httpOnly(true).secure(true).path("/").sameSite(yueyang.vostok.web.http.VKCookie.SameSite.LAX))
+                            .deleteCookie("k3")
+                            .text(sid == null ? "none" : sid);
+                });
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        HttpClient client = HttpClient.newHttpClient();
+        HttpResponse<String> res = client.send(HttpRequest.newBuilder()
+                        .uri(new URI("http://127.0.0.1:" + port + "/cookie"))
+                        .header("Cookie", "sid=abc123; theme=dark")
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, res.statusCode());
+        assertEquals("abc123", res.body());
+        List<String> cookies = res.headers().allValues("Set-Cookie");
+        assertEquals(3, cookies.size());
+        assertTrue(cookies.stream().anyMatch(v -> v.startsWith("k1=v1")));
+        assertTrue(cookies.stream().anyMatch(v -> v.contains("HttpOnly")));
+        assertTrue(cookies.stream().anyMatch(v -> v.contains("Max-Age=0")));
+    }
+
+    @Test
+    void testMultipartUpload() throws Exception {
+        yueyang.vostok.web.VKWebConfig cfg = new yueyang.vostok.web.VKWebConfig()
+                .port(0)
+                .multipartEnabled(true)
+                .multipartInMemoryThresholdBytes(8)
+                .multipartMaxFileSizeBytes(1024 * 1024)
+                .multipartMaxParts(16);
+
+        Vostok.Web.init(cfg)
+                .post("/upload", (req, res) -> {
+                    var f = req.file("file");
+                    if (f == null) {
+                        res.status(500).text("missing file");
+                        return;
+                    }
+                    res.json("{\"name\":\"" + req.formField("name") + "\",\"file\":\""
+                            + f.fileName() + "\",\"size\":" + f.size() + ",\"mem\":" + f.inMemory() + "}");
+                });
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        String boundary = "----vk-boundary";
+        String body = "--" + boundary + "\r\n" +
+                "Content-Disposition: form-data; name=\"name\"\r\n\r\n" +
+                "neo\r\n" +
+                "--" + boundary + "\r\n" +
+                "Content-Disposition: form-data; name=\"file\"; filename=\"a.txt\"\r\n" +
+                "Content-Type: text/plain\r\n\r\n" +
+                "0123456789".repeat(220) + "\r\n" +
+                "--" + boundary + "--\r\n";
+
+        HttpClient client = HttpClient.newHttpClient();
+        HttpResponse<String> res = client.send(HttpRequest.newBuilder()
+                        .uri(new URI("http://127.0.0.1:" + port + "/upload"))
+                        .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                        .POST(HttpRequest.BodyPublishers.ofString(body))
+                        .build(),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, res.statusCode());
+        assertTrue(res.body().contains("\"name\":\"neo\""));
+        assertTrue(res.body().contains("\"file\":\"a.txt\""));
+        assertTrue(res.body().contains("\"mem\":false"));
+    }
+
+    @Test
+    void testRateLimitGlobalAndRoute() throws Exception {
+        Vostok.Web.init(0)
+                .rateLimit(new yueyang.vostok.web.rate.VKRateLimitConfig()
+                        .capacity(2).refillTokens(2).refillPeriodMs(60_000)
+                        .keyStrategy(yueyang.vostok.web.rate.VKRateLimitKeyStrategy.TRACE_ID))
+                .rateLimit("GET", "/strict", new yueyang.vostok.web.rate.VKRateLimitConfig()
+                        .capacity(1).refillTokens(1).refillPeriodMs(60_000).rejectBody("route limit"))
+                .get("/strict", (req, res) -> res.text("strict"))
+                .get("/open", (req, res) -> res.text("open"));
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest strictReq = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/strict"))
+                .header("X-Trace-Id", "same-client")
+                .GET().build();
+        HttpResponse<String> r1 = client.send(strictReq, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> r2 = client.send(strictReq, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, r1.statusCode());
+        assertEquals(429, r2.statusCode());
+        assertTrue(r2.body().contains("route limit"));
+
+        HttpRequest openReq = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/open"))
+                .header("X-Trace-Id", "other-client")
+                .GET().build();
+        HttpResponse<String> o1 = client.send(openReq, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> o2 = client.send(openReq, HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> o3 = client.send(openReq, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, o1.statusCode());
+        assertEquals(200, o2.statusCode());
+        assertEquals(429, o3.statusCode());
+        assertFalse(o3.body().isEmpty());
     }
 }

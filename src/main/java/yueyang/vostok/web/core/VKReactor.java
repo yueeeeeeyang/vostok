@@ -4,6 +4,8 @@ import yueyang.vostok.web.VKErrorHandler;
 import yueyang.vostok.web.VKWebConfig;
 import yueyang.vostok.web.http.VKHttpParseException;
 import yueyang.vostok.web.http.VKHttpParser;
+import yueyang.vostok.web.http.VKMultipartParseException;
+import yueyang.vostok.web.http.VKMultipartParser;
 import yueyang.vostok.web.http.VKHttpWriter;
 import yueyang.vostok.web.http.VKRequest;
 import yueyang.vostok.web.http.VKResponse;
@@ -181,6 +183,7 @@ final class VKReactor implements Runnable {
         private final VKReactor reactor;
         private final ByteBuffer readBuffer;
         private final int readTimeoutMs;
+        private final VKWebConfig webConfig;
 
         private byte[] dataBuf = new byte[8192];
         private int dataLen;
@@ -223,6 +226,7 @@ final class VKReactor implements Runnable {
             this.middlewares = middlewares;
             this.errorHandler = errorHandler;
             this.reactor = reactor;
+            this.webConfig = config;
             this.readTimeoutMs = config.getReadTimeoutMs();
             this.readBuffer = bufferPool.acquire();
             this.lastActive = System.currentTimeMillis();
@@ -459,6 +463,12 @@ final class VKReactor implements Runnable {
                         res.status(404).text("Not Found");
                     } else {
                         req.setParams(match.params());
+                        if (webConfig.isMultipartEnabled() && req.isMultipart()) {
+                            req.applyMultipart(VKMultipartParser.parse(req, webConfig));
+                        }
+                        if (!server.tryRateLimit(req, match, res)) {
+                            return;
+                        }
                         if (middlewares.isEmpty()) {
                             match.handler().handle(req, res);
                         } else {
@@ -466,6 +476,8 @@ final class VKReactor implements Runnable {
                             chain.next(req, res);
                         }
                     }
+                } catch (VKMultipartParseException e) {
+                    res.status(e.status()).text(e.getMessage());
                 } catch (Throwable t) {
                     try {
                         errorHandler.handle(t, req, res);
@@ -484,6 +496,7 @@ final class VKReactor implements Runnable {
                     long costMs = (System.nanoTime() - start) / 1_000_000;
                     logAccess(req, res.status(), out.totalBytes(), costMs);
 
+                    req.cleanupUploads();
                     inFlight.decrementAndGet();
                     reactor.requestReschedule(this);
                 }

@@ -49,6 +49,11 @@ public final class VKHttpWriter {
             }
             sb.append(name).append(": ").append(value).append("\r\n");
         }
+        for (String setCookie : res.setCookies()) {
+            if (setCookie != null && !setCookie.isEmpty()) {
+                sb.append("Set-Cookie: ").append(setCookie).append("\r\n");
+            }
+        }
 
         if (!hasContentLength) {
             sb.append("Content-Length: ").append(contentLength).append("\r\n");
@@ -81,6 +86,7 @@ public final class VKHttpWriter {
             case 405 -> "Method Not Allowed";
             case 408 -> "Request Timeout";
             case 413 -> "Payload Too Large";
+            case 429 -> "Too Many Requests";
             case 431 -> "Request Header Fields Too Large";
             case 500 -> "Internal Server Error";
             case 503 -> "Service Unavailable";

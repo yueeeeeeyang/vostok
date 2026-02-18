@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Test;
 import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.config.VKBatchFailStrategy;
 import yueyang.vostok.data.dialect.VKDialectType;
-import yueyang.vostok.data.exception.VKStateException;
 import yueyang.vostok.common.json.VKJson;
 import yueyang.vostok.web.auto.VKCrudStyle;
 
@@ -21,8 +20,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class VostokWebAutoCrudTest {
-    private static final String JDBC_URL = "jdbc:h2:mem:webcrud;MODE=MySQL;DB_CLOSE_DELAY=-1";
-
     @AfterEach
     void tearDown() {
         try {
@@ -37,7 +34,7 @@ public class VostokWebAutoCrudTest {
 
     @Test
     void testAutoCrudDefaultScan() throws Exception {
-        ensureData();
+        ensureData(newJdbcUrl());
 
         Vostok.Web.init(0).autoCrudApi();
         Vostok.Web.start();
@@ -94,7 +91,7 @@ public class VostokWebAutoCrudTest {
 
     @Test
     void testAutoCrudTraditional() throws Exception {
-        ensureData();
+        ensureData(newJdbcUrl());
 
         Vostok.Web.init(0).autoCrudApi(VKCrudStyle.TRADITIONAL);
         Vostok.Web.start();
@@ -142,28 +139,30 @@ public class VostokWebAutoCrudTest {
         assertEquals(200, delRes.statusCode());
     }
 
-    private static void ensureData() {
-        try {
-            Vostok.Data.findAll(UserEntity.class);
-            return;
-        } catch (VKStateException ignore) {
-        }
+    private static String newJdbcUrl() {
+        return "jdbc:h2:mem:webcrud_" + System.nanoTime() + ";MODE=MySQL;DB_CLOSE_DELAY=-1";
+    }
 
+    private static void ensureData(String jdbcUrl) {
+        try {
+            Vostok.Data.close();
+        } catch (Exception ignore) {
+        }
         VKDataConfig cfg = new VKDataConfig()
-                .url(JDBC_URL)
+                .url(jdbcUrl)
                 .username("sa")
                 .password("")
                 .driver("org.h2.Driver")
                 .dialect(VKDialectType.MYSQL)
                 .minIdle(1)
-                .maxActive(3)
-                .maxWaitMs(10000)
+                .maxActive(32)
+                .maxWaitMs(20000)
                 .batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST);
 
         Vostok.Data.init(cfg, "yueyang.vostok");
 
-        try (var conn = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+        try (var conn = java.sql.DriverManager.getConnection(jdbcUrl, "sa", "");
              var stmt = conn.createStatement()) {
             stmt.execute("CREATE TABLE IF NOT EXISTS t_user (id BIGINT AUTO_INCREMENT PRIMARY KEY, user_name VARCHAR(64) NOT NULL, age INT)");
         } catch (Exception e) {

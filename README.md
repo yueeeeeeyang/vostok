@@ -2,13 +2,14 @@
 
 ---
 
-Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合五个模块能力：
+Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合六个模块能力：
 
 - `Vostok.Data`：基于 JDBC 的数据访问（CRUD、事务、查询、多数据源、连接池）
 - `Vostok.Web`：基于 NIO Reactor 的 Web 服务器（路由、中间件、静态资源、自动 CRUD API）
 - `Vostok.File`：统一文件访问（本地文本存储默认实现，可扩展 Store）
 - `Vostok.Log`：异步日志（滚动、队列策略、降级、指标）
 - `Vostok.Config`：统一配置访问（自动扫描 `.properties/.yml/.yaml`、按文件名命名空间读取、支持手动追加任意路径文件）
+- `Vostok.Security`：安全检测工具集（SQL 注入、XSS、命令注入、路径穿越、响应脱敏、文件魔数与脚本上传检测）
 
 项目构建方式为 Maven：`/Users/yueyang/Develop/code/codex/Vostok/pom.xml`。
 
@@ -24,6 +25,9 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.File` 在文件操作前必须先 `init(...)`。
 - `Vostok.Log` 可显式 `init(...)`，也支持首次写日志时懒加载。
 - `Vostok.Config` 支持 `init(...)` 显式初始化；未 `init(...)` 时首次读取会懒加载默认配置。
+- `Vostok.Security` 为主动调用型模块，不会自动接入 `Data/Web` 执行链路，需要在业务代码中显式调用。
+- `Vostok.Security` 的检测结果是风险判断，不替代参数化查询、鉴权、最小权限、WAF/主机安全等基础安全控制。
+- 对于 `Vostok.Security` 的响应脱敏与文件检测能力，建议与业务字段分级、上传大小限制、存储隔离与病毒扫描联合使用。
 
 ---
 
@@ -739,6 +743,95 @@ public interface Vostok.Web {
      */
     public VostokWeb error(VKErrorHandler handler);
 
+    /**
+     * 注册全局限流器（对全部路由生效）。
+     *
+     * - config：限流配置，类型为 VKRateLimitConfig，不能为空。
+     * - 返回值：VostokWeb（支持链式调用）。
+     */
+    public VostokWeb rateLimit(VKRateLimitConfig config);
+
+    /**
+     * 注册指定路由限流器（仅命中 method+path 时生效）。
+     *
+     * - method：HTTP 方法，类型为 String，例如 "GET"/"POST"。
+     * - path：路由模板，类型为 String，例如 "/user/{id}"。
+     * - config：限流配置，类型为 VKRateLimitConfig，不能为空。
+     * - 返回值：VostokWeb（支持链式调用）。
+     */
+    public VostokWeb rateLimit(String method, String path, VKRateLimitConfig config);
+
+}
+```
+
+```java
+public interface VKRequest {
+    /**
+     * 读取请求 Cookie。
+     *
+     * - name：Cookie 名称，类型为 String。
+     * - 返回值：String（未命中返回 null）。
+     */
+    public String cookie(String name);
+
+    /**
+     * 读取全部 Cookie（键值对）。
+     *
+     * - 返回值：Map<String, String>。
+     */
+    public Map<String, String> cookies();
+
+    /**
+     * 判断当前请求是否 multipart/form-data。
+     *
+     * - 返回值：boolean。
+     */
+    public boolean isMultipart();
+
+    /**
+     * 读取 multipart 文本字段。
+     *
+     * - name：字段名，类型为 String。
+     * - 返回值：String（未命中返回 null）。
+     */
+    public String formField(String name);
+
+    /**
+     * 读取 multipart 单文件字段（取第一个）。
+     *
+     * - name：字段名，类型为 String。
+     * - 返回值：VKUploadedFile（未命中返回 null）。
+     */
+    public VKUploadedFile file(String name);
+}
+```
+
+```java
+public interface VKResponse {
+    /**
+     * 写入响应 Cookie（快捷形式）。
+     *
+     * - name：Cookie 名称，类型为 String。
+     * - value：Cookie 值，类型为 String。
+     * - 返回值：VKResponse（支持链式调用）。
+     */
+    public VKResponse cookie(String name, String value);
+
+    /**
+     * 写入响应 Cookie（完整属性形式）。
+     *
+     * - cookie：Cookie 对象，类型为 VKCookie（支持 path/domain/maxAge/httpOnly/secure/sameSite）。
+     * - 返回值：VKResponse（支持链式调用）。
+     */
+    public VKResponse cookie(VKCookie cookie);
+
+    /**
+     * 删除 Cookie（Max-Age=0）。
+     *
+     * - name：Cookie 名称，类型为 String。
+     * - 返回值：VKResponse（支持链式调用）。
+     */
+    public VKResponse deleteCookie(String name);
 }
 ```
 
@@ -748,6 +841,9 @@ public interface Vostok.Web {
 import yueyang.vostok.Vostok;
 import yueyang.vostok.web.VKWebConfig;
 import yueyang.vostok.web.auto.VKCrudStyle;
+import yueyang.vostok.web.http.VKCookie;
+import yueyang.vostok.web.rate.VKRateLimitConfig;
+import yueyang.vostok.web.rate.VKRateLimitKeyStrategy;
 
 public class WebApiDemo {
     public static void main(String[] args) {
@@ -764,6 +860,15 @@ public class WebApiDemo {
                     chain.next(req, res);
                 })
                 .staticDir("/static", "/tmp/www")
+                .rateLimit(new VKRateLimitConfig()
+                        .capacity(200)
+                        .refillTokens(200)
+                        .refillPeriodMs(1000)
+                        .keyStrategy(VKRateLimitKeyStrategy.IP))
+                .rateLimit("POST", "/upload", new VKRateLimitConfig()
+                        .capacity(20)
+                        .refillTokens(20)
+                        .refillPeriodMs(1000))
                 .error((err, req, res) -> res.status(500).text("custom error"));
 
         Vostok.Web.start();
@@ -777,6 +882,47 @@ public class WebApiDemo {
                 .get("/health", (req, res) -> res.json("{\"ok\":true}"));
         Vostok.Web.start();
         Vostok.Web.stop();
+    }
+}
+```
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.web.VKWebConfig;
+import yueyang.vostok.web.http.VKCookie;
+
+public class WebCookieMultipartDemo {
+    public static void main(String[] args) {
+        VKWebConfig cfg = new VKWebConfig()
+                .port(8080)
+                // 默认 true，此处显式展示
+                .multipartEnabled(true)
+                .multipartInMemoryThresholdBytes(64 * 1024)
+                .multipartTempDir("/tmp/vostok-upload")
+                .multipartMaxParts(128)
+                .multipartMaxFileSizeBytes(16L * 1024 * 1024)
+                .multipartMaxTotalBytes(32L * 1024 * 1024);
+
+        Vostok.Web.init(cfg)
+                .get("/me", (req, res) -> {
+                    String sid = req.cookie("sid");
+                    res.cookie(new VKCookie("sid", sid == null ? "new-session" : sid)
+                                    .path("/")
+                                    .httpOnly(true)
+                                    .sameSite(VKCookie.SameSite.LAX))
+                            .json("{\"sid\":\"" + (sid == null ? "new-session" : sid) + "\"}");
+                })
+                .post("/upload", (req, res) -> {
+                    String title = req.formField("title");
+                    var file = req.file("file");
+                    if (file == null) {
+                        res.status(400).text("file missing");
+                        return;
+                    }
+                    res.json("{\"title\":\"" + title + "\",\"name\":\"" + file.fileName() + "\",\"size\":" + file.size() + "}");
+                });
+
+        Vostok.Web.start();
     }
 }
 ```
@@ -812,7 +958,21 @@ VKWebConfig cfg = new VKWebConfig()
     // 是否启用 AccessLog。默认 true。
     .accessLogEnabled(true)
     // AccessLog 异步队列长度。默认 8192；内部最小 256。
-    .accessLogQueueSize(8_192);
+    .accessLogQueueSize(8_192)
+    // 是否启用 multipart/form-data 解析。默认 true。
+    .multipartEnabled(true)
+    // multipart 临时文件目录（大文件超阈值后写入该目录）。默认 ${java.io.tmpdir}/vostok-upload。
+    .multipartTempDir("/tmp/vostok-upload")
+    // multipart 文件内存阈值（字节）。默认 64KB；内部最小 1024。
+    .multipartInMemoryThresholdBytes(64 * 1024)
+    // multipart 最大 part 数。默认 128；内部最小 1。
+    .multipartMaxParts(128)
+    // multipart 单文件最大字节数。默认 16MB；内部最小 1024。
+    .multipartMaxFileSizeBytes(16L * 1024 * 1024)
+    // multipart 总字节数限制。默认 32MB；内部最小 1024。
+    .multipartMaxTotalBytes(32L * 1024 * 1024)
+    // 限流清理间隔（当前版本用于配置保留，单位毫秒）。默认 60000；内部最小 1000。
+    .rateLimitCleanupIntervalMs(60_000);
 ```
 
 ---
@@ -1936,6 +2096,16 @@ VKConfigOptions options = new VKConfigOptions()
 - 响应敏感信息检测与脱敏
 - 文件魔数识别与白名单校验
 - 可执行脚本上传检测（扩展名 + 魔数 + 内容特征）
+
+## 7.0 说明与注意事项
+
+- `Vostok.Security` 当前为“主动调用型”模块，不会自动拦截 `Data/Web` 请求链路，需要在业务代码中显式调用检测方法。
+- 安全检测结果是风险判断，不等价于绝对攻击结论；建议结合业务上下文、鉴权与审计日志联合判定。
+- SQL 检测优先用于识别明显注入模式与高危函数，仍建议始终使用参数化查询，不要拼接原始输入。
+- XSS、命令注入、路径穿越检测基于规则与特征匹配，可能存在误报/漏报；上线前应通过白名单与阈值策略做校准。
+- 响应脱敏仅做通用字段掩码，不替代完整数据分级与隐私合规策略（如最小化返回、按角色脱敏）。
+- 文件魔数与脚本上传检测建议与文件大小限制、存储隔离、病毒扫描等机制配合使用。
+- 该模块定位为应用层安全增强能力，不替代 WAF、RASP、主机安全、数据库权限最小化等基础安全控制。
 
 ## 7.1 接口定义
 

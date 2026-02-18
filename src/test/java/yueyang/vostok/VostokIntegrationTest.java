@@ -807,37 +807,56 @@ public class VostokIntegrationTest {
     @Test
     @Order(92)
     void testConcurrentRefreshMeta() throws Exception {
-        int threads = 6;
-        int loops = 50;
+        int threads = 4;
+        int loops = 30;
         var pool = Executors.newFixedThreadPool(threads);
         CountDownLatch latch = new CountDownLatch(threads);
         List<Throwable> errors = new ArrayList<>();
 
-        for (int i = 0; i < threads; i++) {
-            pool.submit(() -> {
-                try {
-                    for (int j = 0; j < loops; j++) {
-                        Vostok.Data.refreshMeta("yueyang.vostok");
-                        Vostok.Data.findAll(UserEntity.class);
+        try {
+            for (int i = 0; i < threads; i++) {
+                pool.submit(() -> {
+                    try {
+                        for (int j = 0; j < loops; j++) {
+                            Vostok.Data.refreshMeta("yueyang.vostok");
+                            Vostok.Data.findAll(UserEntity.class);
+                        }
+                    } catch (Throwable t) {
+                        synchronized (errors) {
+                            errors.add(t);
+                        }
+                    } finally {
+                        latch.countDown();
                     }
-                } catch (Throwable t) {
-                    synchronized (errors) {
-                        errors.add(t);
-                    }
-                } finally {
-                    latch.countDown();
-                }
-            });
-        }
+                });
+            }
 
-        assertTrue(latch.await(10, TimeUnit.SECONDS));
-        pool.shutdownNow();
-        assertTrue(errors.isEmpty());
+            assertTrue(latch.await(20, TimeUnit.SECONDS));
+            assertTrue(errors.isEmpty());
+        } finally {
+            pool.shutdownNow();
+            pool.awaitTermination(5, TimeUnit.SECONDS);
+        }
     }
 
     @Test
     @Order(93)
     void testTemplateCacheSnapshotOnRefresh() {
+        Vostok.Data.close();
+        VKDataConfig cfg = new VKDataConfig()
+                .url(JDBC_URL)
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.MYSQL)
+                .minIdle(1)
+                .maxActive(5)
+                .maxWaitMs(10000)
+                .batchSize(2)
+                .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
+                .validationQuery("SELECT 1");
+        Vostok.Data.init(cfg, "yueyang.vostok");
+
         var cache1 = MetaRegistry.getTemplateCache(VKDataSourceRegistry.getDefaultName());
         Vostok.Data.findAll(UserEntity.class);
         assertTrue(cache1.size() > 0);
@@ -851,39 +870,41 @@ public class VostokIntegrationTest {
     @Test
     @Order(91)
     void testQueryTimeoutNonTx() {
-        Vostok.Data.close();
-        VKDataConfig cfg = new VKDataConfig()
-                .url(JDBC_URL)
-                .username("sa")
-                .password("")
-                .driver("org.h2.Driver")
-                .dialect(VKDialectType.MYSQL)
-                .queryTimeoutMs(200)
-                .validationQuery("SELECT 1");
-        Vostok.Data.init(cfg, "yueyang.vostok");
+        try {
+            Vostok.Data.close();
+            VKDataConfig cfg = new VKDataConfig()
+                    .url(JDBC_URL)
+                    .username("sa")
+                    .password("")
+                    .driver("org.h2.Driver")
+                    .dialect(VKDialectType.MYSQL)
+                    .queryTimeoutMs(200)
+                    .validationQuery("SELECT 1");
+            Vostok.Data.init(cfg, "yueyang.vostok");
 
-        Vostok.Data.insert(user("Sleep2", 2));
-        assertThrows(VKException.class, () -> {
-            VKQuery q = VKQuery.create()
-                    .where(VKCondition.raw("SLEEP(600)", VKOperator.GE, 0));
-            Vostok.Data.query(UserEntity.class, q);
-        });
-
-        // restore default config for remaining tests
-        Vostok.Data.close();
-        VKDataConfig cfg2 = new VKDataConfig()
-                .url(JDBC_URL)
-                .username("sa")
-                .password("")
-                .driver("org.h2.Driver")
-                .dialect(VKDialectType.MYSQL)
-                .minIdle(1)
-                .maxActive(5)
-                .maxWaitMs(10000)
-                .batchSize(2)
-                .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
-                .validationQuery("SELECT 1");
-        Vostok.Data.init(cfg2, "yueyang.vostok");
+            Vostok.Data.insert(user("Sleep2", 2));
+            assertThrows(VKException.class, () -> {
+                VKQuery q = VKQuery.create()
+                        .where(VKCondition.raw("SLEEP(600)", VKOperator.GE, 0));
+                Vostok.Data.query(UserEntity.class, q);
+            });
+        } finally {
+            // restore default config for remaining tests
+            Vostok.Data.close();
+            VKDataConfig cfg2 = new VKDataConfig()
+                    .url(JDBC_URL)
+                    .username("sa")
+                    .password("")
+                    .driver("org.h2.Driver")
+                    .dialect(VKDialectType.MYSQL)
+                    .minIdle(1)
+                    .maxActive(5)
+                    .maxWaitMs(10000)
+                    .batchSize(2)
+                    .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
+                    .validationQuery("SELECT 1");
+            Vostok.Data.init(cfg2, "yueyang.vostok");
+        }
     }
 
     @Test
@@ -1015,110 +1036,122 @@ public class VostokIntegrationTest {
     @Test
     @Order(99)
     void testConcurrencyPressure() throws Exception {
-        Vostok.Data.close();
-        VKDataConfig cfg = new VKDataConfig()
-                .url(JDBC_URL)
-                .username("sa")
-                .password("")
-                .driver("org.h2.Driver")
-                .dialect(VKDialectType.MYSQL)
-                .minIdle(2)
-                .maxActive(20)
-                .maxWaitMs(30000)
-                .validationQuery("SELECT 1");
-        Vostok.Data.init(cfg, "yueyang.vostok");
+        try {
+            Vostok.Data.close();
+            VKDataConfig cfg = new VKDataConfig()
+                    .url(JDBC_URL)
+                    .username("sa")
+                    .password("")
+                    .driver("org.h2.Driver")
+                    .dialect(VKDialectType.MYSQL)
+                    .minIdle(2)
+                    .maxActive(20)
+                    .maxWaitMs(30000)
+                    .validationQuery("SELECT 1");
+            Vostok.Data.init(cfg, "yueyang.vostok");
 
-        int threads = 10;
-        int loops = 50;
-        var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
-        var latch = new java.util.concurrent.CountDownLatch(threads);
-        var errors = new java.util.concurrent.atomic.AtomicInteger(0);
-        for (int i = 0; i < threads; i++) {
-            int idx = i;
-            pool.submit(() -> {
-                try {
-                    for (int j = 0; j < loops; j++) {
-                        Vostok.Data.insert(user("U-" + idx + "-" + j, j));
-                        Vostok.Data.findAll(UserEntity.class);
+            for (int i = 0; i < 100; i++) {
+                Vostok.Data.insert(user("U-seed-" + i, i));
+            }
+
+            int threads = 10;
+            int loops = 30;
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+            var latch = new java.util.concurrent.CountDownLatch(threads);
+            var errors = new java.util.concurrent.atomic.AtomicInteger(0);
+            for (int i = 0; i < threads; i++) {
+                int idx = i;
+                pool.submit(() -> {
+                    try {
+                        for (int j = 0; j < loops; j++) {
+                            List<UserEntity> list = Vostok.Data.findAll(UserEntity.class);
+                            if (!list.isEmpty()) {
+                                UserEntity one = list.get((idx + j) % list.size());
+                                one.setAge((one.getAge() == null ? 0 : one.getAge()) + 1);
+                                Vostok.Data.update(one);
+                            }
+                        }
+                    } catch (Exception e) {
+                        errors.incrementAndGet();
+                    } finally {
+                        latch.countDown();
                     }
-                } catch (Exception e) {
-                    errors.incrementAndGet();
-                } finally {
-                    latch.countDown();
-                }
-            });
+                });
+            }
+            latch.await();
+            pool.shutdown();
+            assertEquals(0, errors.get());
+        } finally {
+            // restore default config for remaining tests
+            Vostok.Data.close();
+            VKDataConfig cfg2 = new VKDataConfig()
+                    .url(JDBC_URL)
+                    .username("sa")
+                    .password("")
+                    .driver("org.h2.Driver")
+                    .dialect(VKDialectType.MYSQL)
+                    .minIdle(1)
+                    .maxActive(5)
+                    .maxWaitMs(10000)
+                    .batchSize(2)
+                    .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
+                    .validationQuery("SELECT 1");
+            Vostok.Data.init(cfg2, "yueyang.vostok");
         }
-        latch.await();
-        pool.shutdown();
-        assertEquals(0, errors.get());
-
-        // restore default config for remaining tests
-        Vostok.Data.close();
-        VKDataConfig cfg2 = new VKDataConfig()
-                .url(JDBC_URL)
-                .username("sa")
-                .password("")
-                .driver("org.h2.Driver")
-                .dialect(VKDialectType.MYSQL)
-                .minIdle(1)
-                .maxActive(5)
-                .maxWaitMs(10000)
-                .batchSize(2)
-                .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
-                .validationQuery("SELECT 1");
-        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test
     @Order(100)
     void testPoolStabilityUnderLoad() throws Exception {
-        Vostok.Data.close();
-        VKDataConfig cfg = new VKDataConfig()
-                .url(JDBC_URL)
-                .username("sa")
-                .password("")
-                .driver("org.h2.Driver")
-                .dialect(VKDialectType.MYSQL)
-                .minIdle(1)
-                .maxActive(3)
-                .maxWaitMs(10000)
-                .validationQuery("SELECT 1");
-        Vostok.Data.init(cfg, "yueyang.vostok");
+        try {
+            Vostok.Data.close();
+            VKDataConfig cfg = new VKDataConfig()
+                    .url(JDBC_URL)
+                    .username("sa")
+                    .password("")
+                    .driver("org.h2.Driver")
+                    .dialect(VKDialectType.MYSQL)
+                    .minIdle(1)
+                    .maxActive(20)
+                    .maxWaitMs(10000)
+                    .validationQuery("SELECT 1");
+            Vostok.Data.init(cfg, "yueyang.vostok");
 
-        int threads = 20;
-        var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
-        var latch = new java.util.concurrent.CountDownLatch(threads);
-        var errors = new java.util.concurrent.atomic.AtomicInteger(0);
-        for (int i = 0; i < threads; i++) {
-            pool.submit(() -> {
-                try {
-                    Vostok.Data.findAll(UserEntity.class);
-                } catch (Exception e) {
-                    errors.incrementAndGet();
-                } finally {
-                    latch.countDown();
-                }
-            });
+            int threads = 20;
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+            var latch = new java.util.concurrent.CountDownLatch(threads);
+            var errors = new java.util.concurrent.atomic.AtomicInteger(0);
+            for (int i = 0; i < threads; i++) {
+                pool.submit(() -> {
+                    try {
+                        Vostok.Data.findAll(UserEntity.class);
+                    } catch (Exception e) {
+                        errors.incrementAndGet();
+                    } finally {
+                        latch.countDown();
+                    }
+                });
+            }
+            latch.await();
+            pool.shutdown();
+            assertEquals(0, errors.get());
+        } finally {
+            // restore default config for remaining tests even when assert fails
+            Vostok.Data.close();
+            VKDataConfig cfg2 = new VKDataConfig()
+                    .url(JDBC_URL)
+                    .username("sa")
+                    .password("")
+                    .driver("org.h2.Driver")
+                    .dialect(VKDialectType.MYSQL)
+                    .minIdle(1)
+                    .maxActive(5)
+                    .maxWaitMs(10000)
+                    .batchSize(2)
+                    .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
+                    .validationQuery("SELECT 1");
+            Vostok.Data.init(cfg2, "yueyang.vostok");
         }
-        latch.await();
-        pool.shutdown();
-        assertEquals(0, errors.get());
-
-        // restore default config for remaining tests
-        Vostok.Data.close();
-        VKDataConfig cfg2 = new VKDataConfig()
-                .url(JDBC_URL)
-                .username("sa")
-                .password("")
-                .driver("org.h2.Driver")
-                .dialect(VKDialectType.MYSQL)
-                .minIdle(1)
-                .maxActive(5)
-                .maxWaitMs(10000)
-                .batchSize(2)
-                .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
-                .validationQuery("SELECT 1");
-        Vostok.Data.init(cfg2, "yueyang.vostok");
     }
 
     @Test

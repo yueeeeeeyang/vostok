@@ -17,6 +17,13 @@ public final class VKWebConfig {
     private int workerQueueSize = 10_000;
     private boolean accessLogEnabled = true;
     private int accessLogQueueSize = 8_192;
+    private boolean multipartEnabled = true;
+    private String multipartTempDir = System.getProperty("java.io.tmpdir") + "/vostok-upload";
+    private int multipartInMemoryThresholdBytes = 64 * 1024;
+    private int multipartMaxParts = 128;
+    private long multipartMaxFileSizeBytes = 16L * 1024 * 1024;
+    private long multipartMaxTotalBytes = 32L * 1024 * 1024;
+    private int rateLimitCleanupIntervalMs = 60_000;
 
     public int getPort() {
         return port;
@@ -132,6 +139,71 @@ public final class VKWebConfig {
 
     public VKWebConfig accessLogQueueSize(int accessLogQueueSize) {
         this.accessLogQueueSize = Math.max(256, accessLogQueueSize);
+        return this;
+    }
+
+    public boolean isMultipartEnabled() {
+        return multipartEnabled;
+    }
+
+    public VKWebConfig multipartEnabled(boolean multipartEnabled) {
+        this.multipartEnabled = multipartEnabled;
+        return this;
+    }
+
+    public String getMultipartTempDir() {
+        return multipartTempDir;
+    }
+
+    public VKWebConfig multipartTempDir(String multipartTempDir) {
+        if (multipartTempDir != null && !multipartTempDir.isEmpty()) {
+            this.multipartTempDir = multipartTempDir;
+        }
+        return this;
+    }
+
+    public int getMultipartInMemoryThresholdBytes() {
+        return multipartInMemoryThresholdBytes;
+    }
+
+    public VKWebConfig multipartInMemoryThresholdBytes(int multipartInMemoryThresholdBytes) {
+        this.multipartInMemoryThresholdBytes = Math.max(1024, multipartInMemoryThresholdBytes);
+        return this;
+    }
+
+    public int getMultipartMaxParts() {
+        return multipartMaxParts;
+    }
+
+    public VKWebConfig multipartMaxParts(int multipartMaxParts) {
+        this.multipartMaxParts = Math.max(1, multipartMaxParts);
+        return this;
+    }
+
+    public long getMultipartMaxFileSizeBytes() {
+        return multipartMaxFileSizeBytes;
+    }
+
+    public VKWebConfig multipartMaxFileSizeBytes(long multipartMaxFileSizeBytes) {
+        this.multipartMaxFileSizeBytes = Math.max(1024L, multipartMaxFileSizeBytes);
+        return this;
+    }
+
+    public long getMultipartMaxTotalBytes() {
+        return multipartMaxTotalBytes;
+    }
+
+    public VKWebConfig multipartMaxTotalBytes(long multipartMaxTotalBytes) {
+        this.multipartMaxTotalBytes = Math.max(1024L, multipartMaxTotalBytes);
+        return this;
+    }
+
+    public int getRateLimitCleanupIntervalMs() {
+        return rateLimitCleanupIntervalMs;
+    }
+
+    public VKWebConfig rateLimitCleanupIntervalMs(int rateLimitCleanupIntervalMs) {
+        this.rateLimitCleanupIntervalMs = Math.max(1000, rateLimitCleanupIntervalMs);
         return this;
     }
 }

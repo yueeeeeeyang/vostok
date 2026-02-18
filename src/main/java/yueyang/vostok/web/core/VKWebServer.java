@@ -3,8 +3,13 @@ package yueyang.vostok.web.core;
 import yueyang.vostok.web.VKErrorHandler;
 import yueyang.vostok.web.VKHandler;
 import yueyang.vostok.web.VKWebConfig;
+import yueyang.vostok.web.http.VKRequest;
+import yueyang.vostok.web.http.VKResponse;
 import yueyang.vostok.web.middleware.VKMiddleware;
+import yueyang.vostok.web.rate.VKRateLimitConfig;
+import yueyang.vostok.web.rate.VKRateLimiter;
 import yueyang.vostok.web.route.VKRouter;
+import yueyang.vostok.web.route.VKRouteMatch;
 import yueyang.vostok.web.util.VKBufferPool;
 import yueyang.vostok.web.http.VKHttpParser;
 
@@ -17,6 +22,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class VKWebServer {
     private final VKWebConfig config;
@@ -34,6 +41,8 @@ public final class VKWebServer {
     private final AtomicInteger activeConnections = new AtomicInteger();
     private volatile boolean accepting = false;
     private int rr = 0;
+    private volatile VKRateLimiter globalRateLimiter;
+    private final Map<String, VKRateLimiter> routeRateLimiters = new ConcurrentHashMap<>();
 
     public VKWebServer(VKWebConfig config) {
         this.config = config;
@@ -117,6 +126,38 @@ public final class VKWebServer {
         return boundPort;
     }
 
+    public void setGlobalRateLimit(VKRateLimitConfig config) {
+        if (config == null) {
+            this.globalRateLimiter = null;
+            return;
+        }
+        this.globalRateLimiter = new VKRateLimiter(config);
+    }
+
+    public void setRouteRateLimit(String method, String path, VKRateLimitConfig config) {
+        if (method == null || path == null || config == null) {
+            return;
+        }
+        String key = routeLimitKey(method, path);
+        routeRateLimiters.put(key, new VKRateLimiter(config));
+    }
+
+    boolean tryRateLimit(VKRequest req, VKRouteMatch match, VKResponse res) {
+        VKRateLimiter global = globalRateLimiter;
+        if (global != null && !global.tryAcquire(req)) {
+            global.applyRejected(res);
+            return false;
+        }
+        if (match != null && match.routePattern() != null) {
+            VKRateLimiter routeLimiter = routeRateLimiters.get(routeLimitKey(req.method(), match.routePattern()));
+            if (routeLimiter != null && !routeLimiter.tryAcquire(req)) {
+                routeLimiter.applyRejected(res);
+                return false;
+            }
+        }
+        return true;
+    }
+
     private void cleanup() {
         try {
             if (serverChannel != null) {
@@ -187,5 +228,14 @@ public final class VKWebServer {
                 }
             }
         }
+    }
+
+    private String routeLimitKey(String method, String path) {
+        String m = method == null ? "GET" : method.toUpperCase();
+        String p = path.startsWith("/") ? path : "/" + path;
+        if (p.length() > 1 && p.endsWith("/")) {
+            p = p.substring(0, p.length() - 1);
+        }
+        return m + " " + p;
     }
 }

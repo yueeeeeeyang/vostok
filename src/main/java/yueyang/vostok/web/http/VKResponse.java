@@ -2,12 +2,15 @@ package yueyang.vostok.web.http;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public final class VKResponse {
     private int status = 200;
     private final Map<String, String> headers = new HashMap<>();
+    private final List<String> setCookies = new ArrayList<>();
     private byte[] body = new byte[0];
     private Path filePath;
     private long fileOffset;
@@ -37,6 +40,10 @@ public final class VKResponse {
         return body;
     }
 
+    public List<String> setCookies() {
+        return setCookies;
+    }
+
     public VKResponse body(byte[] body) {
         this.body = body == null ? new byte[0] : body;
         this.filePath = null;
@@ -55,6 +62,24 @@ public final class VKResponse {
         header("Content-Type", "application/json; charset=utf-8");
         body(bytes);
         return this;
+    }
+
+    public VKResponse cookie(String name, String value) {
+        return cookie(new VKCookie(name, value));
+    }
+
+    public VKResponse cookie(VKCookie cookie) {
+        if (cookie != null) {
+            setCookies.add(cookie.encodeSetCookie());
+        }
+        return this;
+    }
+
+    public VKResponse deleteCookie(String name) {
+        if (name == null || name.isEmpty()) {
+            return this;
+        }
+        return cookie(new VKCookie(name, "").maxAge(0).path("/"));
     }
 
     public VKResponse file(Path path, long length) {

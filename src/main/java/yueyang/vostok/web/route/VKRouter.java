@@ -38,12 +38,12 @@ public final class VKRouter {
     }
 
     private static final class RouteTable {
-        private final ConcurrentHashMap<String, VKHandler> staticRoutes = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, RouteEntry> staticRoutes = new ConcurrentHashMap<>();
         private final TrieNode root = new TrieNode();
 
         void add(String path, VKHandler handler) {
             if (!isDynamic(path)) {
-                staticRoutes.put(path, handler);
+                staticRoutes.put(path, new RouteEntry(path, handler));
                 return;
             }
             String[] segments = split(path);
@@ -70,36 +70,36 @@ public final class VKRouter {
                         n = n.literalChildren.computeIfAbsent(seg, k -> new TrieNode());
                     }
                 }
-                n.handler = handler;
+                n.entry = new RouteEntry(path, handler);
             }
         }
 
         VKRouteMatch match(String path) {
-            VKHandler exact = staticRoutes.get(path);
+            RouteEntry exact = staticRoutes.get(path);
             if (exact != null) {
-                return new VKRouteMatch(exact, Map.of());
+                return new VKRouteMatch(exact.handler, Map.of(), exact.pathPattern);
             }
 
             String[] segments = split(path);
             Map<String, String> params = new HashMap<>();
-            VKHandler dyn = matchTrie(root, segments, 0, params);
+            RouteEntry dyn = matchTrie(root, segments, 0, params);
             if (dyn == null) {
                 return null;
             }
-            return new VKRouteMatch(dyn, params);
+            return new VKRouteMatch(dyn.handler, params, dyn.pathPattern);
         }
 
-        private VKHandler matchTrie(TrieNode node, String[] segments, int idx, Map<String, String> params) {
+        private RouteEntry matchTrie(TrieNode node, String[] segments, int idx, Map<String, String> params) {
             if (node == null) {
                 return null;
             }
             if (idx == segments.length) {
-                if (node.handler != null) {
-                    return node.handler;
+                if (node.entry != null) {
+                    return node.entry;
                 }
-                if (node.wildcardChild != null && node.wildcardChild.handler != null) {
+                if (node.wildcardChild != null && node.wildcardChild.entry != null) {
                     params.put(node.wildcardChild.paramName == null ? "*" : node.wildcardChild.paramName, "");
-                    return node.wildcardChild.handler;
+                    return node.wildcardChild.entry;
                 }
                 return null;
             }
@@ -108,7 +108,7 @@ public final class VKRouter {
 
             TrieNode literal = node.literalChildren.get(seg);
             if (literal != null) {
-                VKHandler h = matchTrie(literal, segments, idx + 1, params);
+                RouteEntry h = matchTrie(literal, segments, idx + 1, params);
                 if (h != null) {
                     return h;
                 }
@@ -118,7 +118,7 @@ public final class VKRouter {
             if (param != null) {
                 String name = param.paramName == null ? "param" + idx : param.paramName;
                 String old = params.put(name, seg);
-                VKHandler h = matchTrie(param, segments, idx + 1, params);
+                RouteEntry h = matchTrie(param, segments, idx + 1, params);
                 if (h != null) {
                     return h;
                 }
@@ -130,7 +130,7 @@ public final class VKRouter {
             }
 
             TrieNode wildcard = node.wildcardChild;
-            if (wildcard != null && wildcard.handler != null) {
+            if (wildcard != null && wildcard.entry != null) {
                 StringBuilder rest = new StringBuilder();
                 for (int i = idx; i < segments.length; i++) {
                     if (i > idx) {
@@ -139,7 +139,7 @@ public final class VKRouter {
                     rest.append(segments[i]);
                 }
                 params.put(wildcard.paramName == null ? "*" : wildcard.paramName, rest.toString());
-                return wildcard.handler;
+                return wildcard.entry;
             }
             return null;
         }
@@ -187,6 +187,9 @@ public final class VKRouter {
         volatile TrieNode paramChild;
         volatile TrieNode wildcardChild;
         volatile String paramName;
-        volatile VKHandler handler;
+        volatile RouteEntry entry;
+    }
+
+    private record RouteEntry(String pathPattern, VKHandler handler) {
     }
 }

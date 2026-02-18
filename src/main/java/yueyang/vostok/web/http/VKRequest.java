@@ -2,9 +2,13 @@ package yueyang.vostok.web.http;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Collection;
+import java.util.Locale;
 
 public final class VKRequest {
     private final String method;
@@ -17,6 +21,10 @@ public final class VKRequest {
     private final InetSocketAddress remoteAddress;
     private Map<String, String> params;
     private Map<String, String> queryParams;
+    private Map<String, String> cookies;
+    private Map<String, String> formFields;
+    private Map<String, List<VKUploadedFile>> multipartFiles;
+    private List<VKUploadedFile> allFiles;
     private String traceId;
 
     public VKRequest(String method, String path, String query, String version,
@@ -32,6 +40,10 @@ public final class VKRequest {
         this.remoteAddress = remoteAddress;
         this.params = new HashMap<>();
         this.queryParams = null;
+        this.cookies = null;
+        this.formFields = null;
+        this.multipartFiles = null;
+        this.allFiles = null;
         this.traceId = null;
     }
 
@@ -105,8 +117,85 @@ public final class VKRequest {
         return ensureQueryParams();
     }
 
+    public String cookie(String name) {
+        if (name == null) {
+            return null;
+        }
+        return ensureCookies().get(name);
+    }
+
+    public Map<String, String> cookies() {
+        return ensureCookies();
+    }
+
+    public boolean isMultipart() {
+        String contentType = header("content-type");
+        return contentType != null && contentType.toLowerCase(Locale.ROOT).startsWith("multipart/form-data");
+    }
+
+    public String formField(String name) {
+        if (name == null || formFields == null) {
+            return null;
+        }
+        return formFields.get(name);
+    }
+
+    public Map<String, String> formFields() {
+        if (formFields == null) {
+            return Map.of();
+        }
+        return Collections.unmodifiableMap(formFields);
+    }
+
+    public VKUploadedFile file(String name) {
+        if (name == null || multipartFiles == null) {
+            return null;
+        }
+        List<VKUploadedFile> list = multipartFiles.get(name);
+        if (list == null || list.isEmpty()) {
+            return null;
+        }
+        return list.get(0);
+    }
+
+    public List<VKUploadedFile> files(String name) {
+        if (name == null || multipartFiles == null) {
+            return List.of();
+        }
+        List<VKUploadedFile> list = multipartFiles.get(name);
+        if (list == null || list.isEmpty()) {
+            return List.of();
+        }
+        return Collections.unmodifiableList(list);
+    }
+
+    public Collection<VKUploadedFile> allFiles() {
+        if (allFiles == null || allFiles.isEmpty()) {
+            return List.of();
+        }
+        return Collections.unmodifiableList(allFiles);
+    }
+
     public void setParams(Map<String, String> params) {
         this.params = params == null ? new HashMap<>() : params;
+    }
+
+    public void applyMultipart(VKMultipartParser.VKMultipartData data) {
+        if (data == null) {
+            return;
+        }
+        this.formFields = new HashMap<>(data.fields);
+        this.multipartFiles = new HashMap<>(data.files);
+        this.allFiles = new ArrayList<>(data.all);
+    }
+
+    public void cleanupUploads() {
+        if (allFiles == null) {
+            return;
+        }
+        for (VKUploadedFile file : allFiles) {
+            file.cleanup();
+        }
     }
 
     private Map<String, String> ensureQueryParams() {
@@ -131,6 +220,33 @@ public final class VKRequest {
             }
         }
         queryParams = map;
+        return map;
+    }
+
+    private Map<String, String> ensureCookies() {
+        if (cookies != null) {
+            return cookies;
+        }
+        Map<String, String> map = new HashMap<>();
+        String raw = header("cookie");
+        if (raw != null && !raw.isEmpty()) {
+            String[] pairs = raw.split(";");
+            for (String pair : pairs) {
+                if (pair == null || pair.isEmpty()) {
+                    continue;
+                }
+                int idx = pair.indexOf('=');
+                if (idx <= 0) {
+                    continue;
+                }
+                String k = pair.substring(0, idx).trim();
+                String v = pair.substring(idx + 1).trim();
+                if (!k.isEmpty()) {
+                    map.put(k, v);
+                }
+            }
+        }
+        cookies = map;
         return map;
     }
 
