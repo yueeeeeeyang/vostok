@@ -36,332 +36,373 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 ```java
 public interface Vostok.Data {
     /**
-     * 方法描述：`Vostok.Data.init` 接口。
-     * @param config 参数 `config`。
-     * @param basePackages 参数 `basePackages`。
+     * 初始化 Data 模块（幂等，重复调用会忽略后续初始化）。
+     *
+     * - config：数据模块配置，类型为 VKDataConfig，不能为空。
+     * - basePackages：实体扫描包路径，类型为 String...；为空时按全 classpath 扫描。
      */
     public static void init(VKDataConfig config, String... basePackages);
 
     /**
-     * 方法描述：`Vostok.Data.registerDataSource` 接口。
-     * @param name 参数 `name`。
-     * @param config 参数 `config`。
+     * 注册命名数据源。
+     *
+     * - name：数据源名称，类型为 String，不能为空且不能重复。
+     * - config：数据源配置，类型为 VKDataConfig，不能为空。
      */
     public static void registerDataSource(String name, VKDataConfig config);
 
     /**
-     * 方法描述：`Vostok.Data.refreshMeta` 接口。
+     * 按初始化时保存的包路径刷新元数据（并同步刷新 SQL 模板缓存）。
      */
     public static void refreshMeta();
 
     /**
-     * 方法描述：`Vostok.Data.refreshMeta` 接口。
-     * @param basePackages 参数 `basePackages`。
+     * 按指定包路径刷新元数据（并同步刷新 SQL 模板缓存）。
+     *
+     * - basePackages：实体扫描包路径，类型为 String...。
      */
     public static void refreshMeta(String... basePackages);
 
     /**
-     * 方法描述：`Vostok.Data.setScanner` 接口。
-     * @param scanner 参数 `scanner`。
+     * 设置实体扫描器实现。
+     *
+     * - scanner：扫描器函数，类型为 VKScanner.EntityScanner，不能为空。
      */
     public static void setScanner(VKScanner.EntityScanner scanner);
 
     /**
-     * 方法描述：`Vostok.Data.withDataSource` 接口。
-     * @param name 参数 `name`。
-     * @param action 参数 `action`。
+     * 在指定数据源上下文中执行无返回值逻辑。
+     *
+     * - name：数据源名称，类型为 String。
+     * - action：待执行逻辑，类型为 Runnable，不能为空。
      */
     public static void withDataSource(String name, Runnable action);
 
     /**
-     * 方法描述：`Vostok.Data.withDataSource` 接口。
-     * @param name 参数 `name`。
-     * @param supplier 参数 `supplier`。
-     * @return 返回 `T` 类型结果。
+     * 在指定数据源上下文中执行有返回值逻辑。
+     *
+     * - name：数据源名称，类型为 String。
+     * - supplier：待执行逻辑，类型为 Supplier<T>，不能为空。
+     * - 返回值：T（supplier 的返回结果）。
      */
     public static <T> T withDataSource(String name, Supplier<T> supplier);
 
     /**
-     * 方法描述：`Vostok.Data.captureContext` 接口。
-     * @return 返回 `VostokContext` 类型结果。
+     * 捕获当前线程上下文（当前主要包含数据源上下文）。
+     *
+     * - 返回值：VostokContext（可用于异步线程显式传播）。
      */
     public static VostokContext captureContext();
 
     /**
-     * 方法描述：`Vostok.Data.wrap` 接口。
-     * @param action 参数 `action`。
-     * @return 返回 `Runnable` 类型结果。
+     * 捕获当前上下文并包装 Runnable。
+     *
+     * - action：原始逻辑，类型为 Runnable，不能为空。
+     * - 返回值：Runnable（执行时会恢复捕获上下文）。
      */
     public static Runnable wrap(Runnable action);
 
     /**
-     * 方法描述：`Vostok.Data.wrap` 接口。
-     * @param supplier 参数 `supplier`。
-     * @return 返回 `Supplier<T>` 类型结果。
+     * 捕获当前上下文并包装 Supplier。
+     *
+     * - supplier：原始逻辑，类型为 Supplier<T>，不能为空。
+     * - 返回值：Supplier<T>（执行时会恢复捕获上下文）。
      */
     public static <T> Supplier<T> wrap(Supplier<T> supplier);
 
     /**
-     * 方法描述：`Vostok.Data.wrap` 接口。
-     * @param context 参数 `context`。
-     * @param action 参数 `action`。
-     * @return 返回 `Runnable` 类型结果。
+     * 使用指定上下文包装 Runnable。
+     *
+     * - context：已捕获上下文，类型为 VostokContext，不能为空。
+     * - action：原始逻辑，类型为 Runnable，不能为空。
+     * - 返回值：Runnable（执行时恢复指定上下文）。
      */
     public static Runnable wrap(VostokContext context, Runnable action);
 
     /**
-     * 方法描述：`Vostok.Data.wrap` 接口。
-     * @param context 参数 `context`。
-     * @param supplier 参数 `supplier`。
-     * @return 返回 `Supplier<T>` 类型结果。
+     * 使用指定上下文包装 Supplier。
+     *
+     * - context：已捕获上下文，类型为 VostokContext，不能为空。
+     * - supplier：原始逻辑，类型为 Supplier<T>，不能为空。
+     * - 返回值：Supplier<T>（执行时恢复指定上下文）。
      */
     public static <T> Supplier<T> wrap(VostokContext context, Supplier<T> supplier);
 
     /**
-     * 方法描述：`Vostok.Data.registerInterceptor` 接口。
-     * @param interceptor 参数 `interceptor`。
+     * 注册 SQL 拦截器。
+     *
+     * - interceptor：拦截器实现，类型为 VKInterceptor，不能为空。
      */
     public static void registerInterceptor(VKInterceptor interceptor);
 
     /**
-     * 方法描述：`Vostok.Data.registerRawSql` 接口。
-     * @param sqls 参数 `sqls`。
+     * 注册默认数据源 raw SQL 白名单。
+     *
+     * - sqls：允许的 raw SQL 片段列表，类型为 String...。
      */
     public static void registerRawSql(String... sqls);
 
     /**
-     * 方法描述：`Vostok.Data.registerRawSql` 接口。
-     * @param dataSourceName 参数 `dataSourceName`。
-     * @param sqls 参数 `sqls`。
+     * 注册指定数据源 raw SQL 白名单。
+     *
+     * - dataSourceName：数据源名称，类型为 String。
+     * - sqls：允许的 raw SQL 片段列表，类型为 String[]。
      */
     public static void registerRawSql(String dataSourceName, String[] sqls);
 
     /**
-     * 方法描述：`Vostok.Data.registerSubquery` 接口。
-     * @param sqls 参数 `sqls`。
+     * 注册默认数据源 subquery 白名单。
+     *
+     * - sqls：允许的子查询 SQL 列表，类型为 String...。
      */
     public static void registerSubquery(String... sqls);
 
     /**
-     * 方法描述：`Vostok.Data.registerSubquery` 接口。
-     * @param dataSourceName 参数 `dataSourceName`。
-     * @param sqls 参数 `sqls`。
+     * 注册指定数据源 subquery 白名单。
+     *
+     * - dataSourceName：数据源名称，类型为 String。
+     * - sqls：允许的子查询 SQL 列表，类型为 String[]。
      */
     public static void registerSubquery(String dataSourceName, String[] sqls);
 
     /**
-     * 方法描述：`Vostok.Data.clearInterceptors` 接口。
+     * 清空所有 SQL 拦截器。
      */
     public static void clearInterceptors();
 
     /**
-     * 方法描述：`Vostok.Data.close` 接口。
+     * 关闭 Data 模块并释放数据源、连接池、元数据缓存资源。
      */
     public static void close();
 
     /**
-     * 方法描述：`Vostok.Data.tx` 接口。
-     * @param action 参数 `action`。
+     * 在事务中执行无返回值逻辑（默认传播行为与隔离级别）。
+     *
+     * - action：事务逻辑，类型为 Runnable，不能为空。
      */
     public static void tx(Runnable action);
 
     /**
-     * 方法描述：`Vostok.Data.tx` 接口。
-     * @param action 参数 `action`。
-     * @param propagation 参数 `propagation`。
-     * @param isolation 参数 `isolation`。
+     * 在事务中执行无返回值逻辑（指定传播行为、隔离级别）。
+     *
+     * - action：事务逻辑，类型为 Runnable，不能为空。
+     * - propagation：事务传播行为，类型为 VKTxPropagation。
+     * - isolation：事务隔离级别，类型为 VKTxIsolation。
      */
     public static void tx(Runnable action, VKTxPropagation propagation, VKTxIsolation isolation);
 
     /**
-     * 方法描述：`Vostok.Data.tx` 接口。
-     * @param action 参数 `action`。
-     * @param propagation 参数 `propagation`。
-     * @param isolation 参数 `isolation`。
-     * @param readOnly 参数 `readOnly`。
+     * 在事务中执行无返回值逻辑（指定传播行为、隔离级别、只读）。
+     *
+     * - action：事务逻辑，类型为 Runnable，不能为空。
+     * - propagation：事务传播行为，类型为 VKTxPropagation。
+     * - isolation：事务隔离级别，类型为 VKTxIsolation。
+     * - readOnly：是否只读，类型为 boolean。
      */
     public static void tx(Runnable action, VKTxPropagation propagation, VKTxIsolation isolation, boolean readOnly);
 
     /**
-     * 方法描述：`Vostok.Data.tx` 接口。
-     * @param supplier 参数 `supplier`。
-     * @return 返回 `T` 类型结果。
+     * 在事务中执行有返回值逻辑（默认传播行为与隔离级别）。
+     *
+     * - supplier：事务逻辑，类型为 Supplier<T>，不能为空。
+     * - 返回值：T（supplier 的返回结果）。
      */
     public static <T> T tx(Supplier<T> supplier);
 
     /**
-     * 方法描述：`Vostok.Data.tx` 接口。
-     * @param supplier 参数 `supplier`。
-     * @param propagation 参数 `propagation`。
-     * @param isolation 参数 `isolation`。
-     * @return 返回 `T` 类型结果。
+     * 在事务中执行有返回值逻辑（指定传播行为、隔离级别）。
+     *
+     * - supplier：事务逻辑，类型为 Supplier<T>，不能为空。
+     * - propagation：事务传播行为，类型为 VKTxPropagation。
+     * - isolation：事务隔离级别，类型为 VKTxIsolation。
+     * - 返回值：T（supplier 的返回结果）。
      */
     public static <T> T tx(Supplier<T> supplier, VKTxPropagation propagation, VKTxIsolation isolation);
 
     /**
-     * 方法描述：`Vostok.Data.tx` 接口。
-     * @param supplier 参数 `supplier`。
-     * @param propagation 参数 `propagation`。
-     * @param isolation 参数 `isolation`。
-     * @param readOnly 参数 `readOnly`。
-     * @return 返回 `T` 类型结果。
+     * 在事务中执行有返回值逻辑（指定传播行为、隔离级别、只读）。
+     *
+     * - supplier：事务逻辑，类型为 Supplier<T>，不能为空。
+     * - propagation：事务传播行为，类型为 VKTxPropagation。
+     * - isolation：事务隔离级别，类型为 VKTxIsolation。
+     * - readOnly：是否只读，类型为 boolean。
+     * - 返回值：T（supplier 的返回结果）。
      */
     public static <T> T tx(Supplier<T> supplier, VKTxPropagation propagation, VKTxIsolation isolation, boolean readOnly);
 
     /**
-     * 方法描述：`Vostok.Data.beginTx` 接口。
+     * 手动开启事务（默认传播行为与隔离级别）。
      */
     public static void beginTx();
 
     /**
-     * 方法描述：`Vostok.Data.beginTx` 接口。
-     * @param propagation 参数 `propagation`。
-     * @param isolation 参数 `isolation`。
+     * 手动开启事务（指定传播行为、隔离级别）。
+     *
+     * - propagation：事务传播行为，类型为 VKTxPropagation。
+     * - isolation：事务隔离级别，类型为 VKTxIsolation。
      */
     public static void beginTx(VKTxPropagation propagation, VKTxIsolation isolation);
 
     /**
-     * 方法描述：`Vostok.Data.beginTx` 接口。
-     * @param propagation 参数 `propagation`。
-     * @param isolation 参数 `isolation`。
-     * @param readOnly 参数 `readOnly`。
+     * 手动开启事务（指定传播行为、隔离级别、只读）。
+     *
+     * - propagation：事务传播行为，类型为 VKTxPropagation。
+     * - isolation：事务隔离级别，类型为 VKTxIsolation。
+     * - readOnly：是否只读，类型为 boolean。
      */
     public static void beginTx(VKTxPropagation propagation, VKTxIsolation isolation, boolean readOnly);
 
     /**
-     * 方法描述：`Vostok.Data.commitTx` 接口。
+     * 提交当前线程事务。
      */
     public static void commitTx();
 
     /**
-     * 方法描述：`Vostok.Data.rollbackTx` 接口。
+     * 回滚当前线程事务。
      */
     public static void rollbackTx();
 
     /**
-     * 方法描述：`Vostok.Data.insert` 接口。
-     * @param entity 参数 `entity`。
-     * @return 返回 `int` 类型结果。
+     * 插入单条实体。
+     *
+     * - entity：实体对象，类型为 Object，不能为空。
+     * - 返回值：int（受影响行数，通常为 1）。
      */
     public static int insert(Object entity);
 
     /**
-     * 方法描述：`Vostok.Data.batchInsert` 接口。
-     * @param entities 参数 `entities`。
-     * @return 返回 `int` 类型结果。
+     * 批量插入实体（按配置 batchSize 分片执行）。
+     *
+     * - entities：实体列表，类型为 List<?>，不能为空且不能包含不同实体类型。
+     * - 返回值：int（成功写入总行数）。
      */
     public static int batchInsert(List<?> entities);
 
     /**
-     * 方法描述：`Vostok.Data.batchInsertDetail` 接口。
-     * @param entities 参数 `entities`。
-     * @return 返回 `VKBatchDetailResult` 类型结果。
+     * 批量插入并返回明细结果。
+     *
+     * - entities：实体列表，类型为 List<?>。
+     * - 返回值：VKBatchDetailResult（包含每批次成功/失败明细）。
      */
     public static VKBatchDetailResult batchInsertDetail(List<?> entities);
 
     /**
-     * 方法描述：`Vostok.Data.update` 接口。
-     * @param entity 参数 `entity`。
-     * @return 返回 `int` 类型结果。
+     * 更新单条实体（按主键更新）。
+     *
+     * - entity：实体对象，类型为 Object，不能为空。
+     * - 返回值：int（受影响行数）。
      */
     public static int update(Object entity);
 
     /**
-     * 方法描述：`Vostok.Data.batchUpdate` 接口。
-     * @param entities 参数 `entities`。
-     * @return 返回 `int` 类型结果。
+     * 批量更新实体（按主键更新）。
+     *
+     * - entities：实体列表，类型为 List<?>。
+     * - 返回值：int（成功更新总行数）。
      */
     public static int batchUpdate(List<?> entities);
 
     /**
-     * 方法描述：`Vostok.Data.batchUpdateDetail` 接口。
-     * @param entities 参数 `entities`。
-     * @return 返回 `VKBatchDetailResult` 类型结果。
+     * 批量更新并返回明细结果。
+     *
+     * - entities：实体列表，类型为 List<?>。
+     * - 返回值：VKBatchDetailResult（包含每批次成功/失败明细）。
      */
     public static VKBatchDetailResult batchUpdateDetail(List<?> entities);
 
     /**
-     * 方法描述：`Vostok.Data.delete` 接口。
-     * @param entityClass 参数 `entityClass`。
-     * @param idValue 参数 `idValue`。
-     * @return 返回 `int` 类型结果。
+     * 按主键删除单条记录。
+     *
+     * - entityClass：实体类型，类型为 Class<?>。
+     * - idValue：主键值，类型为 Object。
+     * - 返回值：int（受影响行数）。
      */
     public static int delete(Class<?> entityClass, Object idValue);
 
     /**
-     * 方法描述：`Vostok.Data.batchDelete` 接口。
-     * @param entityClass 参数 `entityClass`。
-     * @param idValues 参数 `idValues`。
-     * @return 返回 `int` 类型结果。
+     * 按主键批量删除记录。
+     *
+     * - entityClass：实体类型，类型为 Class<?>。
+     * - idValues：主键值列表，类型为 List<?>。
+     * - 返回值：int（成功删除总行数）。
      */
     public static int batchDelete(Class<?> entityClass, List<?> idValues);
 
     /**
-     * 方法描述：`Vostok.Data.batchDeleteDetail` 接口。
-     * @param entityClass 参数 `entityClass`。
-     * @param idValues 参数 `idValues`。
-     * @return 返回 `VKBatchDetailResult` 类型结果。
+     * 按主键批量删除并返回明细结果。
+     *
+     * - entityClass：实体类型，类型为 Class<?>。
+     * - idValues：主键值列表，类型为 List<?>。
+     * - 返回值：VKBatchDetailResult（包含每批次成功/失败明细）。
      */
     public static VKBatchDetailResult batchDeleteDetail(Class<?> entityClass, List<?> idValues);
 
     /**
-     * 方法描述：`Vostok.Data.findById` 接口。
-     * @param entityClass 参数 `entityClass`。
-     * @param idValue 参数 `idValue`。
-     * @return 返回 `T` 类型结果。
+     * 按主键查询单条记录。
+     *
+     * - entityClass：实体类型，类型为 Class<T>。
+     * - idValue：主键值，类型为 Object。
+     * - 返回值：T（命中返回实体，未命中返回 null）。
      */
     public static <T> T findById(Class<T> entityClass, Object idValue);
 
     /**
-     * 方法描述：`Vostok.Data.findAll` 接口。
-     * @param entityClass 参数 `entityClass`。
-     * @return 返回 `List<T>` 类型结果。
+     * 查询指定实体对应表的全部记录。
+     *
+     * - entityClass：实体类型，类型为 Class<T>。
+     * - 返回值：List<T>。
      */
     public static <T> List<T> findAll(Class<T> entityClass);
 
     /**
-     * 方法描述：`Vostok.Data.query` 接口。
-     * @param entityClass 参数 `entityClass`。
-     * @param query 参数 `query`。
-     * @return 返回 `List<T>` 类型结果。
+     * 按 VKQuery 条件查询实体列表。
+     *
+     * - entityClass：实体类型，类型为 Class<T>。
+     * - query：查询对象，类型为 VKQuery，不能为空。
+     * - 返回值：List<T>。
      */
     public static <T> List<T> query(Class<T> entityClass, VKQuery query);
 
     /**
-     * 方法描述：`Vostok.Data.queryColumns` 接口。
-     * @param entityClass 参数 `entityClass`。
-     * @param query 参数 `query`。
-     * @param fields 参数 `fields`。
-     * @return 返回 `List<T>` 类型结果。
+     * 按 VKQuery 条件查询指定列并映射到实体。
+     *
+     * - entityClass：实体类型，类型为 Class<T>。
+     * - query：查询对象，类型为 VKQuery。
+     * - fields：列对应的实体字段名，类型为 String...。
+     * - 返回值：List<T>。
      */
     public static <T> List<T> queryColumns(Class<T> entityClass, VKQuery query, String... fields);
 
     /**
-     * 方法描述：`Vostok.Data.aggregate` 接口。
-     * @param entityClass 参数 `entityClass`。
-     * @param query 参数 `query`。
-     * @param aggregates 参数 `aggregates`。
-     * @return 返回 `List<Object[]>` 类型结果。
+     * 执行聚合查询（如 COUNT/SUM/MAX/MIN/AVG）。
+     *
+     * - entityClass：实体类型，类型为 Class<?>。
+     * - query：查询条件，类型为 VKQuery。
+     * - aggregates：聚合定义，类型为 VKAggregate...。
+     * - 返回值：List<Object[]>（每行一个数组，顺序与聚合定义一致）。
      */
     public static List<Object[]> aggregate(Class<?> entityClass, VKQuery query, VKAggregate... aggregates);
 
     /**
-     * 方法描述：`Vostok.Data.count` 接口。
-     * @param entityClass 参数 `entityClass`。
-     * @param query 参数 `query`。
-     * @return 返回 `long` 类型结果。
+     * 按 VKQuery 条件统计记录数。
+     *
+     * - entityClass：实体类型，类型为 Class<?>。
+     * - query：查询条件，类型为 VKQuery。
+     * - 返回值：long（匹配记录总数，不受 limit/offset 影响）。
      */
     public static long count(Class<?> entityClass, VKQuery query);
 
     /**
-     * 方法描述：`Vostok.Data.poolMetrics` 接口。
-     * @return 返回 `List<VKPoolMetrics>` 类型结果。
+     * 获取连接池指标快照。
+     *
+     * - 返回值：List<VKPoolMetrics>（每个数据源一份指标）。
      */
     public static List<VKPoolMetrics> poolMetrics();
 
     /**
-     * 方法描述：`Vostok.Data.report` 接口。
-     * @return 返回 `String` 类型结果。
+     * 生成 Data 模块运行报告（连接池、SQL 指标等）。
+     *
+     * - 返回值：String（多行文本报告）。
      */
     public static String report();
 
@@ -373,106 +414,120 @@ public interface Vostok.Data {
 ```java
 public interface Vostok.Web {
     /**
-     * 方法描述：`Vostok.Web.init` 接口。
-     * @param port 参数 `port`。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 使用端口号初始化 Web 模块（会覆盖之前的 Web 配置与路由）。
+     *
+     * - port：监听端口，类型为 int，建议范围 1~65535。
+     * - 返回值：VostokWeb（链式路由注册对象）。
      */
     public static VostokWeb init(int port);
 
     /**
-     * 方法描述：`Vostok.Web.init` 接口。
-     * @param config 参数 `config`。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 使用配置对象初始化 Web 模块（会覆盖之前的 Web 配置与路由）。
+     *
+     * - config：Web 配置对象，类型为 VKWebConfig，不能为空。
+     * - 返回值：VostokWeb（链式路由注册对象）。
      */
     public static VostokWeb init(VKWebConfig config);
 
     /**
-     * 方法描述：`Vostok.Web.start` 接口。
+     * 启动 Web 服务（阻塞主线程由用户控制，框架内部线程为非 daemon）。
      */
     public static void start();
 
     /**
-     * 方法描述：`Vostok.Web.stop` 接口。
+     * 停止 Web 服务并释放监听端口、Reactor、AccessLog 等资源。
      */
     public static void stop();
 
     /**
-     * 方法描述：`Vostok.Web.started` 接口。
-     * @return 返回 `boolean` 类型结果。
+     * 判断 Web 服务是否已启动。
+     *
+     * - true：已启动。
+     * - false：未启动。
      */
     public static boolean started();
 
     /**
-     * 方法描述：`Vostok.Web.port` 接口。
-     * @return 返回 `int` 类型结果。
+     * 获取当前 Web 服务实际监听端口。
+     *
+     * - 返回值：int（实际监听端口）。
      */
     public static int port();
 
     /**
-     * 方法描述：`Vostok.Web.get` 接口。
-     * @param path 参数 `path`。
-     * @param handler 参数 `handler`。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 注册 GET 路由。
+     *
+     * - path：路由路径，类型为 String，例如 "/ping"、"/users/{id}"。
+     * - handler：业务处理器，类型为 VKHandler。
+     * - 返回值：VostokWeb（支持链式继续注册路由/中间件）。
      */
     public VostokWeb get(String path, VKHandler handler);
 
     /**
-     * 方法描述：`Vostok.Web.post` 接口。
-     * @param path 参数 `path`。
-     * @param handler 参数 `handler`。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 注册 POST 路由。
+     *
+     * - path：路由路径，类型为 String。
+     * - handler：业务处理器，类型为 VKHandler。
+     * - 返回值：VostokWeb（支持链式调用）。
      */
     public VostokWeb post(String path, VKHandler handler);
 
     /**
-     * 方法描述：`Vostok.Web.route` 接口。
-     * @param method 参数 `method`。
-     * @param path 参数 `path`。
-     * @param handler 参数 `handler`。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 注册任意 HTTP 方法路由。
+     *
+     * - method：HTTP 方法，类型为 String，例如 "PUT"、"DELETE"、"PATCH"。
+     * - path：路由路径，类型为 String。
+     * - handler：业务处理器，类型为 VKHandler。
+     * - 返回值：VostokWeb（支持链式调用）。
      */
     public VostokWeb route(String method, String path, VKHandler handler);
 
     /**
-     * 方法描述：`Vostok.Web.autoCrudApi` 接口。
-     * @param basePackages 参数 `basePackages`。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 扫描实体并注册自动 CRUD API（默认 RESTFUL 风格）。
+     *
+     * - basePackages：实体扫描包路径，类型为 String...，可空；为空时按默认规则扫描。
+     * - 返回值：VostokWeb（支持链式调用）。
      */
     public VostokWeb autoCrudApi(String... basePackages);
 
     /**
-     * 方法描述：`Vostok.Web.autoCrudApi` 接口。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 扫描实体并注册自动 CRUD API（默认扫描范围 + 默认 RESTFUL 风格）。
+     *
+     * - 返回值：VostokWeb（支持链式调用）。
      */
     public VostokWeb autoCrudApi();
 
     /**
-     * 方法描述：`Vostok.Web.autoCrudApi` 接口。
-     * @param style 参数 `style`。
-     * @param basePackages 参数 `basePackages`。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 扫描实体并注册自动 CRUD API（可选风格）。
+     *
+     * - style：CRUD API 风格，类型为 VKCrudStyle（RESTFUL/TRADITIONAL），可为 null（null 时默认 RESTFUL）。
+     * - basePackages：实体扫描包路径，类型为 String...，可空。
+     * - 返回值：VostokWeb（支持链式调用）。
      */
     public VostokWeb autoCrudApi(VKCrudStyle style, String... basePackages);
 
     /**
-     * 方法描述：`Vostok.Web.use` 接口。
-     * @param middleware 参数 `middleware`。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 注册全局中间件（按注册顺序执行）。
+     *
+     * - middleware：中间件实现，类型为 VKMiddleware。
+     * - 返回值：VostokWeb（支持链式调用）。
      */
     public VostokWeb use(VKMiddleware middleware);
 
     /**
-     * 方法描述：`Vostok.Web.staticDir` 接口。
-     * @param urlPrefix 参数 `urlPrefix`。
-     * @param directory 参数 `directory`。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 挂载静态资源目录。
+     *
+     * - urlPrefix：URL 前缀，类型为 String，例如 "/assets"。
+     * - directory：本地目录路径，类型为 String，例如 "./public"。
+     * - 返回值：VostokWeb（支持链式调用）。
      */
     public VostokWeb staticDir(String urlPrefix, String directory);
 
     /**
-     * 方法描述：`Vostok.Web.error` 接口。
-     * @param handler 参数 `handler`。
-     * @return 返回 `VostokWeb` 类型结果。
+     * 注册全局异常处理器（用于兜底处理业务异常与运行时异常）。
+     *
+     * - handler：异常处理器，类型为 VKErrorHandler。
+     * - 返回值：VostokWeb（支持链式调用）。
      */
     public VostokWeb error(VKErrorHandler handler);
 
@@ -484,374 +539,426 @@ public interface Vostok.Web {
 ```java
 public interface Vostok.File {
     /**
-     * 方法描述：`Vostok.File.init` 接口。
-     * @param fileConfig 参数 `fileConfig`。
+     * 初始化 File 模块（可重复调用，后一次配置覆盖前一次）。
+     *
+     * - fileConfig：文件模块配置对象，类型为 VKFileConfig，不能为空。
      */
     public static void init(VKFileConfig fileConfig);
 
     /**
-     * 方法描述：`Vostok.File.started` 接口。
-     * @return 返回 `boolean` 类型结果。
+     * 判断 File 模块是否已初始化。
+     *
+     * - true：已初始化。
+     * - false：未初始化。
      */
     public static boolean started();
 
     /**
-     * 方法描述：`Vostok.File.config` 接口。
-     * @return 返回 `VKFileConfig` 类型结果。
+     * 获取当前生效的 File 配置快照。
+     *
+     * - 返回值：VKFileConfig。
      */
     public static VKFileConfig config();
 
     /**
-     * 方法描述：`Vostok.File.close` 接口。
+     * 关闭 File 模块并释放资源（如 watch 后台监听资源）。
      */
     public static void close();
 
     /**
-     * 方法描述：`Vostok.File.registerStore` 接口。
-     * @param mode 参数 `mode`。
-     * @param store 参数 `store`。
+     * 注册文件存储实现（如 local/oss/s3）。
+     *
+     * - mode：存储模式名，类型为 String，不能为空。
+     * - store：存储实现对象，类型为 VKFileStore，不能为空。
      */
     public static void registerStore(String mode, VKFileStore store);
 
     /**
-     * 方法描述：`Vostok.File.setDefaultMode` 接口。
-     * @param mode 参数 `mode`。
+     * 设置默认文件存储模式。
+     *
+     * - mode：已注册模式名，类型为 String，不能为空。
      */
     public static void setDefaultMode(String mode);
 
     /**
-     * 方法描述：`Vostok.File.defaultMode` 接口。
-     * @return 返回 `String` 类型结果。
+     * 获取默认存储模式名。
+     *
+     * - 返回值：String。
      */
     public static String defaultMode();
 
     /**
-     * 方法描述：`Vostok.File.modes` 接口。
-     * @return 返回 `Set<String>` 类型结果。
+     * 获取当前可用的模式集合。
+     *
+     * - 返回值：Set<String>。
      */
     public static Set<String> modes();
 
     /**
-     * 方法描述：`Vostok.File.withMode` 接口。
-     * @param mode 参数 `mode`。
-     * @param action 参数 `action`。
+     * 在指定模式下执行无返回值操作（线程上下文切换）。
+     *
+     * - mode：模式名，类型为 String。
+     * - action：执行逻辑，类型为 Runnable，不能为空。
      */
     public static void withMode(String mode, Runnable action);
 
     /**
-     * 方法描述：`Vostok.File.withMode` 接口。
-     * @param mode 参数 `mode`。
-     * @param supplier 参数 `supplier`。
-     * @return 返回 `T` 类型结果。
+     * 在指定模式下执行有返回值操作（线程上下文切换）。
+     *
+     * - mode：模式名，类型为 String。
+     * - supplier：执行逻辑，类型为 Supplier<T>，不能为空。
+     * - 返回值：T。
      */
     public static <T> T withMode(String mode, Supplier<T> supplier);
 
     /**
-     * 方法描述：`Vostok.File.currentMode` 接口。
-     * @return 返回 `String` 类型结果。
+     * 获取当前线程实际使用的模式名。
+     *
+     * - 返回值：String。
      */
     public static String currentMode();
 
     /**
-     * 方法描述：`Vostok.File.create` 接口。
-     * @param path 参数 `path`。
-     * @param content 参数 `content`。
+     * 创建文本文件（文件已存在时失败）。
+     *
+     * - path：文件相对/绝对路径，类型为 String。
+     * - content：写入文本内容，类型为 String，可为 null（按空串处理）。
      */
     public static void create(String path, String content);
 
     /**
-     * 方法描述：`Vostok.File.write` 接口。
-     * @param path 参数 `path`。
-     * @param content 参数 `content`。
+     * 写入文本文件（不存在则创建，存在则覆盖）。
+     *
+     * - path：文件路径，类型为 String。
+     * - content：文本内容，类型为 String，可为 null（按空串处理）。
      */
     public static void write(String path, String content);
 
     /**
-     * 方法描述：`Vostok.File.update` 接口。
-     * @param path 参数 `path`。
-     * @param content 参数 `content`。
+     * 更新文本文件（要求文件已存在）。
+     *
+     * - path：文件路径，类型为 String。
+     * - content：文本内容，类型为 String。
      */
     public static void update(String path, String content);
 
     /**
-     * 方法描述：`Vostok.File.read` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `String` 类型结果。
+     * 读取文本文件。
+     *
+     * - path：文件路径，类型为 String。
+     * - 返回值：String（文本内容）。
      */
     public static String read(String path);
 
     /**
-     * 方法描述：`Vostok.File.readBytes` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `byte[]` 类型结果。
+     * 读取文件二进制内容。
+     *
+     * - path：文件路径，类型为 String。
+     * - 返回值：byte[]。
      */
     public static byte[] readBytes(String path);
 
     /**
-     * 方法描述：`Vostok.File.readRange` 接口。
-     * @param path 参数 `path`。
-     * @param offset 参数 `offset`。
-     * @param length 参数 `length`。
-     * @return 返回 `byte[]` 类型结果。
+     * 按范围读取二进制内容到内存。
+     *
+     * - path：文件路径，类型为 String。
+     * - offset：起始偏移（从 0 开始），类型为 long，必须 >= 0。
+     * - length：读取长度，类型为 int，必须 >= 0。
+     * - 返回值：byte[]（超出文件末尾返回空数组）。
      */
     public static byte[] readRange(String path, long offset, int length);
 
     /**
-     * 方法描述：`Vostok.File.readRangeTo` 接口。
-     * @param path 参数 `path`。
-     * @param offset 参数 `offset`。
-     * @param length 参数 `length`。
-     * @param output 参数 `output`。
-     * @return 返回 `long` 类型结果。
+     * 按范围流式读取到输出流，适合大块数据，避免大数组占用堆内存。
+     *
+     * - path：文件路径，类型为 String。
+     * - offset：起始偏移，类型为 long，必须 >= 0。
+     * - length：读取长度，类型为 long，必须 >= 0。
+     * - output：输出流，类型为 OutputStream，不能为空。
+     * - 返回值：long（实际写出的字节数）。
      */
     public static long readRangeTo(String path, long offset, long length, OutputStream output);
 
     /**
-     * 方法描述：`Vostok.File.writeBytes` 接口。
-     * @param path 参数 `path`。
-     * @param content 参数 `content`。
+     * 写入二进制文件（不存在则创建，存在则覆盖）。
+     *
+     * - path：文件路径，类型为 String。
+     * - content：二进制内容，类型为 byte[]，不能为空。
      */
     public static void writeBytes(String path, byte[] content);
 
     /**
-     * 方法描述：`Vostok.File.appendBytes` 接口。
-     * @param path 参数 `path`。
-     * @param content 参数 `content`。
+     * 追加二进制内容到文件末尾。
+     *
+     * - path：文件路径，类型为 String。
+     * - content：二进制内容，类型为 byte[]，不能为空。
      */
     public static void appendBytes(String path, byte[] content);
 
     /**
-     * 方法描述：`Vostok.File.hash` 接口。
-     * @param path 参数 `path`。
-     * @param algorithm 参数 `algorithm`。
-     * @return 返回 `String` 类型结果。
+     * 计算文件摘要值。
+     *
+     * - path：文件路径，类型为 String。
+     * - algorithm：摘要算法名称（如 MD5/SHA-256），类型为 String。
+     * - 返回值：String（十六进制摘要）。
      */
     public static String hash(String path, String algorithm);
 
     /**
-     * 方法描述：`Vostok.File.delete` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `boolean` 类型结果。
+     * 删除文件或目录（目录按递归删除处理）。
+     *
+     * - path：目标路径，类型为 String。
+     * - 返回值：boolean（true 表示删除了目标；false 表示目标原本不存在）。
      */
     public static boolean delete(String path);
 
     /**
-     * 方法描述：`Vostok.File.deleteIfExists` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `boolean` 类型结果。
+     * 删除目标（不递归）。
+     *
+     * - path：目标路径，类型为 String。
+     * - 返回值：boolean（true 表示删除成功；false 表示目标不存在）。
      */
     public static boolean deleteIfExists(String path);
 
     /**
-     * 方法描述：`Vostok.File.deleteRecursively` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `boolean` 类型结果。
+     * 递归删除文件或目录。
+     *
+     * - path：目标路径，类型为 String。
+     * - 返回值：boolean（true 表示删除成功；false 表示目标不存在）。
      */
     public static boolean deleteRecursively(String path);
 
     /**
-     * 方法描述：`Vostok.File.exists` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `boolean` 类型结果。
+     * 判断路径是否存在。
+     *
+     * - path：目标路径，类型为 String。
+     * - 返回值：boolean。
      */
     public static boolean exists(String path);
 
     /**
-     * 方法描述：`Vostok.File.isFile` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `boolean` 类型结果。
+     * 判断路径是否为普通文件。
+     *
+     * - path：目标路径，类型为 String。
+     * - 返回值：boolean。
      */
     public static boolean isFile(String path);
 
     /**
-     * 方法描述：`Vostok.File.isDirectory` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `boolean` 类型结果。
+     * 判断路径是否为目录。
+     *
+     * - path：目标路径，类型为 String。
+     * - 返回值：boolean。
      */
     public static boolean isDirectory(String path);
 
     /**
-     * 方法描述：`Vostok.File.append` 接口。
-     * @param path 参数 `path`。
-     * @param content 参数 `content`。
+     * 追加文本到文件末尾。
+     *
+     * - path：文件路径，类型为 String。
+     * - content：文本内容，类型为 String，可为 null（按空串处理）。
      */
     public static void append(String path, String content);
 
     /**
-     * 方法描述：`Vostok.File.readLines` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `List<String>` 类型结果。
+     * 按行读取文本文件。
+     *
+     * - path：文件路径，类型为 String。
+     * - 返回值：List<String>。
      */
     public static List<String> readLines(String path);
 
     /**
-     * 方法描述：`Vostok.File.writeLines` 接口。
-     * @param path 参数 `path`。
-     * @param lines 参数 `lines`。
+     * 按行写入文本文件（覆盖）。
+     *
+     * - path：文件路径，类型为 String。
+     * - lines：文本行集合，类型为 List<String>，不能为空。
      */
     public static void writeLines(String path, List<String> lines);
 
     /**
-     * 方法描述：`Vostok.File.list` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `List<VKFileInfo>` 类型结果。
+     * 列出路径下文件信息（非递归）。
+     *
+     * - path：目录或文件路径，类型为 String。
+     * - 返回值：List<VKFileInfo>。
      */
     public static List<VKFileInfo> list(String path);
 
     /**
-     * 方法描述：`Vostok.File.list` 接口。
-     * @param path 参数 `path`。
-     * @param recursive 参数 `recursive`。
-     * @return 返回 `List<VKFileInfo>` 类型结果。
+     * 列出路径下文件信息（可选递归）。
+     *
+     * - path：目录或文件路径，类型为 String。
+     * - recursive：是否递归子目录，类型为 boolean。
+     * - 返回值：List<VKFileInfo>。
      */
     public static List<VKFileInfo> list(String path, boolean recursive);
 
     /**
-     * 方法描述：`Vostok.File.walk` 接口。
-     * @param path 参数 `path`。
-     * @param recursive 参数 `recursive`。
-     * @param filter 参数 `filter`。
-     * @return 返回 `List<VKFileInfo>` 类型结果。
+     * 遍历路径并按过滤器筛选文件信息。
+     *
+     * - path：目录或文件路径，类型为 String。
+     * - recursive：是否递归子目录，类型为 boolean。
+     * - filter：过滤器，类型为 Predicate<VKFileInfo>，可为 null（表示不过滤）。
+     * - 返回值：List<VKFileInfo>。
      */
     public static List<VKFileInfo> walk(String path, boolean recursive, Predicate<VKFileInfo> filter);
 
     /**
-     * 方法描述：`Vostok.File.walk` 接口。
-     * @param path 参数 `path`。
-     * @param recursive 参数 `recursive`。
-     * @return 返回 `List<VKFileInfo>` 类型结果。
+     * 遍历路径并返回所有文件信息（无过滤器）。
+     *
+     * - path：目录或文件路径，类型为 String。
+     * - recursive：是否递归子目录，类型为 boolean。
+     * - 返回值：List<VKFileInfo>。
      */
     public static List<VKFileInfo> walk(String path, boolean recursive);
 
     /**
-     * 方法描述：`Vostok.File.mkdir` 接口。
-     * @param path 参数 `path`。
+     * 创建单级目录（父目录不存在时失败）。
+     *
+     * - path：目录路径，类型为 String。
      */
     public static void mkdir(String path);
 
     /**
-     * 方法描述：`Vostok.File.mkdirs` 接口。
-     * @param path 参数 `path`。
+     * 递归创建目录（等价于 mkdir -p 语义）。
+     *
+     * - path：目录路径，类型为 String。
      */
     public static void mkdirs(String path);
 
     /**
-     * 方法描述：`Vostok.File.rename` 接口。
-     * @param path 参数 `path`。
-     * @param newName 参数 `newName`。
+     * 重命名文件/目录（同目录下改名）。
+     *
+     * - path：目标路径，类型为 String。
+     * - newName：新名称（不能包含路径分隔符），类型为 String。
      */
     public static void rename(String path, String newName);
 
     /**
-     * 方法描述：`Vostok.File.copy` 接口。
-     * @param sourcePath 参数 `sourcePath`。
-     * @param targetPath 参数 `targetPath`。
+     * 复制文件（默认覆盖目标）。
+     *
+     * - sourcePath：源文件路径，类型为 String。
+     * - targetPath：目标文件路径，类型为 String。
      */
     public static void copy(String sourcePath, String targetPath);
 
     /**
-     * 方法描述：`Vostok.File.copy` 接口。
-     * @param sourcePath 参数 `sourcePath`。
-     * @param targetPath 参数 `targetPath`。
-     * @param replaceExisting 参数 `replaceExisting`。
+     * 复制文件（可指定是否覆盖目标）。
+     *
+     * - sourcePath：源文件路径，类型为 String。
+     * - targetPath：目标文件路径，类型为 String。
+     * - replaceExisting：目标存在时是否覆盖，类型为 boolean。
      */
     public static void copy(String sourcePath, String targetPath, boolean replaceExisting);
 
     /**
-     * 方法描述：`Vostok.File.move` 接口。
-     * @param sourcePath 参数 `sourcePath`。
-     * @param targetPath 参数 `targetPath`。
+     * 移动文件（默认覆盖目标）。
+     *
+     * - sourcePath：源文件路径，类型为 String。
+     * - targetPath：目标文件路径，类型为 String。
      */
     public static void move(String sourcePath, String targetPath);
 
     /**
-     * 方法描述：`Vostok.File.move` 接口。
-     * @param sourcePath 参数 `sourcePath`。
-     * @param targetPath 参数 `targetPath`。
-     * @param replaceExisting 参数 `replaceExisting`。
+     * 移动文件（可指定是否覆盖目标）。
+     *
+     * - sourcePath：源文件路径，类型为 String。
+     * - targetPath：目标文件路径，类型为 String。
+     * - replaceExisting：目标存在时是否覆盖，类型为 boolean。
      */
     public static void move(String sourcePath, String targetPath, boolean replaceExisting);
 
     /**
-     * 方法描述：`Vostok.File.copyDir` 接口。
-     * @param sourceDir 参数 `sourceDir`。
-     * @param targetDir 参数 `targetDir`。
-     * @param strategy 参数 `strategy`。
+     * 复制目录。
+     *
+     * - sourceDir：源目录路径，类型为 String。
+     * - targetDir：目标目录路径，类型为 String。
+     * - strategy：冲突策略（FAIL/SKIP/OVERWRITE），类型为 VKFileConflictStrategy。
      */
     public static void copyDir(String sourceDir, String targetDir, VKFileConflictStrategy strategy);
 
     /**
-     * 方法描述：`Vostok.File.moveDir` 接口。
-     * @param sourceDir 参数 `sourceDir`。
-     * @param targetDir 参数 `targetDir`。
-     * @param strategy 参数 `strategy`。
+     * 移动目录。
+     *
+     * - sourceDir：源目录路径，类型为 String。
+     * - targetDir：目标目录路径，类型为 String。
+     * - strategy：冲突策略（FAIL/SKIP/OVERWRITE），类型为 VKFileConflictStrategy。
      */
     public static void moveDir(String sourceDir, String targetDir, VKFileConflictStrategy strategy);
 
     /**
-     * 方法描述：`Vostok.File.touch` 接口。
-     * @param path 参数 `path`。
+     * 触碰文件：不存在则创建，存在则更新最后修改时间。
+     *
+     * - path：目标文件路径，类型为 String。
      */
     public static void touch(String path);
 
     /**
-     * 方法描述：`Vostok.File.size` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `long` 类型结果。
+     * 获取文件大小（字节）。
+     *
+     * - path：目标路径，类型为 String。
+     * - 返回值：long（字节数）。
      */
     public static long size(String path);
 
     /**
-     * 方法描述：`Vostok.File.lastModified` 接口。
-     * @param path 参数 `path`。
-     * @return 返回 `Instant` 类型结果。
+     * 获取最后修改时间。
+     *
+     * - path：目标路径，类型为 String。
+     * - 返回值：Instant。
      */
     public static Instant lastModified(String path);
 
     /**
-     * 方法描述：`Vostok.File.zip` 接口。
-     * @param sourcePath 参数 `sourcePath`。
-     * @param zipPath 参数 `zipPath`。
+     * 压缩文件或目录为 zip。
+     *
+     * - sourcePath：源文件/目录路径，类型为 String。
+     * - zipPath：目标 zip 路径，类型为 String。
      */
     public static void zip(String sourcePath, String zipPath);
 
     /**
-     * 方法描述：`Vostok.File.unzip` 接口。
-     * @param zipPath 参数 `zipPath`。
-     * @param targetDir 参数 `targetDir`。
+     * 解压 zip（使用全局配置中的默认限制，默认覆盖）。
+     *
+     * - zipPath：zip 文件路径，类型为 String。
+     * - targetDir：解压目标目录，类型为 String。
      */
     public static void unzip(String zipPath, String targetDir);
 
     /**
-     * 方法描述：`Vostok.File.unzip` 接口。
-     * @param zipPath 参数 `zipPath`。
-     * @param targetDir 参数 `targetDir`。
-     * @param replaceExisting 参数 `replaceExisting`。
+     * 解压 zip（使用全局配置中的默认限制，可指定覆盖策略）。
+     *
+     * - zipPath：zip 文件路径，类型为 String。
+     * - targetDir：解压目标目录，类型为 String。
+     * - replaceExisting：目标存在时是否覆盖，类型为 boolean。
      */
     public static void unzip(String zipPath, String targetDir, boolean replaceExisting);
 
     /**
-     * 方法描述：`Vostok.File.unzip` 接口。
-     * @param zipPath 参数 `zipPath`。
-     * @param targetDir 参数 `targetDir`。
-     * @param options 参数 `options`。
+     * 解压 zip（显式指定安全选项，如 entries/总解压字节/单文件字节上限）。
+     *
+     * - zipPath：zip 文件路径，类型为 String。
+     * - targetDir：解压目标目录，类型为 String。
+     * - options：解压选项，类型为 VKUnzipOptions。
      */
     public static void unzip(String zipPath, String targetDir, VKUnzipOptions options);
 
     /**
-     * 方法描述：`Vostok.File.watch` 接口。
-     * @param path 参数 `path`。
-     * @param listener 参数 `listener`。
-     * @return 返回 `VKFileWatchHandle` 类型结果。
+     * 监听路径变化（是否递归由全局配置 watchRecursiveDefault 决定）。
+     *
+     * - path：监听路径（文件或目录），类型为 String。
+     * - listener：事件回调，类型为 VKFileWatchListener。
+     * - 返回值：VKFileWatchHandle（可 close 取消监听）。
      */
     public static VKFileWatchHandle watch(String path, VKFileWatchListener listener);
 
     /**
-     * 方法描述：`Vostok.File.watch` 接口。
-     * @param path 参数 `path`。
-     * @param recursive 参数 `recursive`。
-     * @param listener 参数 `listener`。
-     * @return 返回 `VKFileWatchHandle` 类型结果。
+     * 监听路径变化（显式指定是否递归监听子目录）。
+     *
+     * - path：监听路径（文件或目录），类型为 String。
+     * - recursive：是否递归监听，类型为 boolean。
+     * - listener：事件回调，类型为 VKFileWatchListener。
+     * - 返回值：VKFileWatchHandle（可 close 取消监听）。
      */
     public static VKFileWatchHandle watch(String path, boolean recursive, VKFileWatchListener listener);
 
@@ -863,249 +970,282 @@ public interface Vostok.File {
 ```java
 public interface Vostok.Log {
     /**
-     * 方法描述：`Vostok.Log.init` 接口。
+     * 使用默认配置初始化 Log 模块（幂等）。
      */
     public static void init();
 
     /**
-     * 方法描述：`Vostok.Log.init` 接口。
-     * @param config 参数 `config`。
+     * 使用指定配置初始化 Log 模块（幂等）。
+     * 
+     * - config：日志配置对象，类型为 VKLogConfig，不能为空。
      */
     public static void init(VKLogConfig config);
 
     /**
-     * 方法描述：`Vostok.Log.reinit` 接口。
-     * @param config 参数 `config`。
+     * 运行期重建日志引擎并应用新配置。
+     * 
+     * - config：新日志配置对象，类型为 VKLogConfig，不能为空。
      */
     public static void reinit(VKLogConfig config);
 
     /**
-     * 方法描述：`Vostok.Log.close` 接口。
+     * 关闭 Log 模块并停止后台写线程。
      */
     public static void close();
 
     /**
-     * 方法描述：`Vostok.Log.initialized` 接口。
-     * @return 返回 `boolean` 类型结果。
+     * 判断 Log 模块是否已初始化。
+     * 
+     * - true：已初始化。
+     * - false：未初始化。
      */
     public static boolean initialized();
 
     /**
-     * 方法描述：`Vostok.Log.trace` 接口。
-     * @param msg 参数 `msg`。
+     * 打印 TRACE 级别日志（纯文本消息）。
+     * 
+     * - msg：日志文本，类型为 String，可为 null（会按 "null" 输出）。
      */
     public static void trace(String msg);
 
     /**
-     * 方法描述：`Vostok.Log.debug` 接口。
-     * @param msg 参数 `msg`。
+     * 打印 DEBUG 级别日志（纯文本消息）。
+     * 
+     * - msg：日志文本，类型为 String。
      */
     public static void debug(String msg);
 
     /**
-     * 方法描述：`Vostok.Log.info` 接口。
-     * @param msg 参数 `msg`。
+     * 打印 INFO 级别日志（纯文本消息）。
+     * 
+     * - msg：日志文本，类型为 String。
      */
     public static void info(String msg);
 
     /**
-     * 方法描述：`Vostok.Log.warn` 接口。
-     * @param msg 参数 `msg`。
+     * 打印 WARN 级别日志（纯文本消息）。
+     * 
+     * - msg：日志文本，类型为 String。
      */
     public static void warn(String msg);
 
     /**
-     * 方法描述：`Vostok.Log.error` 接口。
-     * @param msg 参数 `msg`。
+     * 打印 ERROR 级别日志（纯文本消息）。
+     * 
+     * - msg：日志文本，类型为 String。
      */
     public static void error(String msg);
 
     /**
-     * 方法描述：`Vostok.Log.error` 接口。
-     * @param msg 参数 `msg`。
-     * @param t 参数 `t`。
+     * 打印 ERROR 级别日志并附带异常堆栈。
+     * 
+     * - msg：日志文本，类型为 String。
+     * - t：异常对象，类型为 Throwable，可为 null。
      */
     public static void error(String msg, Throwable t);
 
     /**
-     * 方法描述：`Vostok.Log.trace` 接口。
-     * @param template 参数 `template`。
-     * @param args 参数 `args`。
+     * 打印 TRACE 级别格式化日志（支持 {} 占位符）。
+     * 
+     * - template：模板字符串，类型为 String。
+     * - args：模板参数，类型为 Object...。
      */
     public static void trace(String template, Object... args);
 
     /**
-     * 方法描述：`Vostok.Log.debug` 接口。
-     * @param template 参数 `template`。
-     * @param args 参数 `args`。
+     * 打印 DEBUG 级别格式化日志（支持 {} 占位符）。
+     * 
+     * - template：模板字符串，类型为 String。
+     * - args：模板参数，类型为 Object...。
      */
     public static void debug(String template, Object... args);
 
     /**
-     * 方法描述：`Vostok.Log.info` 接口。
-     * @param template 参数 `template`。
-     * @param args 参数 `args`。
+     * 打印 INFO 级别格式化日志（支持 {} 占位符）。
+     * 
+     * - template：模板字符串，类型为 String。
+     * - args：模板参数，类型为 Object...。
      */
     public static void info(String template, Object... args);
 
     /**
-     * 方法描述：`Vostok.Log.warn` 接口。
-     * @param template 参数 `template`。
-     * @param args 参数 `args`。
+     * 打印 WARN 级别格式化日志（支持 {} 占位符）。
+     * 
+     * - template：模板字符串，类型为 String。
+     * - args：模板参数，类型为 Object...。
      */
     public static void warn(String template, Object... args);
 
     /**
-     * 方法描述：`Vostok.Log.error` 接口。
-     * @param template 参数 `template`。
-     * @param args 参数 `args`。
+     * 打印 ERROR 级别格式化日志（支持 {} 占位符）。
+     * 
+     * - template：模板字符串，类型为 String。
+     * - args：模板参数，类型为 Object...。
      */
     public static void error(String template, Object... args);
 
     /**
-     * 方法描述：`Vostok.Log.setLevel` 接口。
-     * @param level 参数 `level`。
+     * 设置日志级别阈值。
+     * 
+     * - level：日志级别，类型为 VKLogLevel，不可为 null。
      */
     public static void setLevel(VKLogLevel level);
 
     /**
-     * 方法描述：`Vostok.Log.level` 接口。
-     * @return 返回 `VKLogLevel` 类型结果。
+     * 获取当前日志级别。
+     * 当前生效的 VKLogLevel。
      */
     public static VKLogLevel level();
 
     /**
-     * 方法描述：`Vostok.Log.setOutputDir` 接口。
-     * @param outputDir 参数 `outputDir`。
+     * 设置日志输出目录。
+     * 
+     * - outputDir：输出目录路径，类型为 String，不能为空。
      */
     public static void setOutputDir(String outputDir);
 
     /**
-     * 方法描述：`Vostok.Log.setFilePrefix` 接口。
-     * @param filePrefix 参数 `filePrefix`。
+     * 设置日志文件名前缀。
+     * 
+     * - filePrefix：文件名前缀，类型为 String，不能为空。
      */
     public static void setFilePrefix(String filePrefix);
 
     /**
-     * 方法描述：`Vostok.Log.setMaxFileSizeMb` 接口。
-     * @param mb 参数 `mb`。
+     * 设置单日志文件最大大小（MB）。
+     * 
+     * - mb：文件大小上限（MB），类型为 long，必须大于 0。
      */
     public static void setMaxFileSizeMb(long mb);
 
     /**
-     * 方法描述：`Vostok.Log.setMaxFileSizeBytes` 接口。
-     * @param bytes 参数 `bytes`。
+     * 设置单日志文件最大大小（字节）。
+     * 
+     * - bytes：文件大小上限（字节），类型为 long，必须大于 0。
      */
     public static void setMaxFileSizeBytes(long bytes);
 
     /**
-     * 方法描述：`Vostok.Log.setMaxBackups` 接口。
-     * @param maxBackups 参数 `maxBackups`。
+     * 设置滚动日志最多保留文件数量。
+     * 
+     * - maxBackups：保留数量，类型为 int，必须大于等于 0。
      */
     public static void setMaxBackups(int maxBackups);
 
     /**
-     * 方法描述：`Vostok.Log.setMaxBackupDays` 接口。
-     * @param maxBackupDays 参数 `maxBackupDays`。
+     * 设置滚动日志按天保留上限。
+     * 
+     * - maxBackupDays：保留天数，类型为 int，必须大于等于 0。
      */
     public static void setMaxBackupDays(int maxBackupDays);
 
     /**
-     * 方法描述：`Vostok.Log.setMaxTotalSizeMb` 接口。
-     * @param mb 参数 `mb`。
+     * 设置滚动日志总容量上限（MB）。
+     * 
+     * - mb：总容量上限（MB），类型为 long，必须大于 0。
      */
     public static void setMaxTotalSizeMb(long mb);
 
     /**
-     * 方法描述：`Vostok.Log.setConsoleEnabled` 接口。
-     * @param enabled 参数 `enabled`。
+     * 设置是否同时输出到控制台。
+     * 
+     * - enabled：true 表示输出控制台，false 表示仅写文件。
      */
     public static void setConsoleEnabled(boolean enabled);
 
     /**
-     * 方法描述：`Vostok.Log.setQueueFullPolicy` 接口。
-     * @param policy 参数 `policy`。
+     * 设置异步队列满时处理策略。
+     * 
+     * - policy：队列策略，类型为 VKLogQueueFullPolicy（DROP/BLOCK/SYNC_FALLBACK）。
      */
     public static void setQueueFullPolicy(VKLogQueueFullPolicy policy);
 
     /**
-     * 方法描述：`Vostok.Log.setQueueCapacity` 接口。
-     * @param capacity 参数 `capacity`。
+     * 设置异步队列容量。
+     * 
+     * - capacity：队列长度，类型为 int，必须大于 0。
      */
     public static void setQueueCapacity(int capacity);
 
     /**
-     * 方法描述：`Vostok.Log.setFlushIntervalMs` 接口。
-     * @param flushIntervalMs 参数 `flushIntervalMs`。
+     * 设置定时刷盘间隔（毫秒）。
+     * 
+     * - flushIntervalMs：刷盘间隔，类型为 long，必须大于 0。
      */
     public static void setFlushIntervalMs(long flushIntervalMs);
 
     /**
-     * 方法描述：`Vostok.Log.setFlushBatchSize` 接口。
-     * @param flushBatchSize 参数 `flushBatchSize`。
+     * 设置批量刷盘阈值（累计条数）。
+     * 
+     * - flushBatchSize：批量阈值，类型为 int，必须大于 0。
      */
     public static void setFlushBatchSize(int flushBatchSize);
 
     /**
-     * 方法描述：`Vostok.Log.setShutdownTimeoutMs` 接口。
-     * @param shutdownTimeoutMs 参数 `shutdownTimeoutMs`。
+     * 设置关闭日志线程等待超时（毫秒）。
+     * 
+     * - shutdownTimeoutMs：等待超时，类型为 long，必须大于 0。
      */
     public static void setShutdownTimeoutMs(long shutdownTimeoutMs);
 
     /**
-     * 方法描述：`Vostok.Log.setFsyncPolicy` 接口。
-     * @param fsyncPolicy 参数 `fsyncPolicy`。
+     * 设置 fsync 持久化策略。
+     * 
+     * - fsyncPolicy：策略枚举，类型为 VKLogFsyncPolicy（NEVER/EVERY_FLUSH/EVERY_WRITE）。
      */
     public static void setFsyncPolicy(VKLogFsyncPolicy fsyncPolicy);
 
     /**
-     * 方法描述：`Vostok.Log.setRollInterval` 接口。
-     * @param interval 参数 `interval`。
+     * 设置按时间滚动策略。
+     * 
+     * - interval：滚动周期，类型为 VKLogRollInterval（NONE/HOURLY/DAILY）。
      */
     public static void setRollInterval(VKLogRollInterval interval);
 
     /**
-     * 方法描述：`Vostok.Log.setCompressRolledFiles` 接口。
-     * @param compress 参数 `compress`。
+     * 设置滚动文件是否压缩为 gzip。
+     * 
+     * - compress：true 开启压缩，false 关闭压缩。
      */
     public static void setCompressRolledFiles(boolean compress);
 
     /**
-     * 方法描述：`Vostok.Log.setFileRetryIntervalMs` 接口。
-     * @param retryIntervalMs 参数 `retryIntervalMs`。
+     * 设置文件写失败后的重试间隔（毫秒）。
+     * 
+     * - retryIntervalMs：重试间隔，类型为 long，必须大于 0。
      */
     public static void setFileRetryIntervalMs(long retryIntervalMs);
 
     /**
-     * 方法描述：`Vostok.Log.droppedLogs` 接口。
-     * @return 返回 `long` 类型结果。
+     * 获取累计丢弃日志条数（通常在 DROP 策略下发生）。
+     * long 类型累计计数。
      */
     public static long droppedLogs();
 
     /**
-     * 方法描述：`Vostok.Log.fallbackWrites` 接口。
-     * @return 返回 `long` 类型结果。
+     * 获取降级写入次数（stderr 或同步兜底写）。
+     * long 类型累计计数。
      */
     public static long fallbackWrites();
 
     /**
-     * 方法描述：`Vostok.Log.fileWriteErrors` 接口。
-     * @return 返回 `long` 类型结果。
+     * 获取文件写失败次数。
+     * long 类型累计计数。
      */
     public static long fileWriteErrors();
 
     /**
-     * 方法描述：`Vostok.Log.flush` 接口。
+     * 主动触发一次刷盘。
      */
     public static void flush();
 
     /**
-     * 方法描述：`Vostok.Log.shutdown` 接口。
+     * 关闭 Log 模块（等价于 close）。
      */
     public static void shutdown();
 
     /**
-     * 方法描述：`Vostok.Log.resetDefaults` 接口。
+     * 将 Log 配置重置为默认值并重建引擎。
      */
     public static void resetDefaults();
 
