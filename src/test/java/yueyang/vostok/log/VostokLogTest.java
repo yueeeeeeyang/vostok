@@ -18,6 +18,8 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VostokLogTest {
@@ -90,6 +92,71 @@ class VostokLogTest {
         String text = Files.readString(dir.resolve("test.log"));
         assertTrue(text.contains("hello world"));
         assertTrue(text.contains("yueyang.vostok.log.VostokLogTest"));
+    }
+
+    @Test
+    void testLoggerApiRoutesToDedicatedFile() throws Exception {
+        Vostok.Log.logger("data").info("sql-run");
+        Vostok.Log.info("default-run");
+        Vostok.Log.flush();
+
+        String dataText = Files.readString(dir.resolve("data.log"));
+        String defaultText = Files.readString(dir.resolve("test.log"));
+        assertTrue(dataText.contains("sql-run"));
+        assertTrue(defaultText.contains("default-run"));
+    }
+
+    @Test
+    void testGetLoggerReturnsReusableInstance() throws Exception {
+        VKLogger l1 = Vostok.Log.getLogger("data");
+        VKLogger l2 = Vostok.Log.getLogger("data");
+        assertSame(l1, l2);
+
+        l1.info("reuse-1");
+        l2.info("reuse-2");
+        Vostok.Log.flush();
+
+        String dataText = Files.readString(dir.resolve("data.log"));
+        assertTrue(dataText.contains("reuse-1"));
+        assertTrue(dataText.contains("reuse-2"));
+    }
+
+    @Test
+    void testPreRegisteredLoggersWorkWithAutoCreateDisabled() throws Exception {
+        Vostok.Log.close();
+        Vostok.Log.init(new VKLogConfig()
+                .consoleEnabled(false)
+                .outputDir(dir.toString())
+                .filePrefix("test")
+                .autoCreateLoggerSink(false)
+                .registerLoggers("data", "web"));
+
+        Vostok.Log.logger("data").info("data-log");
+        Vostok.Log.getLogger("web").info("web-log");
+        Vostok.Log.flush();
+
+        assertTrue(Files.readString(dir.resolve("data.log")).contains("data-log"));
+        assertTrue(Files.readString(dir.resolve("web.log")).contains("web-log"));
+        assertThrows(IllegalArgumentException.class, () -> Vostok.Log.logger("unknown"));
+    }
+
+    @Test
+    void testPerLoggerSinkOverride() throws Exception {
+        Vostok.Log.close();
+        Vostok.Log.init(new VKLogConfig()
+                .consoleEnabled(false)
+                .outputDir(dir.toString())
+                .filePrefix("test")
+                .registerLogger("access", new VKLogSinkConfig()
+                        .filePrefix("access-special")
+                        .maxFileSizeBytes(1024L * 1024)));
+
+        Vostok.Log.getLogger("access").info("access-hit");
+        Vostok.Log.flush();
+
+        Path p = dir.resolve("access-special.log");
+        assertTrue(Files.exists(p));
+        assertTrue(Files.readString(p).contains("access-hit"));
     }
 
     @Test

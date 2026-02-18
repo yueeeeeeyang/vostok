@@ -2,6 +2,12 @@ package yueyang.vostok.log;
 
 import yueyang.vostok.util.VKAssert;
 
+import java.util.Arrays;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+
 /**
  * Log module configuration.
  */
@@ -23,6 +29,10 @@ public class VKLogConfig {
     private VKLogRollInterval rollInterval = VKLogRollInterval.DAILY;
     private boolean compressRolledFiles = false;
     private long fileRetryIntervalMs = 3000;
+    private String defaultLoggerName = "app";
+    private boolean autoCreateLoggerSink = true;
+    private final Set<String> preRegisteredLoggers = new LinkedHashSet<>();
+    private final Map<String, VKLogSinkConfig> loggerSinkConfigs = new LinkedHashMap<>();
 
     public static VKLogConfig defaults() {
         return new VKLogConfig();
@@ -46,7 +56,11 @@ public class VKLogConfig {
                 .fsyncPolicy(fsyncPolicy)
                 .rollInterval(rollInterval)
                 .compressRolledFiles(compressRolledFiles)
-                .fileRetryIntervalMs(fileRetryIntervalMs);
+                .fileRetryIntervalMs(fileRetryIntervalMs)
+                .defaultLoggerName(defaultLoggerName)
+                .autoCreateLoggerSink(autoCreateLoggerSink)
+                .preRegisteredLoggers(preRegisteredLoggers)
+                .loggerSinkConfigs(loggerSinkConfigs);
     }
 
     public VKLogLevel getLevel() {
@@ -227,5 +241,91 @@ public class VKLogConfig {
         VKAssert.isTrue(fileRetryIntervalMs > 0, "fileRetryIntervalMs must be > 0");
         this.fileRetryIntervalMs = fileRetryIntervalMs;
         return this;
+    }
+
+    public String getDefaultLoggerName() {
+        return defaultLoggerName;
+    }
+
+    public VKLogConfig defaultLoggerName(String defaultLoggerName) {
+        VKAssert.notBlank(defaultLoggerName, "defaultLoggerName is blank");
+        this.defaultLoggerName = defaultLoggerName.trim();
+        return this;
+    }
+
+    public boolean isAutoCreateLoggerSink() {
+        return autoCreateLoggerSink;
+    }
+
+    public VKLogConfig autoCreateLoggerSink(boolean autoCreateLoggerSink) {
+        this.autoCreateLoggerSink = autoCreateLoggerSink;
+        return this;
+    }
+
+    public Set<String> getPreRegisteredLoggers() {
+        return Set.copyOf(preRegisteredLoggers);
+    }
+
+    public VKLogConfig preRegisteredLoggers(Set<String> names) {
+        this.preRegisteredLoggers.clear();
+        if (names == null) {
+            return this;
+        }
+        for (String name : names) {
+            addPreRegistered(name);
+        }
+        return this;
+    }
+
+    public VKLogConfig registerLogger(String loggerName) {
+        addPreRegistered(loggerName);
+        return this;
+    }
+
+    public VKLogConfig registerLoggers(String... loggerNames) {
+        if (loggerNames == null) {
+            return this;
+        }
+        Arrays.stream(loggerNames).forEach(this::addPreRegistered);
+        return this;
+    }
+
+    public Map<String, VKLogSinkConfig> getLoggerSinkConfigs() {
+        Map<String, VKLogSinkConfig> out = new LinkedHashMap<>();
+        for (var e : loggerSinkConfigs.entrySet()) {
+            out.put(e.getKey(), e.getValue() == null ? null : e.getValue().copy());
+        }
+        return out;
+    }
+
+    public VKLogConfig loggerSinkConfigs(Map<String, VKLogSinkConfig> configs) {
+        this.loggerSinkConfigs.clear();
+        if (configs == null) {
+            return this;
+        }
+        for (var e : configs.entrySet()) {
+            String name = normalizeLoggerName(e.getKey(), "loggerSinkConfigs key");
+            VKLogSinkConfig sink = e.getValue();
+            this.loggerSinkConfigs.put(name, sink == null ? null : sink.copy());
+            this.preRegisteredLoggers.add(name);
+        }
+        return this;
+    }
+
+    public VKLogConfig registerLogger(String loggerName, VKLogSinkConfig sinkConfig) {
+        String name = normalizeLoggerName(loggerName, "loggerName");
+        this.preRegisteredLoggers.add(name);
+        this.loggerSinkConfigs.put(name, sinkConfig == null ? null : sinkConfig.copy());
+        return this;
+    }
+
+    private void addPreRegistered(String loggerName) {
+        String name = normalizeLoggerName(loggerName, "loggerName");
+        this.preRegisteredLoggers.add(name);
+    }
+
+    private String normalizeLoggerName(String loggerName, String label) {
+        VKAssert.notBlank(loggerName, label + " is blank");
+        return loggerName.trim();
     }
 }

@@ -17,6 +17,10 @@ public final class VKRateLimiter {
     }
 
     public boolean tryAcquire(VKRequest req) {
+        return tryAcquireDecision(req).allowed();
+    }
+
+    public Decision tryAcquireDecision(VKRequest req) {
         String key = resolveKey(req);
         long now = System.currentTimeMillis();
         Bucket bucket = buckets.computeIfAbsent(key, k -> new Bucket(config.getCapacity(), now));
@@ -32,7 +36,7 @@ public final class VKRateLimiter {
             bucket.lastSeen = now;
         }
         cleanupIfNeeded(now);
-        return allowed;
+        return new Decision(allowed, key, config.getKeyStrategy(), config.getRejectStatus());
     }
 
     public void applyRejected(VKResponse res) {
@@ -100,5 +104,8 @@ public final class VKRateLimiter {
             this.lastRefillAt = now;
             this.lastSeen = now;
         }
+    }
+
+    public record Decision(boolean allowed, String key, VKRateLimitKeyStrategy strategy, int rejectStatus) {
     }
 }

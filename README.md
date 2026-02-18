@@ -1083,6 +1083,8 @@ VKWebConfig cfg = new VKWebConfig()
     .workerQueueSize(10_000)
     // 是否启用 AccessLog。默认 true。
     .accessLogEnabled(true)
+    // 是否启用限流拒绝日志。默认 true。
+    .rateLimitLogEnabled(true)
     // AccessLog 异步队列长度。默认 8192；内部最小 256。
     .accessLogQueueSize(8_192)
     // 是否启用 multipart/form-data 解析。默认 true。
@@ -1164,6 +1166,23 @@ Vostok.Web.init(8080)
         .refillPeriodMs(1000)
         .keyStrategy(VKRateLimitKeyStrategy.HEADER)
         .headerName("X-User-Id"));
+```
+
+```java
+// Web 日志分流初始化建议（access.log / ratelimit.log）
+// 说明：
+// 1) 若 Vostok.Log 尚未初始化，Web 启动时会自动按默认配置初始化并注册：
+//    web-access -> access.log
+//    web-ratelimit -> ratelimit.log
+// 2) 若 Vostok.Log 已初始化，Web 不会 reinit 覆盖用户配置；
+//    会尝试调用 Vostok.Log.registerLogger(...)（当前版本若无该接口则回退默认 logger，并告警一次）。
+import yueyang.vostok.log.VKLogConfig;
+import yueyang.vostok.log.VKLogSinkConfig;
+
+VKLogConfig logCfg = VKLogConfig.defaults()
+    .registerLogger("web-access", new VKLogSinkConfig().filePrefix("access"))
+    .registerLogger("web-ratelimit", new VKLogSinkConfig().filePrefix("ratelimit"));
+Vostok.Log.init(logCfg);
 ```
 
 ### 3.4.2 WebSocket 路由配置（VKWebSocketConfig）
@@ -2036,6 +2055,22 @@ public interface Vostok.Log {
     public static boolean initialized();
 
     /**
+     * 获取指定名称的 Logger（快捷方式）。
+     *
+     * - loggerName：Logger 名称；同时作为日志文件名（例如 data -> data.log）。
+     * - 返回值：VKLogger（可直接调用 info/debug/warn/error）。
+     */
+    public static VKLogger logger(String loggerName);
+
+    /**
+     * 获取指定名称的 Logger（可复用实例）。
+     *
+     * - loggerName：Logger 名称；同时作为日志文件名（例如 web -> web.log）。
+     * - 返回值：VKLogger（缓存复用同名实例）。
+     */
+    public static VKLogger getLogger(String loggerName);
+
+    /**
      * 打印 TRACE 级别日志（纯文本消息）。
      * 
      * - msg：日志文本，类型为 String，可为 null（会按 "null" 输出）。
@@ -2315,6 +2350,22 @@ public class LogApiDemo {
         Vostok.Log.warn("warn {}", 4);
         Vostok.Log.error("error {}", 5);
 
+        // 按 logger 路由到独立文件
+        Vostok.Log.logger("data").info("select * from t_user"); // -> data.log
+        VKLogger webLogger = Vostok.Log.getLogger("web");
+        webLogger.warn("slow request /api/user");               // -> web.log
+        webLogger.error("web error {}", 500);
+
+        // 预注册模式（禁止运行时自动创建未注册 logger）
+        Vostok.Log.reinit(new VKLogConfig()
+                .outputDir("/tmp/vostok-logs")
+                .filePrefix("app")
+                .autoCreateLoggerSink(false)
+                .registerLoggers("data", "web")
+                .registerLogger("access", new VKLogSinkConfig()
+                        .filePrefix("access")
+                        .rollInterval(VKLogRollInterval.HOURLY)));
+
         Vostok.Log.setLevel(VKLogLevel.INFO);
         VKLogLevel lv = Vostok.Log.level();
         Vostok.Log.setOutputDir("/tmp/vostok-log");
@@ -2391,7 +2442,25 @@ VKLogConfig cfg = new VKLogConfig()
     // 是否压缩滚动文件。默认 false；true 时生成 .gz。
     .compressRolledFiles(false)
     // 文件写失败后的重试间隔毫秒。默认 3000。
-    .fileRetryIntervalMs(3000);
+    .fileRetryIntervalMs(3000)
+    // 默认 logger 名称（用于语义标识，默认 app）。
+    .defaultLoggerName("app")
+    // 未预注册 logger 是否允许自动创建 sink。默认 true。
+    .autoCreateLoggerSink(true)
+    // 预注册多个 logger sink（init 时一次性创建）。
+    .registerLoggers("data", "web", "access")
+    // 预注册单个 logger（等价于 registerLoggers 的单值版本）。
+    .registerLogger("audit")
+    // 注册带独立 sink 覆盖配置的 logger。
+    .registerLogger("access", new VKLogSinkConfig()
+        .filePrefix("access")
+        .rollInterval(VKLogRollInterval.HOURLY)
+        .maxFileSizeBytes(256L * 1024 * 1024))
+    // 批量覆盖 sink 配置（key 为 loggerName）。
+    .loggerSinkConfigs(java.util.Map.of(
+        "data", new VKLogSinkConfig().filePrefix("data").queueCapacity(8192),
+        "web", new VKLogSinkConfig().filePrefix("web").flushIntervalMs(500L)
+    ));
 ```
 
 ---

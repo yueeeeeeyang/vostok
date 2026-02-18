@@ -19,7 +19,10 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
@@ -31,10 +34,11 @@ import java.util.zip.GZIPOutputStream;
  */
 public class VostokLog {
     private static final Object LOCK = new Object();
-    private static volatile AsyncEngine ENGINE;
+    private static volatile LogRouter ROUTER;
     private static volatile VKLogConfig CONFIG = VKLogConfig.defaults();
     private static volatile boolean INITIALIZED;
     private static final StackWalker CALLER_WALKER = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
+    private static final String DEFAULT_LOGGER_KEY = "__default__";
 
     static {
         Runtime.getRuntime().addShutdownHook(new Thread(VostokLog::close, "vostok-log-shutdown"));
@@ -54,34 +58,34 @@ public class VostokLog {
                 return;
             }
             CONFIG = config.copy();
-            ENGINE = new AsyncEngine(CONFIG);
+            ROUTER = new LogRouter(CONFIG);
             INITIALIZED = true;
         }
     }
 
     public static void reinit(VKLogConfig config) {
         VKAssert.notNull(config, "VKLogConfig is null");
-        AsyncEngine old;
+        LogRouter old;
         synchronized (LOCK) {
             CONFIG = config.copy();
-            old = ENGINE;
-            ENGINE = new AsyncEngine(CONFIG);
+            old = ROUTER;
+            ROUTER = new LogRouter(CONFIG);
             INITIALIZED = true;
         }
         if (old != null) {
-            old.shutdown();
+            old.close();
         }
     }
 
     public static void close() {
-        AsyncEngine old;
+        LogRouter old;
         synchronized (LOCK) {
-            old = ENGINE;
-            ENGINE = null;
+            old = ROUTER;
+            ROUTER = null;
             INITIALIZED = false;
         }
         if (old != null) {
-            old.shutdown();
+            old.close();
         }
     }
 
@@ -89,48 +93,56 @@ public class VostokLog {
         return INITIALIZED;
     }
 
+    public static VKLogger logger(String loggerName) {
+        return current().logger(loggerName);
+    }
+
+    public static VKLogger getLogger(String loggerName) {
+        return current().logger(loggerName);
+    }
+
     public static void trace(String msg) {
-        current().log(VKLogLevel.TRACE, resolveCaller(), msg, null);
+        current().logAuto(VKLogLevel.TRACE, resolveCaller(), msg, null);
     }
 
     public static void debug(String msg) {
-        current().log(VKLogLevel.DEBUG, resolveCaller(), msg, null);
+        current().logAuto(VKLogLevel.DEBUG, resolveCaller(), msg, null);
     }
 
     public static void info(String msg) {
-        current().log(VKLogLevel.INFO, resolveCaller(), msg, null);
+        current().logAuto(VKLogLevel.INFO, resolveCaller(), msg, null);
     }
 
     public static void warn(String msg) {
-        current().log(VKLogLevel.WARN, resolveCaller(), msg, null);
+        current().logAuto(VKLogLevel.WARN, resolveCaller(), msg, null);
     }
 
     public static void error(String msg) {
-        current().log(VKLogLevel.ERROR, resolveCaller(), msg, null);
+        current().logAuto(VKLogLevel.ERROR, resolveCaller(), msg, null);
     }
 
     public static void error(String msg, Throwable t) {
-        current().log(VKLogLevel.ERROR, resolveCaller(), msg, t);
+        current().logAuto(VKLogLevel.ERROR, resolveCaller(), msg, t);
     }
 
     public static void trace(String template, Object... args) {
-        current().log(VKLogLevel.TRACE, resolveCaller(), format(template, args), null);
+        current().logAuto(VKLogLevel.TRACE, resolveCaller(), format(template, args), null);
     }
 
     public static void debug(String template, Object... args) {
-        current().log(VKLogLevel.DEBUG, resolveCaller(), format(template, args), null);
+        current().logAuto(VKLogLevel.DEBUG, resolveCaller(), format(template, args), null);
     }
 
     public static void info(String template, Object... args) {
-        current().log(VKLogLevel.INFO, resolveCaller(), format(template, args), null);
+        current().logAuto(VKLogLevel.INFO, resolveCaller(), format(template, args), null);
     }
 
     public static void warn(String template, Object... args) {
-        current().log(VKLogLevel.WARN, resolveCaller(), format(template, args), null);
+        current().logAuto(VKLogLevel.WARN, resolveCaller(), format(template, args), null);
     }
 
     public static void error(String template, Object... args) {
-        current().log(VKLogLevel.ERROR, resolveCaller(), format(template, args), null);
+        current().logAuto(VKLogLevel.ERROR, resolveCaller(), format(template, args), null);
     }
 
     public static void setLevel(VKLogLevel level) {
@@ -138,8 +150,8 @@ public class VostokLog {
     }
 
     public static VKLogLevel level() {
-        AsyncEngine e = ENGINE;
-        return e == null ? CONFIG.getLevel() : e.level();
+        LogRouter r = ROUTER;
+        return r == null ? CONFIG.getLevel() : r.level();
     }
 
     public static void setOutputDir(String outputDir) {
@@ -211,24 +223,24 @@ public class VostokLog {
     }
 
     public static long droppedLogs() {
-        AsyncEngine e = ENGINE;
-        return e == null ? 0L : e.droppedLogs();
+        LogRouter r = ROUTER;
+        return r == null ? 0L : r.droppedLogs();
     }
 
     public static long fallbackWrites() {
-        AsyncEngine e = ENGINE;
-        return e == null ? 0L : e.fallbackWrites();
+        LogRouter r = ROUTER;
+        return r == null ? 0L : r.fallbackWrites();
     }
 
     public static long fileWriteErrors() {
-        AsyncEngine e = ENGINE;
-        return e == null ? 0L : e.fileWriteErrors();
+        LogRouter r = ROUTER;
+        return r == null ? 0L : r.fileWriteErrors();
     }
 
     public static void flush() {
-        AsyncEngine e = ENGINE;
-        if (e != null) {
-            e.flush();
+        LogRouter r = ROUTER;
+        if (r != null) {
+            r.flush();
         }
     }
 
@@ -244,17 +256,17 @@ public class VostokLog {
         reinit(VKLogConfig.defaults());
     }
 
-    private static AsyncEngine current() {
-        AsyncEngine e = ENGINE;
-        if (e != null) {
-            return e;
+    private static LogRouter current() {
+        LogRouter r = ROUTER;
+        if (r != null) {
+            return r;
         }
         synchronized (LOCK) {
-            if (ENGINE == null) {
-                ENGINE = new AsyncEngine(CONFIG);
+            if (ROUTER == null) {
+                ROUTER = new LogRouter(CONFIG);
                 INITIALIZED = true;
             }
-            return ENGINE;
+            return ROUTER;
         }
     }
 
@@ -263,8 +275,8 @@ public class VostokLog {
             VKLogConfig next = CONFIG.copy();
             updater.accept(next);
             CONFIG = next;
-            if (ENGINE != null) {
-                ENGINE.applyConfig(next);
+            if (ROUTER != null) {
+                ROUTER.applyConfig(next);
             }
         }
     }
@@ -313,6 +325,231 @@ public class VostokLog {
             sb.append(" [").append(arg).append("]");
         }
         return sb.toString();
+    }
+
+    private static String validateLoggerName(String loggerName) {
+        VKAssert.notBlank(loggerName, "loggerName is blank");
+        String name = loggerName.trim();
+        VKAssert.isTrue(!name.contains("/") && !name.contains("\\"), "loggerName must not contain path separator");
+        VKAssert.isTrue(!".".equals(name) && !"..".equals(name), "loggerName is invalid");
+        return name;
+    }
+
+    private static final class NamedLogger implements VKLogger {
+        private final String name;
+        private final LogRouter router;
+
+        private NamedLogger(String name, LogRouter router) {
+            this.name = name;
+            this.router = router;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public void trace(String msg) {
+            router.logByLogger(name, VKLogLevel.TRACE, msg, null);
+        }
+
+        @Override
+        public void debug(String msg) {
+            router.logByLogger(name, VKLogLevel.DEBUG, msg, null);
+        }
+
+        @Override
+        public void info(String msg) {
+            router.logByLogger(name, VKLogLevel.INFO, msg, null);
+        }
+
+        @Override
+        public void warn(String msg) {
+            router.logByLogger(name, VKLogLevel.WARN, msg, null);
+        }
+
+        @Override
+        public void error(String msg) {
+            router.logByLogger(name, VKLogLevel.ERROR, msg, null);
+        }
+
+        @Override
+        public void error(String msg, Throwable t) {
+            router.logByLogger(name, VKLogLevel.ERROR, msg, t);
+        }
+
+        @Override
+        public void trace(String template, Object... args) {
+            router.logByLogger(name, VKLogLevel.TRACE, format(template, args), null);
+        }
+
+        @Override
+        public void debug(String template, Object... args) {
+            router.logByLogger(name, VKLogLevel.DEBUG, format(template, args), null);
+        }
+
+        @Override
+        public void info(String template, Object... args) {
+            router.logByLogger(name, VKLogLevel.INFO, format(template, args), null);
+        }
+
+        @Override
+        public void warn(String template, Object... args) {
+            router.logByLogger(name, VKLogLevel.WARN, format(template, args), null);
+        }
+
+        @Override
+        public void error(String template, Object... args) {
+            router.logByLogger(name, VKLogLevel.ERROR, format(template, args), null);
+        }
+    }
+
+    private static final class LogRouter {
+        private final ConcurrentHashMap<String, AsyncEngine> sinks = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, VKLogger> loggerCache = new ConcurrentHashMap<>();
+        private volatile VKLogConfig config;
+
+        private LogRouter(VKLogConfig config) {
+            this.config = config.copy();
+            sinks.put(DEFAULT_LOGGER_KEY, new AsyncEngine(defaultSinkConfig(this.config)));
+            preRegisterFromConfig(this.config);
+        }
+
+        private void logAuto(VKLogLevel level, String loggerName, String message, Throwable error) {
+            AsyncEngine sink = sinks.get(loggerName);
+            if (sink == null) {
+                sink = sinks.get(DEFAULT_LOGGER_KEY);
+            }
+            sink.log(level, loggerName, message, error);
+        }
+
+        private void logByLogger(String loggerName, VKLogLevel level, String message, Throwable error) {
+            String normalized = validateLoggerName(loggerName);
+            AsyncEngine sink = sinkForLogger(normalized);
+            sink.log(level, normalized, message, error);
+        }
+
+        private VKLogger logger(String loggerName) {
+            String normalized = validateLoggerName(loggerName);
+            sinkForLogger(normalized);
+            return loggerCache.computeIfAbsent(normalized, n -> new NamedLogger(n, this));
+        }
+
+        private synchronized void applyConfig(VKLogConfig next) {
+            this.config = next.copy();
+            for (var entry : sinks.entrySet()) {
+                String key = entry.getKey();
+                entry.getValue().applyConfig(sinkConfigFor(key, this.config));
+            }
+            preRegisterFromConfig(this.config);
+        }
+
+        private VKLogLevel level() {
+            return config.getLevel();
+        }
+
+        private long droppedLogs() {
+            long total = 0;
+            for (AsyncEngine e : sinks.values()) {
+                total += e.droppedLogs();
+            }
+            return total;
+        }
+
+        private long fallbackWrites() {
+            long total = 0;
+            for (AsyncEngine e : sinks.values()) {
+                total += e.fallbackWrites();
+            }
+            return total;
+        }
+
+        private long fileWriteErrors() {
+            long total = 0;
+            for (AsyncEngine e : sinks.values()) {
+                total += e.fileWriteErrors();
+            }
+            return total;
+        }
+
+        private void flush() {
+            for (AsyncEngine e : sinks.values()) {
+                e.flush();
+            }
+        }
+
+        private void close() {
+            for (AsyncEngine e : sinks.values()) {
+                e.shutdown();
+            }
+            sinks.clear();
+            loggerCache.clear();
+        }
+
+        private AsyncEngine sinkForLogger(String loggerName) {
+            AsyncEngine found = sinks.get(loggerName);
+            if (found != null) {
+                return found;
+            }
+            if (!config.isAutoCreateLoggerSink()) {
+                throw new IllegalArgumentException("Logger sink not registered: " + loggerName);
+            }
+            return sinks.computeIfAbsent(loggerName, name -> new AsyncEngine(sinkConfigFor(name, config)));
+        }
+
+        private static VKLogConfig defaultSinkConfig(VKLogConfig config) {
+            return config.copy();
+        }
+
+        private static VKLogConfig sinkConfigFor(String loggerName, VKLogConfig config) {
+            if (DEFAULT_LOGGER_KEY.equals(loggerName)) {
+                return defaultSinkConfig(config);
+            }
+            VKLogConfig sink = config.copy().filePrefix(loggerName);
+            VKLogSinkConfig override = config.getLoggerSinkConfigs().get(loggerName);
+            if (override == null) {
+                return sink;
+            }
+            applyOverride(sink, loggerName, override);
+            return sink;
+        }
+
+        private static void applyOverride(VKLogConfig sink, String loggerName, VKLogSinkConfig override) {
+            if (override.getOutputDir() != null) sink.outputDir(override.getOutputDir());
+            if (override.getFilePrefix() != null) sink.filePrefix(override.getFilePrefix());
+            if (override.getLevel() != null) sink.level(override.getLevel());
+            if (override.getQueueCapacity() != null) sink.queueCapacity(override.getQueueCapacity());
+            if (override.getQueueFullPolicy() != null) sink.queueFullPolicy(override.getQueueFullPolicy());
+            if (override.getFlushIntervalMs() != null) sink.flushIntervalMs(override.getFlushIntervalMs());
+            if (override.getFlushBatchSize() != null) sink.flushBatchSize(override.getFlushBatchSize());
+            if (override.getShutdownTimeoutMs() != null) sink.shutdownTimeoutMs(override.getShutdownTimeoutMs());
+            if (override.getFsyncPolicy() != null) sink.fsyncPolicy(override.getFsyncPolicy());
+            if (override.getRollInterval() != null) sink.rollInterval(override.getRollInterval());
+            if (override.getCompressRolledFiles() != null) sink.compressRolledFiles(override.getCompressRolledFiles());
+            if (override.getMaxBackups() != null) sink.maxBackups(override.getMaxBackups());
+            if (override.getMaxBackupDays() != null) sink.maxBackupDays(override.getMaxBackupDays());
+            if (override.getMaxFileSizeBytes() != null) sink.maxFileSizeBytes(override.getMaxFileSizeBytes());
+            if (override.getMaxTotalSizeBytes() != null) sink.maxTotalSizeBytes(override.getMaxTotalSizeBytes());
+            if (override.getConsoleEnabled() != null) sink.consoleEnabled(override.getConsoleEnabled());
+            if (override.getFileRetryIntervalMs() != null) sink.fileRetryIntervalMs(override.getFileRetryIntervalMs());
+            if (sink.getFilePrefix() == null || sink.getFilePrefix().isBlank()) {
+                sink.filePrefix(loggerName);
+            }
+        }
+
+        private void preRegisterFromConfig(VKLogConfig config) {
+            Set<String> names = config.getPreRegisteredLoggers();
+            for (String loggerName : names) {
+                String normalized = validateLoggerName(loggerName);
+                sinks.computeIfAbsent(normalized, name -> new AsyncEngine(sinkConfigFor(name, config)));
+            }
+            Map<String, VKLogSinkConfig> overrides = config.getLoggerSinkConfigs();
+            for (String loggerName : overrides.keySet()) {
+                String normalized = validateLoggerName(loggerName);
+                sinks.computeIfAbsent(normalized, name -> new AsyncEngine(sinkConfigFor(name, config)));
+            }
+        }
     }
 
     private static final class AsyncEngine {
@@ -366,7 +603,7 @@ public class VostokLog {
 
         private AsyncEngine(VKLogConfig config) {
             applyConfig(config);
-            worker = new Thread(this::runLoop, "vostok-log-writer");
+            worker = new Thread(this::runLoop, "vostok-log-writer-" + filePrefix);
             worker.setDaemon(true);
             worker.start();
         }
@@ -448,10 +685,6 @@ public class VostokLog {
         private void setLevel(VKLogLevel level) {
             VKAssert.notNull(level, "level is null");
             this.level = level;
-        }
-
-        private VKLogLevel level() {
-            return level;
         }
 
         private void setOutputDir(String outputDir) {

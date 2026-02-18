@@ -17,6 +17,7 @@ public final class VKWebConfig {
     private int workerQueueSize = 10_000;
     private boolean accessLogEnabled = true;
     private int accessLogQueueSize = 8_192;
+    private boolean rateLimitLogEnabled = true;
     private boolean multipartEnabled = true;
     private String multipartTempDir = System.getProperty("java.io.tmpdir") + "/vostok-upload";
     private int multipartInMemoryThresholdBytes = 64 * 1024;
@@ -147,6 +148,15 @@ public final class VKWebConfig {
 
     public VKWebConfig accessLogQueueSize(int accessLogQueueSize) {
         this.accessLogQueueSize = Math.max(256, accessLogQueueSize);
+        return this;
+    }
+
+    public boolean isRateLimitLogEnabled() {
+        return rateLimitLogEnabled;
+    }
+
+    public VKWebConfig rateLimitLogEnabled(boolean rateLimitLogEnabled) {
+        this.rateLimitLogEnabled = rateLimitLogEnabled;
         return this;
     }
 

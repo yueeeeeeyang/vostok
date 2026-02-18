@@ -81,6 +81,7 @@ public final class VKWebServer {
             return;
         }
         try {
+            VKWebLogSupport.ensureLoggersReady();
             serverChannel = ServerSocketChannel.open();
             serverChannel.configureBlocking(true);
             serverChannel.bind(new InetSocketAddress(config.getPort()), config.getBacklog());
@@ -161,14 +162,27 @@ public final class VKWebServer {
 
     boolean tryRateLimit(VKRequest req, VKRouteMatch match, VKResponse res) {
         VKRateLimiter global = globalRateLimiter;
-        if (global != null && !global.tryAcquire(req)) {
-            global.applyRejected(res);
-            return false;
+        if (global != null) {
+            VKRateLimiter.Decision d = global.tryAcquireDecision(req);
+            if (!d.allowed()) {
+                global.applyRejected(res);
+                if (config.isRateLimitLogEnabled()) {
+                    VKWebLogSupport.logRateLimit(req, match, "global", d);
+                }
+                return false;
+            }
         }
         if (match != null && match.routePattern() != null) {
             VKRateLimiter routeLimiter = routeRateLimiters.get(routeLimitKey(req.method(), match.routePattern()));
-            if (routeLimiter != null && !routeLimiter.tryAcquire(req)) {
+            if (routeLimiter == null) {
+                return true;
+            }
+            VKRateLimiter.Decision d = routeLimiter.tryAcquireDecision(req);
+            if (!d.allowed()) {
                 routeLimiter.applyRejected(res);
+                if (config.isRateLimitLogEnabled()) {
+                    VKWebLogSupport.logRateLimit(req, match, "route", d);
+                }
                 return false;
             }
         }
