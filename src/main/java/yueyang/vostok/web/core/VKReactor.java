@@ -1,6 +1,7 @@
 package yueyang.vostok.web.core;
 
 import yueyang.vostok.web.VKErrorHandler;
+import yueyang.vostok.web.VKWebConfig;
 import yueyang.vostok.web.http.VKHttpParseException;
 import yueyang.vostok.web.http.VKHttpParser;
 import yueyang.vostok.web.http.VKHttpWriter;
@@ -10,7 +11,6 @@ import yueyang.vostok.web.middleware.VKChain;
 import yueyang.vostok.web.middleware.VKMiddleware;
 import yueyang.vostok.web.route.VKRouter;
 import yueyang.vostok.web.util.VKBufferPool;
-import yueyang.vostok.web.VKWebConfig;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -18,13 +18,15 @@ import java.nio.ByteBuffer;
 import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 final class VKReactor implements Runnable {
+    private static final AtomicLong TRACE_SEQ = new AtomicLong();
+
     private final VKWebServer server;
     private final Selector selector;
     private final VKWorkerPool workers;
@@ -35,9 +37,8 @@ final class VKReactor implements Runnable {
     private final VKBufferPool bufferPool;
     private final VKWebConfig config;
     private final Queue<Runnable> pending = new ConcurrentLinkedQueue<>();
-    private final List<VKConn> connections = new ArrayList<>();
+    private final VKHashedWheelTimer<VKConn> timer;
     private volatile boolean running = true;
-    private static final AtomicLong TRACE_SEQ = new AtomicLong();
 
     VKReactor(VKWebServer server,
               Selector selector,
@@ -57,38 +58,40 @@ final class VKReactor implements Runnable {
         this.parser = parser;
         this.bufferPool = bufferPool;
         this.config = config;
+        this.timer = new VKHashedWheelTimer<>(1000, 1024, System.currentTimeMillis());
     }
 
     @Override
     public void run() {
         while (running) {
             try {
-                selector.select(1000);
+                selector.select(200);
                 drainPending();
-                var keys = selector.selectedKeys().iterator();
-                while (keys.hasNext()) {
-                    SelectionKey key = keys.next();
-                    keys.remove();
+                var iter = selector.selectedKeys().iterator();
+                while (iter.hasNext()) {
+                    SelectionKey key = iter.next();
+                    iter.remove();
                     if (!key.isValid()) {
                         continue;
                     }
+                    VKConn conn = (VKConn) key.attachment();
+                    if (conn == null || conn.isClosed()) {
+                        continue;
+                    }
                     try {
-                        VKConn conn = (VKConn) key.attachment();
                         if (key.isReadable()) {
                             conn.onRead();
                         }
-                        if (key.isWritable()) {
+                        if (key.isValid() && key.isWritable()) {
                             conn.onWrite();
                         }
-                    } catch (java.nio.channels.CancelledKeyException e) {
-                        // key cancelled during processing, ignore
+                    } catch (java.nio.channels.CancelledKeyException ignore) {
                     }
                 }
-                sweepIdle();
+                pollTimeouts();
             } catch (java.nio.channels.ClosedSelectorException e) {
                 break;
-            } catch (IOException e) {
-                // ignore and continue
+            } catch (IOException ignore) {
             }
         }
         try {
@@ -106,10 +109,11 @@ final class VKReactor implements Runnable {
         pending.add(() -> {
             try {
                 SelectionKey key = channel.register(selector, SelectionKey.OP_READ);
-                VKConn conn = new VKConn(server, channel, key, parser, bufferPool, workers, router, middlewares, errorHandler, this, config);
+                VKConn conn = new VKConn(server, channel, key, parser, bufferPool, workers, router,
+                        middlewares, errorHandler, this, config);
                 key.attach(conn);
-                connections.add(conn);
                 server.incConnections();
+                conn.rescheduleTimeout(System.currentTimeMillis());
             } catch (Exception e) {
                 try {
                     channel.close();
@@ -135,6 +139,11 @@ final class VKReactor implements Runnable {
         selector.wakeup();
     }
 
+    void requestReschedule(VKConn conn) {
+        pending.add(() -> conn.rescheduleTimeout(System.currentTimeMillis()));
+        selector.wakeup();
+    }
+
     private void drainPending() {
         Runnable task;
         while ((task = pending.poll()) != null) {
@@ -145,30 +154,18 @@ final class VKReactor implements Runnable {
         }
     }
 
-    private void sweepIdle() {
-        if (connections.isEmpty()) {
-            return;
-        }
+    private void pollTimeouts() {
         long now = System.currentTimeMillis();
-        long keepAliveMs = config.getKeepAliveTimeoutMs();
-        long readTimeoutMs = config.getReadTimeoutMs();
-        for (int i = connections.size() - 1; i >= 0; i--) {
-            VKConn c = connections.get(i);
-            if (c.isClosed()) {
-                connections.remove(i);
-                continue;
+        timer.pollExpired(now, entry -> {
+            VKConn conn = entry.target;
+            if (conn == null || conn.isClosed()) {
+                return;
             }
-            long idle = now - c.lastActive();
-            if (idle > keepAliveMs) {
-                requestClose(c);
-                connections.remove(i);
-                continue;
+            if (conn.timeoutToken() != entry.token) {
+                return;
             }
-            if (c.waitingForBody() && (now - c.lastReadTime()) > readTimeoutMs) {
-                c.respondTimeout();
-                connections.remove(i);
-            }
-        }
+            conn.onTimeout(now);
+        });
     }
 
     static final class VKConn {
@@ -183,22 +180,27 @@ final class VKReactor implements Runnable {
         private final VKErrorHandler errorHandler;
         private final VKReactor reactor;
         private final ByteBuffer readBuffer;
-        private byte[] dataBuf = new byte[8192];
-        private int dataLen = 0;
-        private final Queue<VKOutbound> writeQueue = new ConcurrentLinkedQueue<>();
-        private ByteBuffer currentWrite;
-        private VKOutbound currentOutbound;
-        private long currentFilePos;
-        private volatile boolean closeAfterWrite = false;
         private final int readTimeoutMs;
-        private volatile long lastActive;
-        private volatile long lastRead;
+
+        private byte[] dataBuf = new byte[8192];
+        private int dataLen;
+
+        private final Queue<VKOutbound> writeQueue = new ConcurrentLinkedQueue<>();
+        private VKOutbound currentOutbound;
+        private ByteBuffer currentHead;
+        private ByteBuffer currentBody;
+        private long currentFilePos;
+
+        private volatile boolean closeAfterWrite;
         private volatile boolean waitingBody;
         private volatile boolean closed;
         private volatile boolean sentContinue;
-        private long lastCostMs;
-        private int lastStatus;
-        private long lastBytes;
+
+        private volatile long lastActive;
+        private volatile long lastRead;
+        private volatile long timeoutToken = -1;
+
+        private final AtomicInteger inFlight = new AtomicInteger();
 
         VKConn(VKWebServer server,
                SocketChannel channel,
@@ -231,6 +233,14 @@ final class VKReactor implements Runnable {
             return key;
         }
 
+        long timeoutToken() {
+            return timeoutToken;
+        }
+
+        boolean isClosed() {
+            return closed;
+        }
+
         void onRead() {
             int read;
             try {
@@ -239,14 +249,18 @@ final class VKReactor implements Runnable {
                 close();
                 return;
             }
+
             if (read <= 0) {
                 if (read < 0) {
                     close();
                 }
                 return;
             }
-            lastRead = System.currentTimeMillis();
-            lastActive = lastRead;
+
+            long now = System.currentTimeMillis();
+            lastRead = now;
+            lastActive = now;
+
             readBuffer.flip();
             ensureCapacity(dataLen + readBuffer.remaining());
             while (readBuffer.hasRemaining()) {
@@ -269,11 +283,13 @@ final class VKReactor implements Runnable {
                 if (parsed == null) {
                     waitingBody = true;
                     if (!sentContinue && parser.shouldSendContinue(dataBuf, dataLen)) {
-                        enqueueResponse(VKOutbound.fromBytes(VKHttpWriter.writeContinue()), false);
+                        enqueueResponse(VKOutbound.fromHeadBytes(VKHttpWriter.writeContinue()), false);
                         sentContinue = true;
                     }
+                    rescheduleTimeout(now);
                     return;
                 }
+
                 waitingBody = false;
                 sentContinue = false;
 
@@ -281,53 +297,112 @@ final class VKReactor implements Runnable {
                 int consumed = parsed.consumed();
                 shift(consumed);
                 dispatch(req);
+
+                if (dataLen == 0) {
+                    rescheduleTimeout(System.currentTimeMillis());
+                    return;
+                }
             }
         }
 
         void onWrite() {
             try {
-                if (currentOutbound == null) {
-                    currentOutbound = writeQueue.poll();
-                    currentWrite = null;
-                    currentFilePos = 0;
+                while (true) {
                     if (currentOutbound == null) {
-                        key.interestOps(SelectionKey.OP_READ);
-                        if (closeAfterWrite) {
-                            close();
+                        currentOutbound = writeQueue.poll();
+                        currentHead = null;
+                        currentBody = null;
+                        currentFilePos = 0;
+                        if (currentOutbound == null) {
+                            if (key.isValid()) {
+                                key.interestOps(SelectionKey.OP_READ);
+                            }
+                            if (closeAfterWrite) {
+                                close();
+                            } else {
+                                lastActive = System.currentTimeMillis();
+                                rescheduleTimeout(lastActive);
+                            }
+                            return;
                         }
-                        return;
                     }
-                }
 
-                if (currentWrite == null && currentOutbound.data != null) {
-                    currentWrite = ByteBuffer.wrap(currentOutbound.data);
-                }
+                    if (currentHead == null && currentOutbound.head != null) {
+                        currentHead = ByteBuffer.wrap(currentOutbound.head);
+                    }
+                    if (currentHead != null) {
+                        channel.write(currentHead);
+                        if (currentHead.hasRemaining()) {
+                            return;
+                        }
+                        currentHead = null;
+                    }
 
-                if (currentWrite != null) {
-                    channel.write(currentWrite);
-                    if (currentWrite.hasRemaining()) {
-                        return;
+                    if (currentBody == null && currentOutbound.body != null) {
+                        currentBody = ByteBuffer.wrap(currentOutbound.body);
                     }
-                    currentWrite = null;
-                }
+                    if (currentBody != null) {
+                        channel.write(currentBody);
+                        if (currentBody.hasRemaining()) {
+                            return;
+                        }
+                        currentBody = null;
+                    }
 
-                if (currentOutbound.file != null) {
-                    long transferred = currentOutbound.file.transferTo(currentFilePos, currentOutbound.fileLength - currentFilePos, channel);
-                    if (transferred > 0) {
-                        currentFilePos += transferred;
+                    if (currentOutbound.file != null) {
+                        long transferred = currentOutbound.file.transferTo(currentFilePos,
+                                currentOutbound.fileLength - currentFilePos, channel);
+                        if (transferred > 0) {
+                            currentFilePos += transferred;
+                        }
+                        if (currentFilePos < currentOutbound.fileLength) {
+                            return;
+                        }
+                        try {
+                            currentOutbound.file.close();
+                        } catch (IOException ignore) {
+                        }
                     }
-                    if (currentFilePos < currentOutbound.fileLength) {
-                        return;
-                    }
-                    try {
-                        currentOutbound.file.close();
-                    } catch (IOException ignore) {
-                    }
+
+                    currentOutbound = null;
                 }
-                currentOutbound = null;
             } catch (IOException e) {
                 close();
             }
+        }
+
+        void onTimeout(long now) {
+            if (closed) {
+                return;
+            }
+            if (inFlight.get() > 0) {
+                rescheduleTimeout(now);
+                return;
+            }
+            if (waitingBody) {
+                if (now - lastRead >= readTimeoutMs) {
+                    respondTimeout();
+                    return;
+                }
+            } else {
+                if (now - lastActive >= server.keepAliveTimeoutMs()) {
+                    close();
+                    return;
+                }
+            }
+            rescheduleTimeout(now);
+        }
+
+        void rescheduleTimeout(long now) {
+            if (closed) {
+                return;
+            }
+            long timeoutMs = waitingBody ? readTimeoutMs : server.keepAliveTimeoutMs();
+            if (inFlight.get() > 0) {
+                timeoutMs = Math.max(timeoutMs, server.keepAliveTimeoutMs());
+            }
+            long deadline = now + timeoutMs;
+            timeoutToken = reactor.timer.schedule(this, deadline);
         }
 
         void enqueueResponse(VKOutbound outbound, boolean close) {
@@ -343,6 +418,8 @@ final class VKReactor implements Runnable {
                 return;
             }
             closed = true;
+            timeoutToken = -1;
+
             try {
                 key.cancel();
             } catch (Exception ignore) {
@@ -353,15 +430,25 @@ final class VKReactor implements Runnable {
             }
             bufferPool.release(readBuffer);
             server.decConnections();
-            if (currentOutbound != null && currentOutbound.file != null) {
+
+            closeOutbound(currentOutbound);
+            VKOutbound pending;
+            while ((pending = writeQueue.poll()) != null) {
+                closeOutbound(pending);
+            }
+        }
+
+        private void closeOutbound(VKOutbound out) {
+            if (out != null && out.file != null) {
                 try {
-                    currentOutbound.file.close();
+                    out.file.close();
                 } catch (IOException ignore) {
                 }
             }
         }
 
         private void dispatch(VKRequest req) {
+            inFlight.incrementAndGet();
             boolean accepted = workers.submit(() -> {
                 long start = System.nanoTime();
                 VKResponse res = new VKResponse();
@@ -370,13 +457,14 @@ final class VKReactor implements Runnable {
                     var match = router.match(req.method(), req.path());
                     if (match == null || match.handler() == null) {
                         res.status(404).text("Not Found");
-                    } else if (middlewares.isEmpty()) {
-                        req.setParams(match.params());
-                        match.handler().handle(req, res);
                     } else {
                         req.setParams(match.params());
-                        VKChain chain = new VKChain(middlewares, match.handler());
-                        chain.next(req, res);
+                        if (middlewares.isEmpty()) {
+                            match.handler().handle(req, res);
+                        } else {
+                            VKChain chain = new VKChain(middlewares, match.handler());
+                            chain.next(req, res);
+                        }
                     }
                 } catch (Throwable t) {
                     try {
@@ -384,31 +472,43 @@ final class VKReactor implements Runnable {
                     } catch (Throwable ignore) {
                         res.status(500).text("Internal Server Error");
                     }
-                }
+                } finally {
+                    if (res.headers().get("X-Trace-Id") == null && req.traceId() != null) {
+                        res.header("X-Trace-Id", req.traceId());
+                    }
 
-                boolean keepAlive = req.keepAlive();
-                VKOutbound out = VKOutbound.from(res, keepAlive);
-                enqueueResponse(out, !keepAlive);
-                long cost = (System.nanoTime() - start) / 1_000_000;
-                this.lastCostMs = cost;
-                this.lastStatus = res.status();
-                this.lastBytes = out.totalBytes();
-                logAccess(req);
+                    boolean keepAlive = req.keepAlive();
+                    VKOutbound out = VKOutbound.from(res, keepAlive);
+                    enqueueResponse(out, !keepAlive);
+
+                    long costMs = (System.nanoTime() - start) / 1_000_000;
+                    logAccess(req, res.status(), out.totalBytes(), costMs);
+
+                    inFlight.decrementAndGet();
+                    reactor.requestReschedule(this);
+                }
             });
+
             if (!accepted) {
+                inFlight.decrementAndGet();
                 VKResponse res = new VKResponse().status(503).text("Service Unavailable");
                 enqueueResponse(VKOutbound.from(res, false), true);
+                rescheduleTimeout(System.currentTimeMillis());
             }
         }
 
         private void respondError(int status, String msg, boolean close) {
             VKResponse res = new VKResponse().status(status).text(msg == null ? "" : msg);
             enqueueResponse(VKOutbound.from(res, false), close);
+            lastActive = System.currentTimeMillis();
+            rescheduleTimeout(lastActive);
         }
 
         void respondTimeout() {
             VKResponse res = new VKResponse().status(408).text("Request Timeout");
             enqueueResponse(VKOutbound.from(res, false), true);
+            lastActive = System.currentTimeMillis();
+            rescheduleTimeout(lastActive);
         }
 
         private void ensureCapacity(int size) {
@@ -417,19 +517,19 @@ final class VKReactor implements Runnable {
             }
             int newSize = dataBuf.length;
             while (newSize < size) {
-                newSize *= 2;
+                newSize <<= 1;
             }
-            byte[] newBuf = new byte[newSize];
-            System.arraycopy(dataBuf, 0, newBuf, 0, dataLen);
-            dataBuf = newBuf;
+            byte[] next = new byte[newSize];
+            System.arraycopy(dataBuf, 0, next, 0, dataLen);
+            dataBuf = next;
         }
 
         private void shift(int consumed) {
-            int remaining = dataLen - consumed;
-            if (remaining > 0) {
-                System.arraycopy(dataBuf, consumed, dataBuf, 0, remaining);
+            int remain = dataLen - consumed;
+            if (remain > 0) {
+                System.arraycopy(dataBuf, consumed, dataBuf, 0, remain);
             }
-            dataLen = remaining;
+            dataLen = remain;
         }
 
         private InetSocketAddress remoteAddress() {
@@ -438,22 +538,6 @@ final class VKReactor implements Runnable {
             } catch (IOException e) {
                 return null;
             }
-        }
-
-        boolean waitingForBody() {
-            return waitingBody;
-        }
-
-        long lastActive() {
-            return lastActive;
-        }
-
-        long lastReadTime() {
-            return lastRead;
-        }
-
-        boolean isClosed() {
-            return closed;
         }
 
         private void ensureTraceId(VKRequest req, VKResponse res) {
@@ -467,24 +551,27 @@ final class VKReactor implements Runnable {
             }
         }
 
-        private void logAccess(VKRequest req) {
+        private void logAccess(VKRequest req, int status, long bytes, long costMs) {
             if (!server.accessLogEnabled()) {
                 return;
             }
             String ip = req.remoteAddress() == null ? "-" : req.remoteAddress().getAddress().getHostAddress();
             String traceId = req.traceId() == null ? "-" : req.traceId();
-            String msg = ip + " \"" + req.method() + " " + req.path() + "\" " + lastStatus + " " + lastBytes + " " + lastCostMs + "ms trace=" + traceId;
-            yueyang.vostok.util.VKLog.info(msg);
+            String msg = ip + " \"" + req.method() + " " + req.path() + "\" " + status + " " + bytes + " "
+                    + costMs + "ms trace=" + traceId;
+            server.logAccess(msg);
         }
     }
 
     static final class VKOutbound {
-        private final byte[] data;
+        private final byte[] head;
+        private final byte[] body;
         private final java.nio.channels.FileChannel file;
         private final long fileLength;
 
-        private VKOutbound(byte[] data, java.nio.channels.FileChannel file, long fileLength) {
-            this.data = data;
+        private VKOutbound(byte[] head, byte[] body, java.nio.channels.FileChannel file, long fileLength) {
+            this.head = head;
+            this.body = body;
             this.file = file;
             this.fileLength = fileLength;
         }
@@ -493,26 +580,33 @@ final class VKReactor implements Runnable {
             if (res.isFile()) {
                 byte[] head = VKHttpWriter.writeHead(res, keepAlive);
                 try {
-                    java.nio.channels.FileChannel fc = java.nio.channels.FileChannel.open(res.filePath(), java.nio.file.StandardOpenOption.READ);
-                    return new VKOutbound(head, fc, res.fileLength());
+                    java.nio.channels.FileChannel fc = java.nio.channels.FileChannel.open(
+                            res.filePath(), java.nio.file.StandardOpenOption.READ);
+                    return new VKOutbound(head, null, fc, res.fileLength());
                 } catch (IOException e) {
-                    byte[] out = VKHttpWriter.write(new VKResponse().status(404).text("Not Found"), false);
-                    return new VKOutbound(out, null, 0);
+                    VKResponse fail = new VKResponse().status(404).text("Not Found");
+                    byte[] h = VKHttpWriter.writeHead(fail, false);
+                    return new VKOutbound(h, fail.body(), null, 0);
                 }
             }
-            byte[] out = VKHttpWriter.write(res, keepAlive);
-            return new VKOutbound(out, null, out.length);
+            byte[] head = VKHttpWriter.writeHead(res, keepAlive);
+            return new VKOutbound(head, res.body(), null, 0);
         }
 
-        static VKOutbound fromBytes(byte[] bytes) {
-            return new VKOutbound(bytes, null, bytes == null ? 0 : bytes.length);
+        static VKOutbound fromHeadBytes(byte[] bytes) {
+            return new VKOutbound(bytes, null, null, 0);
         }
 
         long totalBytes() {
-            if (file != null) {
-                return (data == null ? 0 : data.length) + fileLength;
+            long n = 0;
+            if (head != null) {
+                n += head.length;
             }
-            return data == null ? 0 : data.length;
+            if (body != null) {
+                n += body.length;
+            }
+            n += fileLength;
+            return n;
         }
     }
 }

@@ -2,131 +2,191 @@ package yueyang.vostok.web.route;
 
 import yueyang.vostok.web.VKHandler;
 
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class VKRouter {
-    private final Map<String, Map<String, VKHandler>> routes = new ConcurrentHashMap<>();
-    private final Map<String, List<DynamicRoute>> dynamicRoutes = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, RouteTable> byMethod = new ConcurrentHashMap<>();
 
     public void add(String method, String path, VKHandler handler) {
-        String m = method.toUpperCase();
-        if (isDynamic(path)) {
-            dynamicRoutes.computeIfAbsent(m, k -> new ArrayList<>())
-                    .add(new DynamicRoute(path, handler));
-            return;
-        }
-        routes.computeIfAbsent(m, k -> new ConcurrentHashMap<>())
-                .put(path, handler);
+        String m = method == null ? "GET" : method.toUpperCase();
+        String p = normalize(path);
+        RouteTable table = byMethod.computeIfAbsent(m, k -> new RouteTable());
+        table.add(p, handler);
     }
 
     public VKRouteMatch match(String method, String path) {
-        String m = method.toUpperCase();
-        Map<String, VKHandler> byMethod = routes.get(m);
-        if (byMethod == null) {
-            byMethod = new ConcurrentHashMap<>();
-        }
-        VKHandler exact = byMethod.get(path);
-        if (exact != null) {
-            return new VKRouteMatch(exact, Map.of());
-        }
-        List<DynamicRoute> dynList = dynamicRoutes.get(m);
-        if (dynList == null) {
+        String m = method == null ? "GET" : method.toUpperCase();
+        String p = normalize(path);
+        RouteTable table = byMethod.get(m);
+        if (table == null) {
             return null;
         }
-        for (DynamicRoute route : dynList) {
-            Map<String, String> params = route.match(path);
-            if (params != null) {
-                return new VKRouteMatch(route.handler, params);
-            }
-        }
-        return null;
+        return table.match(p);
     }
 
-    private boolean isDynamic(String path) {
-        return path != null && (path.contains("{") || path.contains(":"));
+    private String normalize(String path) {
+        if (path == null || path.isEmpty()) {
+            return "/";
+        }
+        String p = path.startsWith("/") ? path : "/" + path;
+        if (p.length() > 1 && p.endsWith("/")) {
+            p = p.substring(0, p.length() - 1);
+        }
+        return p;
     }
 
-    private static final class DynamicRoute {
-        private final String[] segments;
-        private final String[] paramNames;
-        private final VKHandler handler;
-        private int wildcardIndex = -1;
+    private static final class RouteTable {
+        private final ConcurrentHashMap<String, VKHandler> staticRoutes = new ConcurrentHashMap<>();
+        private final TrieNode root = new TrieNode();
 
-        DynamicRoute(String path, VKHandler handler) {
-            this.handler = handler;
-            String[] raw = split(path);
-            segments = new String[raw.length];
-            paramNames = new String[raw.length];
-            for (int i = 0; i < raw.length; i++) {
-                String seg = raw[i];
-                if (seg.startsWith(":") && seg.length() > 1) {
-                    paramNames[i] = seg.substring(1);
-                    segments[i] = null;
-                } else if (seg.startsWith("{") && seg.endsWith("}") && seg.length() > 2) {
-                    paramNames[i] = seg.substring(1, seg.length() - 1);
-                    segments[i] = null;
-                } else if ("*".equals(seg) || "{*}".equals(seg) || seg.startsWith("{*")) {
-                    String name = "*";
-                    if (seg.startsWith("{*") && seg.endsWith("}") && seg.length() > 3) {
-                        name = seg.substring(2, seg.length() - 1);
-                    }
-                    paramNames[i] = name;
-                    segments[i] = null;
-                    wildcardIndex = i;
-                } else {
-                    segments[i] = seg;
-                }
+        void add(String path, VKHandler handler) {
+            if (!isDynamic(path)) {
+                staticRoutes.put(path, handler);
+                return;
             }
-        }
-
-        Map<String, String> match(String path) {
-            String[] parts = split(path);
-            Map<String, String> params = new HashMap<>();
-            if (segments.length == 0) {
-                return parts.length == 0 ? params : null;
-            }
-            int i = 0;
-            for (; i < segments.length; i++) {
-                String literal = segments[i];
-                if (wildcardIndex == i) {
-                    StringBuilder rest = new StringBuilder();
-                    for (int j = i; j < parts.length; j++) {
-                        if (j > i) {
-                            rest.append('/');
+            String[] segments = split(path);
+            synchronized (root) {
+                TrieNode n = root;
+                for (int i = 0; i < segments.length; i++) {
+                    String seg = segments[i];
+                    if (isWildcard(seg)) {
+                        String name = wildcardName(seg);
+                        if (n.wildcardChild == null) {
+                            n.wildcardChild = new TrieNode();
                         }
-                        rest.append(parts[j]);
+                        n.wildcardChild.paramName = name;
+                        n = n.wildcardChild;
+                        break;
                     }
-                    params.put(paramNames[i] == null ? "*" : paramNames[i], rest.toString());
-                    return params;
+                    if (isParam(seg)) {
+                        if (n.paramChild == null) {
+                            n.paramChild = new TrieNode();
+                        }
+                        n.paramChild.paramName = paramName(seg);
+                        n = n.paramChild;
+                    } else {
+                        n = n.literalChildren.computeIfAbsent(seg, k -> new TrieNode());
+                    }
                 }
-                if (i >= parts.length) {
-                    return null;
-                }
-                if (literal == null) {
-                    params.put(paramNames[i], parts[i]);
-                } else if (!literal.equals(parts[i])) {
-                    return null;
-                }
+                n.handler = handler;
             }
-            return i == parts.length ? params : null;
         }
 
-        private static String[] split(String path) {
+        VKRouteMatch match(String path) {
+            VKHandler exact = staticRoutes.get(path);
+            if (exact != null) {
+                return new VKRouteMatch(exact, Map.of());
+            }
+
+            String[] segments = split(path);
+            Map<String, String> params = new HashMap<>();
+            VKHandler dyn = matchTrie(root, segments, 0, params);
+            if (dyn == null) {
+                return null;
+            }
+            return new VKRouteMatch(dyn, params);
+        }
+
+        private VKHandler matchTrie(TrieNode node, String[] segments, int idx, Map<String, String> params) {
+            if (node == null) {
+                return null;
+            }
+            if (idx == segments.length) {
+                if (node.handler != null) {
+                    return node.handler;
+                }
+                if (node.wildcardChild != null && node.wildcardChild.handler != null) {
+                    params.put(node.wildcardChild.paramName == null ? "*" : node.wildcardChild.paramName, "");
+                    return node.wildcardChild.handler;
+                }
+                return null;
+            }
+
+            String seg = segments[idx];
+
+            TrieNode literal = node.literalChildren.get(seg);
+            if (literal != null) {
+                VKHandler h = matchTrie(literal, segments, idx + 1, params);
+                if (h != null) {
+                    return h;
+                }
+            }
+
+            TrieNode param = node.paramChild;
+            if (param != null) {
+                String name = param.paramName == null ? "param" + idx : param.paramName;
+                String old = params.put(name, seg);
+                VKHandler h = matchTrie(param, segments, idx + 1, params);
+                if (h != null) {
+                    return h;
+                }
+                if (old == null) {
+                    params.remove(name);
+                } else {
+                    params.put(name, old);
+                }
+            }
+
+            TrieNode wildcard = node.wildcardChild;
+            if (wildcard != null && wildcard.handler != null) {
+                StringBuilder rest = new StringBuilder();
+                for (int i = idx; i < segments.length; i++) {
+                    if (i > idx) {
+                        rest.append('/');
+                    }
+                    rest.append(segments[i]);
+                }
+                params.put(wildcard.paramName == null ? "*" : wildcard.paramName, rest.toString());
+                return wildcard.handler;
+            }
+            return null;
+        }
+
+        private boolean isDynamic(String path) {
+            return path.indexOf('{') >= 0 || path.indexOf(':') >= 0;
+        }
+
+        private boolean isParam(String segment) {
+            return segment.startsWith(":") || (segment.startsWith("{") && segment.endsWith("}") && !segment.startsWith("{*"));
+        }
+
+        private String paramName(String segment) {
+            if (segment.startsWith(":")) {
+                return segment.substring(1);
+            }
+            return segment.substring(1, segment.length() - 1);
+        }
+
+        private boolean isWildcard(String segment) {
+            return "*".equals(segment) || "{*}".equals(segment) || segment.startsWith("{*");
+        }
+
+        private String wildcardName(String segment) {
+            if (segment.startsWith("{*") && segment.endsWith("}") && segment.length() > 3) {
+                return segment.substring(2, segment.length() - 1);
+            }
+            return "*";
+        }
+
+        private String[] split(String path) {
             if (path == null || path.isEmpty() || "/".equals(path)) {
                 return new String[0];
             }
-            String p = path.startsWith("/") ? path.substring(1) : path;
-            if (p.endsWith("/")) {
-                p = p.substring(0, p.length() - 1);
-            }
+            String p = path.charAt(0) == '/' ? path.substring(1) : path;
             if (p.isEmpty()) {
                 return new String[0];
             }
             return p.split("/");
         }
+    }
+
+    private static final class TrieNode {
+        final ConcurrentHashMap<String, TrieNode> literalChildren = new ConcurrentHashMap<>();
+        volatile TrieNode paramChild;
+        volatile TrieNode wildcardChild;
+        volatile String paramName;
+        volatile VKHandler handler;
     }
 }

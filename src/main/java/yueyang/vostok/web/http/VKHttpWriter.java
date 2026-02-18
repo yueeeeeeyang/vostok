@@ -13,15 +13,13 @@ public final class VKHttpWriter {
 
     public static byte[] write(VKResponse res, boolean keepAlive) {
         byte[] head = writeHead(res, keepAlive);
-        int status = res.status();
-        String reason = reason(status);
         byte[] body = res.body();
-        int contentLength = body == null ? 0 : body.length;
+        int bodyLen = body == null ? 0 : body.length;
 
-        byte[] out = new byte[head.length + contentLength];
+        byte[] out = new byte[head.length + bodyLen];
         System.arraycopy(head, 0, out, 0, head.length);
-        if (contentLength > 0) {
-            System.arraycopy(body, 0, out, head.length, contentLength);
+        if (bodyLen > 0) {
+            System.arraycopy(body, 0, out, head.length, bodyLen);
         }
         return out;
     }
@@ -29,10 +27,9 @@ public final class VKHttpWriter {
     public static byte[] writeHead(VKResponse res, boolean keepAlive) {
         int status = res.status();
         String reason = reason(status);
-        byte[] body = res.body();
-        int contentLength = body == null ? 0 : body.length;
+        long contentLength = resolveContentLength(res);
 
-        StringBuilder sb = new StringBuilder(128);
+        StringBuilder sb = new StringBuilder(160);
         sb.append("HTTP/1.1 ").append(status).append(' ').append(reason).append("\r\n");
 
         boolean hasContentLength = false;
@@ -56,7 +53,6 @@ public final class VKHttpWriter {
         if (!hasContentLength) {
             sb.append("Content-Length: ").append(contentLength).append("\r\n");
         }
-
         if (!hasConnection) {
             sb.append("Connection: ").append(keepAlive ? "keep-alive" : "close").append("\r\n");
         }
@@ -65,19 +61,29 @@ public final class VKHttpWriter {
         return sb.toString().getBytes(StandardCharsets.US_ASCII);
     }
 
+    private static long resolveContentLength(VKResponse res) {
+        if (res.isFile()) {
+            return Math.max(0, res.fileLength());
+        }
+        byte[] body = res.body();
+        return body == null ? 0 : body.length;
+    }
+
     private static String reason(int status) {
         return switch (status) {
             case 200 -> "OK";
             case 201 -> "Created";
             case 204 -> "No Content";
+            case 304 -> "Not Modified";
             case 400 -> "Bad Request";
+            case 403 -> "Forbidden";
             case 404 -> "Not Found";
             case 405 -> "Method Not Allowed";
             case 408 -> "Request Timeout";
             case 413 -> "Payload Too Large";
             case 431 -> "Request Header Fields Too Large";
-            case 503 -> "Service Unavailable";
             case 500 -> "Internal Server Error";
+            case 503 -> "Service Unavailable";
             default -> "OK";
         };
     }

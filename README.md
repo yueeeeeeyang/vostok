@@ -8,7 +8,7 @@ Vostok 是一个面向 JDK 17+ 的全能框架，当前包含高性能数据访�
 **模块一览**
 - Common：通用注解、实体扫描与 JSON 序列化。
 - Data：纯 JDBC 的零依赖 ORM/CRUD 组件，内建连接池、事务、SQL 构建与多数据源。
-- Web：轻量高性能 Web 服务器，支持中间件与基础路由。
+- Web：高性能 Web 服务器，支持中间件、静态资源、TraceId、异步 AccessLog、动态路由与自动 CRUD API。
 
 **运行环境**
 - JDK 17+
@@ -485,6 +485,8 @@ import yueyang.vostok.Vostok;
 
 Vostok.Web.init(8080)
     .get("/ping", (req, res) -> res.text("ok"))
+    .get("/user/{id}", (req, res) -> res.text(req.param("id")))
+    .get("/assets/{*path}", (req, res) -> res.text(req.param("path")))
     .get("/users", (req, res) -> res.json("[{\"id\":1,\"name\":\"Tom\"}]"))
     .post("/users", (req, res) -> res.json("{\"ok\":true}"))
     .route("PUT", "/users/1", (req, res) -> res.text("updated"))
@@ -499,6 +501,7 @@ Vostok.Web.init(8080)
     .staticDir("/static", "/var/www");
 ```
 访问 `/static/app.js` 将映射到 `/var/www/app.js`。
+静态资源默认返回 `ETag`，当请求携带 `If-None-Match` 且命中时返回 `304 Not Modified`。
 
 **TraceId**
 - 默认生成 `X-Trace-Id` 返回头。
@@ -506,6 +509,7 @@ Vostok.Web.init(8080)
 
 **AccessLog**
 - 默认开启，可通过 `VKWebConfig.accessLogEnabled(false)` 关闭。
+- AccessLog 使用独立线程异步写入，默认有界队列，避免阻塞业务线程。
 **中间件示例**
 ```java
 import yueyang.vostok.Vostok;
@@ -544,3 +548,4 @@ Vostok.Web.start();
 - `readTimeoutMs`：读取请求体超时（毫秒）。
 - `workerQueueSize`：业务线程池队列长度。
 - `accessLogEnabled`：AccessLog 开关（默认开启）。
+- `accessLogQueueSize`：AccessLog 异步队列长度，队列满时会丢弃并输出告警。

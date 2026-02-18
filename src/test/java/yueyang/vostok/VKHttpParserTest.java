@@ -7,6 +7,7 @@ import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class VKHttpParserTest {
@@ -24,6 +25,30 @@ public class VKHttpParserTest {
         var parsed = parser.parse(buf, buf.length, null, false);
         assertNotNull(parsed);
         assertEquals("hello", parsed.request().bodyText());
+    }
+
+    @Test
+    void testChunkedIncrementalWithTrailer() {
+        String req = "POST /chunk HTTP/1.1\r\n" +
+                "Host: localhost\r\n" +
+                "Transfer-Encoding: chunked\r\n" +
+                "\r\n" +
+                "3\r\n" +
+                "abc\r\n" +
+                "2\r\n" +
+                "de\r\n" +
+                "0\r\n" +
+                "X-T: 1\r\n" +
+                "\r\n";
+        byte[] buf = req.getBytes(StandardCharsets.US_ASCII);
+        VKHttpParser parser = new VKHttpParser(8192, 1024 * 1024);
+
+        var p1 = parser.parse(buf, 32, null, false);
+        assertNull(p1);
+
+        var p2 = parser.parse(buf, buf.length, null, false);
+        assertNotNull(p2);
+        assertEquals("abcde", p2.request().bodyText());
     }
 
     @Test

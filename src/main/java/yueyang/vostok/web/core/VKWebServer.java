@@ -29,6 +29,7 @@ public final class VKWebServer {
     private VKReactor[] reactors;
     private VKWorkerPool workers;
     private VKBufferPool bufferPool;
+    private VKAccessLogger accessLogger;
     private int boundPort;
     private final AtomicInteger activeConnections = new AtomicInteger();
     private volatile boolean accepting = false;
@@ -65,6 +66,10 @@ public final class VKWebServer {
 
             workers = new VKWorkerPool(config.getWorkerThreads(), config.getWorkerQueueSize());
             bufferPool = new VKBufferPool(config.getReadBufferSize(), 1024);
+            if (config.isAccessLogEnabled()) {
+                accessLogger = new VKAccessLogger(config.getAccessLogQueueSize());
+                accessLogger.start();
+            }
             int ioThreads = Math.max(1, config.getIoThreads());
             reactors = new VKReactor[ioThreads];
             for (int i = 0; i < ioThreads; i++) {
@@ -122,6 +127,10 @@ public final class VKWebServer {
         if (workers != null) {
             workers.shutdown();
         }
+        if (accessLogger != null) {
+            accessLogger.stop();
+            accessLogger = null;
+        }
     }
 
     int maxConnections() {
@@ -138,6 +147,13 @@ public final class VKWebServer {
 
     boolean accessLogEnabled() {
         return config.isAccessLogEnabled();
+    }
+
+    void logAccess(String line) {
+        VKAccessLogger logger = accessLogger;
+        if (logger != null) {
+            logger.offer(line);
+        }
     }
 
     int incConnections() {
