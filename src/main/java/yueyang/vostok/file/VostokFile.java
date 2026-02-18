@@ -1,7 +1,9 @@
 package yueyang.vostok.file;
 
-import yueyang.vostok.util.VKAssert;
+import yueyang.vostok.file.exception.VKFileErrorCode;
+import yueyang.vostok.file.exception.VKFileException;
 
+import java.io.OutputStream;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
@@ -15,39 +17,82 @@ import java.util.function.Supplier;
  * Vostok File entry.
  */
 public class VostokFile {
+    private static final Object LOCK = new Object();
     private static final Map<String, VKFileStore> STORES = new ConcurrentHashMap<>();
     private static final ThreadLocal<String> MODE_CONTEXT = new ThreadLocal<>();
-    private static final String DEFAULT_LOCAL_ROOT = System.getProperty("user.dir", ".");
-    private static volatile String defaultMode;
 
-    static {
-        registerStore(LocalTextFileStore.MODE, new LocalTextFileStore(Path.of(DEFAULT_LOCAL_ROOT)));
-        defaultMode = LocalTextFileStore.MODE;
-    }
+    private static volatile String defaultMode;
+    private static volatile boolean initialized;
+    private static volatile VKFileConfig config;
 
     protected VostokFile() {
     }
 
-    public static void initLocal(String baseDir) {
-        VKAssert.notBlank(baseDir, "Base directory is blank");
-        registerStore(LocalTextFileStore.MODE, new LocalTextFileStore(Path.of(baseDir)));
-        defaultMode = LocalTextFileStore.MODE;
+    public static void init(VKFileConfig fileConfig) {
+        synchronized (LOCK) {
+            requireNotNull(fileConfig, "VKFileConfig is null");
+            requireNotBlank(fileConfig.getMode(), "Mode is blank");
+            requireNotBlank(fileConfig.getBaseDir(), "Base directory is blank");
+            requireNotNull(fileConfig.getCharset(), "Charset is null");
+
+            if (initialized) {
+                VKFileStore old = defaultMode == null ? null : STORES.get(defaultMode);
+                if (old != null) {
+                    try {
+                        old.close();
+                    } catch (Exception ignore) {
+                    }
+                    STORES.remove(defaultMode);
+                }
+                MODE_CONTEXT.remove();
+            }
+
+            String mode = normalizeMode(fileConfig.getMode());
+            if (LocalTextFileStore.MODE.equals(mode)) {
+                STORES.put(LocalTextFileStore.MODE,
+                        new LocalTextFileStore(Path.of(fileConfig.getBaseDir()), fileConfig.getCharset()));
+            } else if (!STORES.containsKey(mode)) {
+                throw new VKFileException(VKFileErrorCode.CONFIG_ERROR,
+                        "File mode is not registered: " + mode + ". Register store first.");
+            }
+
+            defaultMode = mode;
+            config = copyConfig(fileConfig);
+            initialized = true;
+        }
+    }
+
+    public static boolean started() {
+        return initialized;
+    }
+
+    public static VKFileConfig config() {
+        ensureInitialized();
+        return copyConfig(config);
+    }
+
+    public static void close() {
+        synchronized (LOCK) {
+            closeInternal();
+        }
     }
 
     public static void registerStore(String mode, VKFileStore store) {
-        VKAssert.notBlank(mode, "Mode is blank");
-        VKAssert.notNull(store, "VKFileStore is null");
+        requireNotBlank(mode, "Mode is blank");
+        requireNotNull(store, "VKFileStore is null");
         STORES.put(normalizeMode(mode), store);
     }
 
     public static void setDefaultMode(String mode) {
-        VKAssert.notBlank(mode, "Mode is blank");
+        ensureInitialized();
+        requireNotBlank(mode, "Mode is blank");
         String m = normalizeMode(mode);
         ensureStoreExists(m);
         defaultMode = m;
     }
 
     public static String defaultMode() {
+        ensureInitialized();
         return defaultMode;
     }
 
@@ -56,7 +101,8 @@ public class VostokFile {
     }
 
     public static void withMode(String mode, Runnable action) {
-        VKAssert.notNull(action, "Runnable is null");
+        ensureInitialized();
+        requireNotNull(action, "Runnable is null");
         String prev = MODE_CONTEXT.get();
         String m = normalizeMode(mode);
         ensureStoreExists(m);
@@ -69,7 +115,8 @@ public class VostokFile {
     }
 
     public static <T> T withMode(String mode, Supplier<T> supplier) {
-        VKAssert.notNull(supplier, "Supplier is null");
+        ensureInitialized();
+        requireNotNull(supplier, "Supplier is null");
         String prev = MODE_CONTEXT.get();
         String m = normalizeMode(mode);
         ensureStoreExists(m);
@@ -82,6 +129,7 @@ public class VostokFile {
     }
 
     public static String currentMode() {
+        ensureInitialized();
         String mode = MODE_CONTEXT.get();
         return mode == null || mode.isBlank() ? defaultMode : mode;
     }
@@ -100,6 +148,26 @@ public class VostokFile {
 
     public static String read(String path) {
         return store().read(path);
+    }
+
+    public static byte[] readBytes(String path) {
+        return store().readBytes(path);
+    }
+
+    public static byte[] readRange(String path, long offset, int length) {
+        return store().readRange(path, offset, length);
+    }
+
+    public static long readRangeTo(String path, long offset, long length, OutputStream output) {
+        return store().readRangeTo(path, offset, length, output);
+    }
+
+    public static void writeBytes(String path, byte[] content) {
+        store().writeBytes(path, content);
+    }
+
+    public static void appendBytes(String path, byte[] content) {
+        store().appendBytes(path, content);
     }
 
     public static String hash(String path, String algorithm) {
@@ -211,29 +279,52 @@ public class VostokFile {
     }
 
     public static void unzip(String zipPath, String targetDir) {
-        store().unzip(zipPath, targetDir, true);
+        VKFileConfig cfg = config();
+        VKUnzipOptions opts = VKUnzipOptions.builder()
+                .replaceExisting(true)
+                .maxEntries(cfg.getUnzipMaxEntries())
+                .maxTotalUncompressedBytes(cfg.getUnzipMaxTotalUncompressedBytes())
+                .maxEntryUncompressedBytes(cfg.getUnzipMaxEntryUncompressedBytes())
+                .build();
+        store().unzip(zipPath, targetDir, opts);
     }
 
     public static void unzip(String zipPath, String targetDir, boolean replaceExisting) {
-        store().unzip(zipPath, targetDir, replaceExisting);
+        VKFileConfig cfg = config();
+        VKUnzipOptions opts = VKUnzipOptions.builder()
+                .replaceExisting(replaceExisting)
+                .maxEntries(cfg.getUnzipMaxEntries())
+                .maxTotalUncompressedBytes(cfg.getUnzipMaxTotalUncompressedBytes())
+                .maxEntryUncompressedBytes(cfg.getUnzipMaxEntryUncompressedBytes())
+                .build();
+        store().unzip(zipPath, targetDir, opts);
+    }
+
+    public static void unzip(String zipPath, String targetDir, VKUnzipOptions options) {
+        store().unzip(zipPath, targetDir, options);
     }
 
     public static VKFileWatchHandle watch(String path, VKFileWatchListener listener) {
-        return store().watch(path, listener);
+        return store().watch(path, config().isWatchRecursiveDefault(), listener);
+    }
+
+    public static VKFileWatchHandle watch(String path, boolean recursive, VKFileWatchListener listener) {
+        return store().watch(path, recursive, listener);
     }
 
     private static VKFileStore store() {
+        ensureInitialized();
         String mode = currentMode();
         VKFileStore store = STORES.get(mode);
         if (store == null) {
-            throw new IllegalStateException("File mode not found: " + mode);
+            throw new VKFileException(VKFileErrorCode.STATE_ERROR, "File mode not found: " + mode);
         }
         return store;
     }
 
     private static void ensureStoreExists(String mode) {
         if (!STORES.containsKey(mode)) {
-            throw new IllegalStateException("File mode not found: " + mode);
+            throw new VKFileException(VKFileErrorCode.STATE_ERROR, "File mode not found: " + mode);
         }
     }
 
@@ -247,5 +338,49 @@ public class VostokFile {
             return;
         }
         MODE_CONTEXT.set(previous);
+    }
+
+    private static void ensureInitialized() {
+        if (!initialized) {
+            throw new VKFileException(VKFileErrorCode.NOT_INITIALIZED,
+                    "Vostok.File is not initialized. Call Vostok.File.init(...) first.");
+        }
+    }
+
+    private static VKFileConfig copyConfig(VKFileConfig source) {
+        return new VKFileConfig()
+                .mode(source.getMode())
+                .baseDir(source.getBaseDir())
+                .charset(source.getCharset())
+                .unzipMaxEntries(source.getUnzipMaxEntries())
+                .unzipMaxTotalUncompressedBytes(source.getUnzipMaxTotalUncompressedBytes())
+                .unzipMaxEntryUncompressedBytes(source.getUnzipMaxEntryUncompressedBytes())
+                .watchRecursiveDefault(source.isWatchRecursiveDefault());
+    }
+
+    private static void closeInternal() {
+        for (VKFileStore store : STORES.values()) {
+            try {
+                store.close();
+            } catch (Exception ignore) {
+            }
+        }
+        STORES.clear();
+        MODE_CONTEXT.remove();
+        defaultMode = null;
+        config = null;
+        initialized = false;
+    }
+
+    private static void requireNotBlank(String value, String message) {
+        if (value == null || value.trim().isEmpty()) {
+            throw new VKFileException(VKFileErrorCode.INVALID_ARGUMENT, message);
+        }
+    }
+
+    private static void requireNotNull(Object value, String message) {
+        if (value == null) {
+            throw new VKFileException(VKFileErrorCode.INVALID_ARGUMENT, message);
+        }
     }
 }

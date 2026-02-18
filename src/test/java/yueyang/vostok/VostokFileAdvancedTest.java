@@ -1,12 +1,16 @@
 package yueyang.vostok;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.io.TempDir;
 import yueyang.vostok.file.VKFileConflictStrategy;
+import yueyang.vostok.file.VKFileConfig;
+import yueyang.vostok.file.VKUnzipOptions;
 import yueyang.vostok.file.VKFileWatchEventType;
+import yueyang.vostok.file.exception.VKFileErrorCode;
+import yueyang.vostok.file.exception.VKFileException;
 
-import java.io.IOException;
-import java.nio.file.Files;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
@@ -14,6 +18,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -24,9 +29,18 @@ public class VostokFileAdvancedTest {
     @TempDir
     Path tempDir;
 
+    @AfterEach
+    void tearDown() {
+        Vostok.File.close();
+    }
+
+    private void init() {
+        Vostok.File.init(new VKFileConfig().baseDir(tempDir.toString()));
+    }
+
     @Test
     void testHashAndMkdirTypeAndRename() {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         Vostok.File.mkdirs("a");
         Vostok.File.mkdir("a/b");
         Vostok.File.write("a/b/f.txt", "abc");
@@ -35,7 +49,8 @@ public class VostokFileAdvancedTest {
         assertEquals("900150983cd24fb0d6963f7d28e17f72", md5);
         assertTrue(Vostok.File.isFile("a/b/f.txt"));
         assertTrue(Vostok.File.isDirectory("a/b"));
-        assertThrows(IllegalArgumentException.class, () -> Vostok.File.hash("a/b/f.txt", "NO_SUCH"));
+        VKFileException ex = assertThrows(VKFileException.class, () -> Vostok.File.hash("a/b/f.txt", "NO_SUCH"));
+        assertEquals(VKFileErrorCode.UNSUPPORTED, ex.getErrorCode());
 
         Vostok.File.rename("a/b/f.txt", "g.txt");
         assertFalse(Vostok.File.exists("a/b/f.txt"));
@@ -44,7 +59,7 @@ public class VostokFileAdvancedTest {
 
     @Test
     void testWalkWithFilter() {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         Vostok.File.write("w/x.txt", "1");
         Vostok.File.write("w/y.log", "2");
         Vostok.File.write("w/sub/z.txt", "3");
@@ -60,7 +75,7 @@ public class VostokFileAdvancedTest {
 
     @Test
     void testDeleteIfExistsAndDeleteRecursively() {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         Vostok.File.write("d/a.txt", "1");
         Vostok.File.write("d/sub/b.txt", "2");
 
@@ -75,7 +90,7 @@ public class VostokFileAdvancedTest {
 
     @Test
     void testCopyDirAndMoveDirWithConflictStrategy() {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         Vostok.File.write("src/a.txt", "v1");
         Vostok.File.write("src/sub/b.txt", "v2");
 
@@ -83,7 +98,7 @@ public class VostokFileAdvancedTest {
         assertEquals("v1", Vostok.File.read("dst/a.txt"));
         assertEquals("v2", Vostok.File.read("dst/sub/b.txt"));
 
-        assertThrows(IllegalStateException.class, () -> Vostok.File.copyDir("src", "dst", VKFileConflictStrategy.FAIL));
+        assertThrows(VKFileException.class, () -> Vostok.File.copyDir("src", "dst", VKFileConflictStrategy.FAIL));
 
         Vostok.File.write("src/a.txt", "new");
         Vostok.File.copyDir("src", "dst", VKFileConflictStrategy.SKIP);
@@ -105,7 +120,7 @@ public class VostokFileAdvancedTest {
 
     @Test
     void testWatch() throws Exception {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         Vostok.File.mkdirs("watch");
 
         CountDownLatch latch = new CountDownLatch(1);
@@ -123,16 +138,127 @@ public class VostokFileAdvancedTest {
     }
 
     @Test
+    void testWatchRecursive() throws Exception {
+        init();
+        Vostok.File.mkdirs("watch/deep");
+
+        CountDownLatch latch = new CountDownLatch(1);
+        List<String> paths = new CopyOnWriteArrayList<>();
+        try (var handle = Vostok.File.watch("watch", true, e -> {
+            paths.add(e.path().replace('\\', '/'));
+            if ("watch/deep/child.txt".equals(e.path().replace('\\', '/'))) {
+                latch.countDown();
+            }
+        })) {
+            Vostok.File.write("watch/deep/child.txt", "ok");
+            assertTrue(latch.await(5, TimeUnit.SECONDS));
+        }
+        assertTrue(paths.contains("watch/deep/child.txt"));
+    }
+
+    @Test
     void testMoveDirFailWhenTargetExists() {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         Vostok.File.write("m1/a.txt", "1");
         Vostok.File.write("m2/a.txt", "2");
-        assertThrows(IllegalStateException.class, () -> Vostok.File.moveDir("m1", "m2", VKFileConflictStrategy.FAIL));
+        VKFileException ex = assertThrows(VKFileException.class, () -> Vostok.File.moveDir("m1", "m2", VKFileConflictStrategy.FAIL));
+        assertEquals(VKFileErrorCode.STATE_ERROR, ex.getErrorCode());
     }
 
     @Test
     void testMkdirFailsWhenParentMissing() {
-        Vostok.File.initLocal(tempDir.toString());
-        assertThrows(RuntimeException.class, () -> Vostok.File.mkdir("x/y"));
+        init();
+        VKFileException ex = assertThrows(VKFileException.class, () -> Vostok.File.mkdir("x/y"));
+        assertEquals(VKFileErrorCode.IO_ERROR, ex.getErrorCode());
+    }
+
+    @Test
+    void testBinaryReadWriteAndRange() {
+        init();
+        byte[] first = new byte[]{1, 2, 3, 4};
+        byte[] second = new byte[]{5, 6};
+        Vostok.File.writeBytes("bin/a.dat", first);
+        Vostok.File.appendBytes("bin/a.dat", second);
+        assertEquals(6, Vostok.File.readBytes("bin/a.dat").length);
+
+        byte[] range = Vostok.File.readRange("bin/a.dat", 2, 3);
+        assertArrayEquals(new byte[]{3, 4, 5}, range);
+
+        assertEquals(0, Vostok.File.readRange("bin/a.dat", 100, 10).length);
+
+        VKFileException ex = assertThrows(VKFileException.class, () -> Vostok.File.readRange("bin/a.dat", -1, 1));
+        assertEquals(VKFileErrorCode.INVALID_ARGUMENT, ex.getErrorCode());
+    }
+
+    @Test
+    void testReadRangeToForLargeRead() {
+        init();
+        byte[] payload = new byte[256 * 1024];
+        for (int i = 0; i < payload.length; i++) {
+            payload[i] = (byte) (i % 251);
+        }
+        Vostok.File.writeBytes("bin/large.dat", payload);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        long copied = Vostok.File.readRangeTo("bin/large.dat", 1024, 128 * 1024, out);
+        assertEquals(128 * 1024L, copied);
+
+        byte[] expected = new byte[128 * 1024];
+        System.arraycopy(payload, 1024, expected, 0, expected.length);
+        assertArrayEquals(expected, out.toByteArray());
+    }
+
+    @Test
+    void testZipBombLimitByEntryAndTotal() {
+        init();
+        Vostok.File.write("z/a.txt", "1234567890");
+        Vostok.File.write("z/b.txt", "abcdefghij");
+        Vostok.File.zip("z", "z.zip");
+
+        VKFileException byEntries = assertThrows(VKFileException.class, () ->
+                Vostok.File.unzip("z.zip", "out1", VKUnzipOptions.builder().maxEntries(1).build()));
+        assertEquals(VKFileErrorCode.ZIP_BOMB_RISK, byEntries.getErrorCode());
+
+        VKFileException byTotal = assertThrows(VKFileException.class, () ->
+                Vostok.File.unzip("z.zip", "out2", VKUnzipOptions.builder().maxTotalUncompressedBytes(5).build()));
+        assertEquals(VKFileErrorCode.ZIP_BOMB_RISK, byTotal.getErrorCode());
+
+        VKFileException byEntrySize = assertThrows(VKFileException.class, () ->
+                Vostok.File.unzip("z.zip", "out3", VKUnzipOptions.builder().maxEntryUncompressedBytes(5).build()));
+        assertEquals(VKFileErrorCode.ZIP_BOMB_RISK, byEntrySize.getErrorCode());
+    }
+
+    @Test
+    void testInvalidUnzipOptions() {
+        init();
+        Vostok.File.write("a.txt", "abc");
+        Vostok.File.zip("a.txt", "a.zip");
+
+        VKFileException ex = assertThrows(VKFileException.class, () ->
+                Vostok.File.unzip("a.zip", "out", VKUnzipOptions.builder().maxEntries(-2).build()));
+        assertEquals(VKFileErrorCode.INVALID_ARGUMENT, ex.getErrorCode());
+    }
+
+    @Test
+    void testNotInitialized() {
+        VKFileException ex = assertThrows(VKFileException.class, () -> Vostok.File.read("a.txt"));
+        assertEquals(VKFileErrorCode.NOT_INITIALIZED, ex.getErrorCode());
+    }
+
+    @Test
+    void testConfigAndDefaultWatchRecursive() throws Exception {
+        Vostok.File.init(new VKFileConfig().baseDir(tempDir.toString()).watchRecursiveDefault(true));
+        assertTrue(Vostok.File.started());
+        assertTrue(Vostok.File.config().isWatchRecursiveDefault());
+        Vostok.File.mkdirs("watch/deep");
+        CountDownLatch latch = new CountDownLatch(1);
+        try (var h = Vostok.File.watch("watch", e -> {
+            if ("watch/deep/default.txt".equals(e.path().replace('\\', '/'))) {
+                latch.countDown();
+            }
+        })) {
+            Vostok.File.write("watch/deep/default.txt", "ok");
+            assertTrue(latch.await(5, TimeUnit.SECONDS));
+        }
     }
 }

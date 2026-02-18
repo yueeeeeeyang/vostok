@@ -1,15 +1,18 @@
 package yueyang.vostok.file;
 
-import yueyang.vostok.util.VKAssert;
+import yueyang.vostok.file.exception.VKFileErrorCode;
+import yueyang.vostok.file.exception.VKFileException;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.UncheckedIOException;
-import java.nio.file.ClosedWatchServiceException;
-import java.nio.file.FileSystems;
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.ClosedWatchServiceException;
+import java.nio.file.FileSystems;
 import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,11 +23,15 @@ import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
 import java.nio.file.attribute.FileTime;
-import java.time.Instant;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
@@ -41,14 +48,15 @@ public final class LocalTextFileStore implements VKFileStore {
 
     private final Path root;
     private final Charset charset;
+    private final Set<VKFileWatchHandle> activeWatches = ConcurrentHashMap.newKeySet();
 
     public LocalTextFileStore(Path root) {
         this(root, StandardCharsets.UTF_8);
     }
 
     public LocalTextFileStore(Path root, Charset charset) {
-        VKAssert.notNull(root, "Root path is null");
-        VKAssert.notNull(charset, "Charset is null");
+        requireNotNull(root, "Root path is null");
+        requireNotNull(charset, "Charset is null");
         this.root = root.toAbsolutePath().normalize();
         this.charset = charset;
         ensureDir(this.root);
@@ -84,15 +92,14 @@ public final class LocalTextFileStore implements VKFileStore {
     @Override
     public void update(String path, String content) {
         Path p = resolve(path);
-        if (!Files.exists(p)) {
-            throw new IllegalStateException("File does not exist: " + path);
-        }
+        requireExists(p, path);
         write(path, content);
     }
 
     @Override
     public String read(String path) {
         Path p = resolve(path);
+        requireFile(p, path);
         try {
             return Files.readString(p, charset);
         } catch (IOException e) {
@@ -101,15 +108,113 @@ public final class LocalTextFileStore implements VKFileStore {
     }
 
     @Override
-    public String hash(String path, String algorithm) {
-        VKAssert.notBlank(algorithm, "Algorithm is blank");
+    public byte[] readBytes(String path) {
         Path p = resolve(path);
-        VKAssert.isTrue(Files.isRegularFile(p), "Path is not a file: " + path);
+        requireFile(p, path);
+        try {
+            return Files.readAllBytes(p);
+        } catch (IOException e) {
+            throw io("Read bytes failed: " + path, e);
+        }
+    }
+
+    @Override
+    public byte[] readRange(String path, long offset, int length) {
+        if (offset < 0) {
+            throw arg("Offset must be >= 0: " + offset);
+        }
+        if (length < 0) {
+            throw arg("Length must be >= 0: " + length);
+        }
+        Path p = resolve(path);
+        requireFile(p, path);
+        if (length == 0) {
+            return new byte[0];
+        }
+        ByteArrayOutputStream out = new ByteArrayOutputStream(Math.max(0, length));
+        long copied = readRangeTo(path, offset, length, out);
+        if (copied == 0) {
+            return new byte[0];
+        }
+        return out.toByteArray();
+    }
+
+    @Override
+    public long readRangeTo(String path, long offset, long length, OutputStream output) {
+        if (offset < 0) {
+            throw arg("Offset must be >= 0: " + offset);
+        }
+        if (length < 0) {
+            throw arg("Length must be >= 0: " + length);
+        }
+        requireNotNull(output, "OutputStream is null");
+
+        Path p = resolve(path);
+        requireFile(p, path);
+        if (length == 0) {
+            return 0L;
+        }
+        try (SeekableByteChannel channel = Files.newByteChannel(p, StandardOpenOption.READ)) {
+            long size = channel.size();
+            if (offset >= size) {
+                return 0L;
+            }
+            channel.position(offset);
+            long remaining = Math.min(length, size - offset);
+            ByteBuffer buffer = ByteBuffer.allocate(STREAM_BUFFER_SIZE);
+            long copied = 0L;
+            while (remaining > 0) {
+                buffer.clear();
+                int maxRead = (int) Math.min(buffer.capacity(), remaining);
+                buffer.limit(maxRead);
+                int n = channel.read(buffer);
+                if (n == -1) {
+                    break;
+                }
+                output.write(buffer.array(), 0, n);
+                copied += n;
+                remaining -= n;
+            }
+            return copied;
+        } catch (IOException e) {
+            throw io("Read range to output failed: " + path + " [offset=" + offset + ", length=" + length + "]", e);
+        }
+    }
+
+    @Override
+    public void writeBytes(String path, byte[] content) {
+        requireNotNull(content, "Content bytes is null");
+        Path p = resolve(path);
+        try {
+            ensureParent(p);
+            Files.write(p, content, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
+        } catch (IOException e) {
+            throw io("Write bytes failed: " + path, e);
+        }
+    }
+
+    @Override
+    public void appendBytes(String path, byte[] content) {
+        requireNotNull(content, "Content bytes is null");
+        Path p = resolve(path);
+        try {
+            ensureParent(p);
+            Files.write(p, content, StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
+        } catch (IOException e) {
+            throw io("Append bytes failed: " + path, e);
+        }
+    }
+
+    @Override
+    public String hash(String path, String algorithm) {
+        requireNotBlank(algorithm, "Algorithm is blank");
+        Path p = resolve(path);
+        requireFile(p, path);
         MessageDigest digest;
         try {
             digest = MessageDigest.getInstance(algorithm.trim());
         } catch (NoSuchAlgorithmException e) {
-            throw new IllegalArgumentException("Unsupported hash algorithm: " + algorithm, e);
+            throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "Unsupported hash algorithm: " + algorithm, e);
         }
         try (InputStream in = Files.newInputStream(p, StandardOpenOption.READ)) {
             byte[] buf = new byte[STREAM_BUFFER_SIZE];
@@ -144,17 +249,8 @@ public final class LocalTextFileStore implements VKFileStore {
         if (!Files.exists(p)) {
             return false;
         }
-        try {
-            if (Files.isDirectory(p)) {
-                try (Stream<Path> s = Files.walk(p, FileVisitOption.FOLLOW_LINKS)) {
-                    s.sorted(Comparator.reverseOrder()).forEach(this::deleteSingle);
-                }
-                return true;
-            }
-            return Files.deleteIfExists(p);
-        } catch (IOException e) {
-            throw io("Delete failed: " + path, e);
-        }
+        deleteRecursivelyPath(p);
+        return true;
     }
 
     @Override
@@ -186,6 +282,7 @@ public final class LocalTextFileStore implements VKFileStore {
     @Override
     public List<String> readLines(String path) {
         Path p = resolve(path);
+        requireFile(p, path);
         try {
             return Files.readAllLines(p, charset);
         } catch (IOException e) {
@@ -195,7 +292,7 @@ public final class LocalTextFileStore implements VKFileStore {
 
     @Override
     public void writeLines(String path, List<String> lines) {
-        VKAssert.notNull(lines, "Lines is null");
+        requireNotNull(lines, "Lines is null");
         Path p = resolve(path);
         try {
             ensureParent(p);
@@ -245,9 +342,12 @@ public final class LocalTextFileStore implements VKFileStore {
 
     @Override
     public void rename(String path, String newName) {
-        VKAssert.notBlank(newName, "New name is blank");
-        VKAssert.isTrue(!newName.contains("/") && !newName.contains("\\"), "New name cannot contain path separator");
+        requireNotBlank(newName, "New name is blank");
+        if (newName.contains("/") || newName.contains("\\")) {
+            throw arg("New name cannot contain path separator");
+        }
         Path p = resolve(path);
+        requireExists(p, path);
         Path target = p.resolveSibling(newName);
         try {
             Files.move(p, target);
@@ -260,6 +360,7 @@ public final class LocalTextFileStore implements VKFileStore {
     public void copy(String sourcePath, String targetPath, boolean replaceExisting) {
         Path source = resolve(sourcePath);
         Path target = resolve(targetPath);
+        requireExists(source, sourcePath);
         try {
             ensureParent(target);
             if (replaceExisting) {
@@ -276,6 +377,7 @@ public final class LocalTextFileStore implements VKFileStore {
     public void move(String sourcePath, String targetPath, boolean replaceExisting) {
         Path source = resolve(sourcePath);
         Path target = resolve(targetPath);
+        requireExists(source, sourcePath);
         try {
             ensureParent(target);
             if (replaceExisting) {
@@ -290,28 +392,40 @@ public final class LocalTextFileStore implements VKFileStore {
 
     @Override
     public void copyDir(String sourceDir, String targetDir, VKFileConflictStrategy strategy) {
-        VKAssert.notNull(strategy, "Conflict strategy is null");
+        requireNotNull(strategy, "Conflict strategy is null");
         Path source = resolve(sourceDir);
         Path target = resolve(targetDir);
-        VKAssert.isTrue(Files.exists(source), "Source directory does not exist: " + sourceDir);
-        VKAssert.isTrue(Files.isDirectory(source), "Source path is not a directory: " + sourceDir);
-        handleTargetConflict(target, strategy, "copyDir");
-        copyDirectoryTree(source, target, strategy);
-    }
-
-    @Override
-    public void moveDir(String sourceDir, String targetDir, VKFileConflictStrategy strategy) {
-        VKAssert.notNull(strategy, "Conflict strategy is null");
-        Path source = resolve(sourceDir);
-        Path target = resolve(targetDir);
-        VKAssert.isTrue(Files.exists(source), "Source directory does not exist: " + sourceDir);
-        VKAssert.isTrue(Files.isDirectory(source), "Source path is not a directory: " + sourceDir);
+        requireExists(source, sourceDir);
+        if (!Files.isDirectory(source)) {
+            throw arg("Source path is not a directory: " + sourceDir);
+        }
         if (Files.exists(target)) {
             if (strategy == VKFileConflictStrategy.SKIP) {
                 return;
             }
             if (strategy == VKFileConflictStrategy.FAIL) {
-                throw new IllegalStateException("Target directory already exists: " + targetDir);
+                throw state("Target directory already exists: " + targetDir);
+            }
+            deleteRecursivelyPath(target);
+        }
+        copyDirectoryTree(source, target, strategy);
+    }
+
+    @Override
+    public void moveDir(String sourceDir, String targetDir, VKFileConflictStrategy strategy) {
+        requireNotNull(strategy, "Conflict strategy is null");
+        Path source = resolve(sourceDir);
+        Path target = resolve(targetDir);
+        requireExists(source, sourceDir);
+        if (!Files.isDirectory(source)) {
+            throw arg("Source path is not a directory: " + sourceDir);
+        }
+        if (Files.exists(target)) {
+            if (strategy == VKFileConflictStrategy.SKIP) {
+                return;
+            }
+            if (strategy == VKFileConflictStrategy.FAIL) {
+                throw state("Target directory already exists: " + targetDir);
             }
             deleteRecursivelyPath(target);
         }
@@ -342,6 +456,7 @@ public final class LocalTextFileStore implements VKFileStore {
     @Override
     public long size(String path) {
         Path p = resolve(path);
+        requireExists(p, path);
         try {
             return Files.size(p);
         } catch (IOException e) {
@@ -352,6 +467,7 @@ public final class LocalTextFileStore implements VKFileStore {
     @Override
     public Instant lastModified(String path) {
         Path p = resolve(path);
+        requireExists(p, path);
         try {
             return Files.getLastModifiedTime(p).toInstant();
         } catch (IOException e) {
@@ -363,8 +479,10 @@ public final class LocalTextFileStore implements VKFileStore {
     public void zip(String sourcePath, String zipPath) {
         Path source = resolve(sourcePath);
         Path zip = resolve(zipPath);
-        VKAssert.isTrue(Files.exists(source), "Source path does not exist: " + sourcePath);
-        VKAssert.isTrue(!source.equals(zip), "Source path and zip path cannot be the same");
+        requireExists(source, sourcePath);
+        if (source.equals(zip)) {
+            throw arg("Source path and zip path cannot be the same");
+        }
         try {
             ensureParent(zip);
             try (OutputStream os = Files.newOutputStream(zip, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
@@ -382,21 +500,37 @@ public final class LocalTextFileStore implements VKFileStore {
 
     @Override
     public void unzip(String zipPath, String targetDir, boolean replaceExisting) {
+        unzip(zipPath, targetDir, VKUnzipOptions.defaults(replaceExisting));
+    }
+
+    @Override
+    public void unzip(String zipPath, String targetDir, VKUnzipOptions options) {
         Path zip = resolve(zipPath);
         Path target = resolve(targetDir);
-        VKAssert.isTrue(Files.exists(zip), "Zip file does not exist: " + zipPath);
+        requireExists(zip, zipPath);
+        requireFile(zip, zipPath);
+        VKUnzipOptions opt = options == null ? VKUnzipOptions.defaults(true) : options;
+        validateUnzipOptions(opt);
+
+        long totalExtracted = 0L;
+        long entries = 0L;
         try {
             ensureDir(target);
             try (InputStream is = Files.newInputStream(zip, StandardOpenOption.READ);
                  ZipInputStream zis = new ZipInputStream(is, charset)) {
                 ZipEntry entry;
                 while ((entry = zis.getNextEntry()) != null) {
+                    entries++;
+                    checkZipBomb(entries, opt.maxEntries(), "Zip entries exceed limit: " + opt.maxEntries());
+
                     Path out = safeZipTarget(target, entry.getName());
                     if (entry.isDirectory()) {
                         ensureDir(out);
                     } else {
                         ensureParent(out);
-                        writeZipEntry(zis, out, replaceExisting);
+                        long extracted = writeZipEntry(zis, out, opt.replaceExisting(), opt.maxEntryUncompressedBytes(),
+                                opt.maxTotalUncompressedBytes(), totalExtracted);
+                        totalExtracted += extracted;
                         if (entry.getLastModifiedTime() != null) {
                             Files.setLastModifiedTime(out, entry.getLastModifiedTime());
                         }
@@ -411,24 +545,34 @@ public final class LocalTextFileStore implements VKFileStore {
 
     @Override
     public VKFileWatchHandle watch(String path, VKFileWatchListener listener) {
-        VKAssert.notNull(listener, "Watch listener is null");
+        return watch(path, false, listener);
+    }
+
+    @Override
+    public VKFileWatchHandle watch(String path, boolean recursive, VKFileWatchListener listener) {
+        requireNotNull(listener, "Watch listener is null");
         Path watched = resolve(path);
-        VKAssert.isTrue(Files.exists(watched), "Watch path does not exist: " + path);
-        Path watchDir = Files.isDirectory(watched) ? watched : watched.getParent();
-        VKAssert.notNull(watchDir, "Watch path parent is null");
+        requireExists(watched, path);
+
+        Path watchRoot = Files.isDirectory(watched) ? watched : watched.getParent();
+        if (watchRoot == null) {
+            throw state("Watch path parent is null: " + path);
+        }
         String fileName = Files.isDirectory(watched) ? null : watched.getFileName().toString();
 
         try {
             WatchService ws = FileSystems.getDefault().newWatchService();
-            watchDir.register(ws,
-                    StandardWatchEventKinds.ENTRY_CREATE,
-                    StandardWatchEventKinds.ENTRY_MODIFY,
-                    StandardWatchEventKinds.ENTRY_DELETE);
+            Map<WatchKey, Path> keyDirs = new HashMap<>();
+            if (recursive) {
+                registerRecursive(ws, watchRoot, keyDirs);
+            } else {
+                registerWatchDir(ws, watchRoot, keyDirs);
+            }
             AtomicBoolean running = new AtomicBoolean(true);
-            Thread worker = new Thread(() -> watchLoop(ws, running, watchDir, fileName, listener), "vostok-file-watch");
+            Thread worker = new Thread(() -> watchLoop(ws, running, watchRoot, fileName, recursive, keyDirs, listener), "vostok-file-watch");
             worker.setDaemon(true);
             worker.start();
-            return () -> {
+            VKFileWatchHandle handle = () -> {
                 running.set(false);
                 try {
                     ws.close();
@@ -436,8 +580,31 @@ public final class LocalTextFileStore implements VKFileStore {
                 }
                 worker.interrupt();
             };
+            activeWatches.add(handle);
+            return () -> {
+                handle.close();
+                activeWatches.remove(handle);
+            };
         } catch (IOException e) {
             throw io("Watch register failed: " + path, e);
+        }
+    }
+
+    @Override
+    public void close() {
+        for (VKFileWatchHandle handle : activeWatches.toArray(new VKFileWatchHandle[0])) {
+            try {
+                handle.close();
+            } catch (Exception ignore) {
+            } finally {
+                activeWatches.remove(handle);
+            }
+        }
+    }
+
+    private void validateUnzipOptions(VKUnzipOptions opt) {
+        if (opt.maxEntries() < -1 || opt.maxTotalUncompressedBytes() < -1 || opt.maxEntryUncompressedBytes() < -1) {
+            throw arg("Unzip limits must be -1 (unlimited) or >= 0");
         }
     }
 
@@ -461,11 +628,11 @@ public final class LocalTextFileStore implements VKFileStore {
     }
 
     private Path resolve(String rawPath) {
-        VKAssert.notBlank(rawPath, "Path is blank");
+        requireNotBlank(rawPath, "Path is blank");
         Path p = Path.of(rawPath.trim());
         Path resolved = p.isAbsolute() ? p.toAbsolutePath().normalize() : root.resolve(p).normalize();
         if (!resolved.startsWith(root)) {
-            throw new IllegalArgumentException("Path escapes root directory: " + rawPath);
+            throw new VKFileException(VKFileErrorCode.PATH_ERROR, "Path escapes root directory: " + rawPath);
         }
         return resolved;
     }
@@ -483,14 +650,6 @@ public final class LocalTextFileStore implements VKFileStore {
         } catch (IOException e) {
             throw io("Create directory failed: " + p, e);
         }
-    }
-
-    private UncheckedIOException io(String message, IOException e) {
-        return new UncheckedIOException(message, e);
-    }
-
-    private String orEmpty(String value) {
-        return value == null ? "" : value;
     }
 
     private void deleteSingle(Path p) {
@@ -539,17 +698,22 @@ public final class LocalTextFileStore implements VKFileStore {
         String normalizedEntry = normalizeEntry(entryName);
         Path out = targetDir.resolve(normalizedEntry).normalize();
         if (!out.startsWith(targetDir)) {
-            throw new IllegalArgumentException("Zip entry escapes target directory: " + entryName);
+            throw new VKFileException(VKFileErrorCode.SECURITY_ERROR, "Zip entry escapes target directory: " + entryName);
         }
         return out;
     }
 
-    private void writeZipEntry(ZipInputStream zis, Path target, boolean replaceExisting) throws IOException {
+    private long writeZipEntry(ZipInputStream zis,
+                               Path target,
+                               boolean replaceExisting,
+                               long maxEntryBytes,
+                               long maxTotalBytes,
+                               long currentTotalBytes) throws IOException {
         StandardOpenOption[] options = replaceExisting
                 ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE}
                 : new StandardOpenOption[]{StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE};
         try (OutputStream out = Files.newOutputStream(target, options)) {
-            transfer(zis, out);
+            return transferWithLimits(zis, out, maxEntryBytes, maxTotalBytes, currentTotalBytes);
         }
     }
 
@@ -558,6 +722,31 @@ public final class LocalTextFileStore implements VKFileStore {
         int n;
         while ((n = in.read(buffer)) != -1) {
             out.write(buffer, 0, n);
+        }
+    }
+
+    private long transferWithLimits(InputStream in,
+                                    OutputStream out,
+                                    long maxEntryBytes,
+                                    long maxTotalBytes,
+                                    long currentTotalBytes) throws IOException {
+        byte[] buffer = new byte[STREAM_BUFFER_SIZE];
+        long entryWritten = 0L;
+        long total = currentTotalBytes;
+        int n;
+        while ((n = in.read(buffer)) != -1) {
+            entryWritten += n;
+            total += n;
+            checkZipBomb(entryWritten, maxEntryBytes, "Zip entry exceeds max uncompressed bytes: " + maxEntryBytes);
+            checkZipBomb(total, maxTotalBytes, "Zip total uncompressed bytes exceed limit: " + maxTotalBytes);
+            out.write(buffer, 0, n);
+        }
+        return entryWritten;
+    }
+
+    private void checkZipBomb(long actual, long limit, String msg) {
+        if (limit >= 0 && actual > limit) {
+            throw new VKFileException(VKFileErrorCode.ZIP_BOMB_RISK, msg);
         }
     }
 
@@ -588,7 +777,7 @@ public final class LocalTextFileStore implements VKFileStore {
                         continue;
                     }
                     if (strategy == VKFileConflictStrategy.FAIL) {
-                        throw new IllegalStateException("Target file already exists: " + relativePath(dst));
+                        throw state("Target file already exists: " + relativePath(dst));
                     }
                     Files.copy(p, dst, StandardCopyOption.REPLACE_EXISTING);
                 } else {
@@ -601,19 +790,6 @@ public final class LocalTextFileStore implements VKFileStore {
         }
     }
 
-    private void handleTargetConflict(Path target, VKFileConflictStrategy strategy, String op) {
-        if (!Files.exists(target)) {
-            return;
-        }
-        if (strategy == VKFileConflictStrategy.SKIP) {
-            return;
-        }
-        if (strategy == VKFileConflictStrategy.FAIL) {
-            throw new IllegalStateException("Target directory already exists: " + relativePath(target));
-        }
-        deleteRecursivelyPath(target);
-    }
-
     private void deleteRecursivelyPath(Path p) {
         try (Stream<Path> s = Files.walk(p, FileVisitOption.FOLLOW_LINKS)) {
             s.sorted(Comparator.reverseOrder()).forEach(this::deleteSingle);
@@ -624,31 +800,76 @@ public final class LocalTextFileStore implements VKFileStore {
 
     private void watchLoop(WatchService ws,
                            AtomicBoolean running,
-                           Path watchDir,
+                           Path watchRoot,
                            String fileName,
+                           boolean recursive,
+                           Map<WatchKey, Path> keyDirs,
                            VKFileWatchListener listener) {
         try {
             while (running.get()) {
                 WatchKey key = ws.take();
+                Path eventBaseDir = keyDirs.get(key);
+                if (eventBaseDir == null) {
+                    key.reset();
+                    continue;
+                }
                 for (WatchEvent<?> event : key.pollEvents()) {
                     VKFileWatchEventType type = toEventType(event.kind());
                     Path context = event.context() instanceof Path ? (Path) event.context() : null;
                     if (context == null) {
                         continue;
                     }
-                    if (fileName != null && !fileName.equals(context.getFileName().toString())) {
+                    Path abs = eventBaseDir.resolve(context).toAbsolutePath().normalize();
+                    if (fileName != null && !fileName.equals(abs.getFileName().toString())) {
                         continue;
                     }
-                    Path abs = watchDir.resolve(context).toAbsolutePath().normalize();
+
+                    if (recursive && type == VKFileWatchEventType.CREATE) {
+                        tryRegisterNewDir(ws, abs, keyDirs);
+                    }
+
+                    if (!abs.startsWith(watchRoot)) {
+                        continue;
+                    }
                     listener.onEvent(new VKFileWatchEvent(type, relativePath(abs), Instant.now()));
                 }
                 if (!key.reset()) {
+                    keyDirs.remove(key);
                     break;
                 }
             }
         } catch (InterruptedException ignore) {
             Thread.currentThread().interrupt();
         } catch (ClosedWatchServiceException ignore) {
+        }
+    }
+
+    private void registerRecursive(WatchService ws, Path root, Map<WatchKey, Path> keyDirs) throws IOException {
+        try (Stream<Path> s = Files.walk(root)) {
+            var it = s.iterator();
+            while (it.hasNext()) {
+                Path p = it.next();
+                if (Files.isDirectory(p)) {
+                    registerWatchDir(ws, p, keyDirs);
+                }
+            }
+        }
+    }
+
+    private void registerWatchDir(WatchService ws, Path dir, Map<WatchKey, Path> keyDirs) throws IOException {
+        WatchKey key = dir.register(ws,
+                StandardWatchEventKinds.ENTRY_CREATE,
+                StandardWatchEventKinds.ENTRY_MODIFY,
+                StandardWatchEventKinds.ENTRY_DELETE);
+        keyDirs.put(key, dir);
+    }
+
+    private void tryRegisterNewDir(WatchService ws, Path path, Map<WatchKey, Path> keyDirs) {
+        try {
+            if (Files.isDirectory(path)) {
+                registerRecursive(ws, path, keyDirs);
+            }
+        } catch (IOException ignore) {
         }
     }
 
@@ -672,5 +893,46 @@ public final class LocalTextFileStore implements VKFileStore {
             sb.append(Character.forDigit(b & 0xF, 16));
         }
         return sb.toString();
+    }
+
+    private String orEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
+    private void requireNotNull(Object value, String message) {
+        if (value == null) {
+            throw arg(message);
+        }
+    }
+
+    private void requireNotBlank(String value, String message) {
+        if (value == null || value.trim().isEmpty()) {
+            throw arg(message);
+        }
+    }
+
+    private void requireExists(Path path, String rawPath) {
+        if (!Files.exists(path)) {
+            throw new VKFileException(VKFileErrorCode.NOT_FOUND, "Path does not exist: " + rawPath);
+        }
+    }
+
+    private void requireFile(Path path, String rawPath) {
+        requireExists(path, rawPath);
+        if (!Files.isRegularFile(path)) {
+            throw arg("Path is not a regular file: " + rawPath);
+        }
+    }
+
+    private VKFileException arg(String message) {
+        return new VKFileException(VKFileErrorCode.INVALID_ARGUMENT, message);
+    }
+
+    private VKFileException state(String message) {
+        return new VKFileException(VKFileErrorCode.STATE_ERROR, message);
+    }
+
+    private VKFileException io(String message, IOException e) {
+        return new VKFileException(VKFileErrorCode.IO_ERROR, message, e);
     }
 }

@@ -19,6 +19,20 @@
 | DK-530 | TX_ERROR | 事务错误 |
 | DK-540 | CACHE_ERROR | 缓存错误 |
 
+## File 错误码（VKFileErrorCode）
+| Code | 枚举 | 含义 |
+| --- | --- | --- |
+| FK-400 | INVALID_ARGUMENT | 参数非法 |
+| FK-401 | NOT_INITIALIZED | File 模块未初始化 |
+| FK-402 | CONFIG_ERROR | File 模块配置错误 |
+| FK-403 | STATE_ERROR | File 模块状态错误 |
+| FK-404 | NOT_FOUND | 路径不存在 |
+| FK-410 | PATH_ERROR | 路径错误（如越界） |
+| FK-500 | IO_ERROR | 文件 IO 错误 |
+| FK-520 | SECURITY_ERROR | 安全错误（如 Zip Slip） |
+| FK-530 | UNSUPPORTED | 不支持的能力 |
+| FK-540 | ZIP_BOMB_RISK | 解压风险（zip bomb 限制触发） |
+
 ## 异常类型（yueyang.vostok.data.exception）
 - `VKException`：所有运行时异常的基类，包含 `VKErrorCode`
 - `VKArgumentException`：参数非法（`INVALID_ARGUMENT`）
@@ -30,11 +44,22 @@
 - `VKPoolException`：连接池异常（`POOL_ERROR`）
 - `VKTxException`：事务异常（`TX_ERROR`）
 
+## File 异常类型（yueyang.vostok.file.exception）
+- `VKFileException`：File 模块运行时异常基类，包含 `VKFileErrorCode`
+
 ## 异常获取与统一处理
 ```java
 try {
     Vostok.Data.findAll(User.class);
 } catch (VKException e) {
+    System.out.println(e.getCode() + " " + e.getMessage());
+}
+```
+
+```java
+try {
+    Vostok.File.read("missing.txt");
+} catch (yueyang.vostok.file.exception.VKFileException e) {
     System.out.println(e.getCode() + " " + e.getMessage());
 }
 ```

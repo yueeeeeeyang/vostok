@@ -97,17 +97,22 @@ MyType obj2 = VKJson.fromJson(json, MyType.class);
 
 **核心特性**
 - 统一入口：`Vostok.File`
+- 生命周期：`init(config)` 初始化，`started()` 查询状态，`close()` 释放资源
 - 默认模式：本地文本文件（UTF-8）
-- 覆盖常见文件能力：增删改查、追加、按行读写、复制、移动、目录创建、递归列举、时间戳与大小查询、哈希、目录冲突策略复制/移动、文件监听
-- 支持压缩/解压：可压缩文件或目录，解压支持覆盖策略
+- 覆盖常见文件能力：增删改查、追加、按行读写、二进制读写、范围读取、复制、移动、目录创建、递归列举、时间戳与大小查询、哈希、目录冲突策略复制/移动、文件监听
+- 支持压缩/解压：可压缩文件或目录，解压支持覆盖策略和 zip bomb 限制
 - 可扩展文件模式：通过 `registerStore` 接入 OSS/对象存储
+- 统一异常体系：`VKFileException` + `VKFileErrorCode`
 
 **本地文本快速上手**
 ```java
 import yueyang.vostok.Vostok;
+import yueyang.vostok.file.VKFileConfig;
 
-// 可选：指定本地文件根目录（默认 user.dir）
-Vostok.File.initLocal("/tmp/vostok-files");
+Vostok.File.init(new VKFileConfig()
+    .mode("local")
+    .baseDir("/tmp/vostok-files")
+    .watchRecursiveDefault(false));
 
 Vostok.File.create("notes/a.txt", "hello");
 Vostok.File.append("notes/a.txt", "\nworld");
@@ -125,13 +130,16 @@ Vostok.File.move("notes/b.txt", "archive/b.txt");
 var files = Vostok.File.list("notes", true);
 
 Vostok.File.delete("archive/b.txt");
+Vostok.File.close();
 ```
 
 **压缩 / 解压示例**
 ```java
 import yueyang.vostok.Vostok;
+import yueyang.vostok.file.VKFileConfig;
+import yueyang.vostok.file.VKUnzipOptions;
 
-Vostok.File.initLocal("/tmp/vostok-files");
+Vostok.File.init(new VKFileConfig().baseDir("/tmp/vostok-files"));
 
 // 压缩单文件
 Vostok.File.zip("notes/a.txt", "zip/a.zip");
@@ -144,18 +152,40 @@ Vostok.File.unzip("zip/notes.zip", "unzip");
 
 // 解压（不覆盖）
 Vostok.File.unzip("zip/notes.zip", "unzip", false);
+
+// 解压安全限制（防 zip bomb）
+Vostok.File.unzip("zip/notes.zip", "safe-unzip", VKUnzipOptions.builder()
+    .replaceExisting(true)
+    .maxEntries(1000)
+    .maxTotalUncompressedBytes(512L * 1024 * 1024)
+    .maxEntryUncompressedBytes(64L * 1024 * 1024)
+    .build());
 ```
 
 **高级接口示例**
 ```java
 import yueyang.vostok.Vostok;
+import yueyang.vostok.file.VKFileConfig;
 import yueyang.vostok.file.VKFileConflictStrategy;
 import yueyang.vostok.file.VKFileWatchEventType;
+import yueyang.vostok.file.exception.VKFileException;
 
-Vostok.File.initLocal("/tmp/vostok-files");
+Vostok.File.init(new VKFileConfig().baseDir("/tmp/vostok-files"));
 
 // hash
 String sha256 = Vostok.File.hash("notes/a.txt", "SHA-256");
+
+// 二进制读写 + 范围读取
+Vostok.File.writeBytes("data/a.bin", new byte[]{1, 2, 3, 4, 5});
+Vostok.File.appendBytes("data/a.bin", new byte[]{6, 7});
+byte[] all = Vostok.File.readBytes("data/a.bin");
+byte[] part = Vostok.File.readRange("data/a.bin", 2, 3); // 3,4,5
+
+// 大块范围读取（流式输出，避免大 byte[] 占用堆内存）
+try (var os = new java.io.FileOutputStream("/tmp/range-part.bin")) {
+    long copied = Vostok.File.readRangeTo("data/a.bin", 0, 10_000_000L, os);
+    System.out.println("copied=" + copied);
+}
 
 // mkdir / isFile / isDirectory / rename
 Vostok.File.mkdirs("data");
@@ -192,12 +222,31 @@ try (var handle = Vostok.File.watch("projectA", event -> {
     Vostok.File.deleteIfExists("projectA/new.txt");
 }
 
+// watch（递归监听，子目录变化也可收到事件）
+try (var recursiveHandle = Vostok.File.watch("projectA", true, event -> {
+    System.out.println("recursive: " + event.type() + " -> " + event.path());
+})) {
+    Vostok.File.mkdirs("projectA/sub");
+    Vostok.File.write("projectA/sub/new.txt", "ok");
+}
+
 // watch（单文件监听：实际监听父目录并过滤为该文件）
 try (var fileHandle = Vostok.File.watch("projectA/config.yml", event -> {
     System.out.println("config changed: " + event.type() + " -> " + event.path());
 })) {
     Vostok.File.write("projectA/config.yml", "k: v");
 }
+
+// 统一异常处理
+try {
+    Vostok.File.read("missing.txt");
+} catch (VKFileException e) {
+    System.out.println(e.getCode() + " " + e.getMessage());
+}
+
+boolean started = Vostok.File.started();
+VKFileConfig cfg = Vostok.File.config();
+Vostok.File.close();
 ```
 
 **扩展 OSS/对象存储（示例）**
@@ -215,6 +264,11 @@ public class OssFileStore implements VKFileStore {
     @Override public void write(String path, String content) { throw new UnsupportedOperationException(); }
     @Override public void update(String path, String content) { throw new UnsupportedOperationException(); }
     @Override public String read(String path) { throw new UnsupportedOperationException(); }
+    @Override public byte[] readBytes(String path) { throw new UnsupportedOperationException(); }
+    @Override public byte[] readRange(String path, long offset, int length) { throw new UnsupportedOperationException(); }
+    @Override public long readRangeTo(String path, long offset, long length, java.io.OutputStream output) { throw new UnsupportedOperationException(); }
+    @Override public void writeBytes(String path, byte[] content) { throw new UnsupportedOperationException(); }
+    @Override public void appendBytes(String path, byte[] content) { throw new UnsupportedOperationException(); }
     @Override public String hash(String path, String algorithm) { throw new UnsupportedOperationException(); }
     @Override public boolean delete(String path) { throw new UnsupportedOperationException(); }
     @Override public boolean deleteIfExists(String path) { throw new UnsupportedOperationException(); }
@@ -239,7 +293,9 @@ public class OssFileStore implements VKFileStore {
     @Override public Instant lastModified(String path) { throw new UnsupportedOperationException(); }
     @Override public void zip(String sourcePath, String zipPath) { throw new UnsupportedOperationException(); }
     @Override public void unzip(String zipPath, String targetDir, boolean replaceExisting) { throw new UnsupportedOperationException(); }
+    @Override public void unzip(String zipPath, String targetDir, yueyang.vostok.file.VKUnzipOptions options) { throw new UnsupportedOperationException(); }
     @Override public yueyang.vostok.file.VKFileWatchHandle watch(String path, yueyang.vostok.file.VKFileWatchListener listener) { throw new UnsupportedOperationException(); }
+    @Override public yueyang.vostok.file.VKFileWatchHandle watch(String path, boolean recursive, yueyang.vostok.file.VKFileWatchListener listener) { throw new UnsupportedOperationException(); }
 }
 
 Vostok.File.registerStore("oss", new OssFileStore());

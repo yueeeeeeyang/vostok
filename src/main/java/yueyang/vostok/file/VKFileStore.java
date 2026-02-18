@@ -3,6 +3,7 @@ package yueyang.vostok.file;
 import java.time.Instant;
 import java.util.List;
 import java.util.function.Predicate;
+import java.io.OutputStream;
 
 /**
  * File store abstraction. Local file system is the default implementation.
@@ -18,6 +19,16 @@ public interface VKFileStore {
     void update(String path, String content);
 
     String read(String path);
+
+    byte[] readBytes(String path);
+
+    byte[] readRange(String path, long offset, int length);
+
+    long readRangeTo(String path, long offset, long length, OutputStream output);
+
+    void writeBytes(String path, byte[] content);
+
+    void appendBytes(String path, byte[] content);
 
     String hash(String path, String algorithm);
 
@@ -67,5 +78,12 @@ public interface VKFileStore {
 
     void unzip(String zipPath, String targetDir, boolean replaceExisting);
 
+    void unzip(String zipPath, String targetDir, VKUnzipOptions options);
+
     VKFileWatchHandle watch(String path, VKFileWatchListener listener);
+
+    VKFileWatchHandle watch(String path, boolean recursive, VKFileWatchListener listener);
+
+    default void close() {
+    }
 }

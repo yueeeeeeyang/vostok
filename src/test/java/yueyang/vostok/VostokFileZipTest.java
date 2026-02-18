@@ -1,10 +1,13 @@
 package yueyang.vostok;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.io.TempDir;
+import yueyang.vostok.file.VKFileConfig;
+import yueyang.vostok.file.exception.VKFileErrorCode;
+import yueyang.vostok.file.exception.VKFileException;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Random;
@@ -20,9 +23,18 @@ public class VostokFileZipTest {
     @TempDir
     Path tempDir;
 
+    @AfterEach
+    void tearDown() {
+        Vostok.File.close();
+    }
+
+    private void init() {
+        Vostok.File.init(new VKFileConfig().baseDir(tempDir.toString()));
+    }
+
     @Test
     void testZipAndUnzipSingleFile() throws IOException {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         Vostok.File.write("notes/a.txt", "hello zip");
 
         Vostok.File.zip("notes/a.txt", "zip/a.zip");
@@ -33,7 +45,7 @@ public class VostokFileZipTest {
 
     @Test
     void testZipAndUnzipDirectory() throws IOException {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         Vostok.File.write("docs/readme.txt", "r1");
         Vostok.File.write("docs/api/v1.txt", "v1");
         Vostok.File.mkdirs("docs/empty");
@@ -48,13 +60,14 @@ public class VostokFileZipTest {
 
     @Test
     void testUnzipReplacePolicy() throws IOException {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         Vostok.File.write("data/a.txt", "v1");
         Vostok.File.zip("data/a.txt", "zip/a.zip");
         Vostok.File.unzip("zip/a.zip", "out");
 
         Vostok.File.write("out/a.txt", "modified");
-        assertThrows(UncheckedIOException.class, () -> Vostok.File.unzip("zip/a.zip", "out", false));
+        VKFileException ex = assertThrows(VKFileException.class, () -> Vostok.File.unzip("zip/a.zip", "out", false));
+        assertEquals(VKFileErrorCode.IO_ERROR, ex.getErrorCode());
 
         Vostok.File.unzip("zip/a.zip", "out", true);
         assertEquals("v1", Vostok.File.read("out/a.txt"));
@@ -62,7 +75,7 @@ public class VostokFileZipTest {
 
     @Test
     void testZipSlipProtection() throws IOException {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         Path zip = tempDir.resolve("zip/malicious.zip");
         Files.createDirectories(zip.getParent());
         try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(zip))) {
@@ -71,13 +84,14 @@ public class VostokFileZipTest {
             zos.closeEntry();
         }
 
-        assertThrows(IllegalArgumentException.class, () -> Vostok.File.unzip("zip/malicious.zip", "out"));
+        VKFileException ex = assertThrows(VKFileException.class, () -> Vostok.File.unzip("zip/malicious.zip", "out"));
+        assertEquals(VKFileErrorCode.SECURITY_ERROR, ex.getErrorCode());
         assertTrue(!Files.exists(tempDir.resolve("evil.txt")));
     }
 
     @Test
     void testZipAndUnzipLargeFileByStreaming() throws IOException {
-        Vostok.File.initLocal(tempDir.toString());
+        init();
         byte[] data = new byte[5 * 1024 * 1024];
         new Random(42).nextBytes(data);
         Path source = tempDir.resolve("bin/large.bin");
