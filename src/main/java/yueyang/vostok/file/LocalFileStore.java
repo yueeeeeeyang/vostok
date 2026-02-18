@@ -57,7 +57,7 @@ import javax.imageio.stream.ImageInputStream;
 import javax.imageio.stream.ImageOutputStream;
 
 /**
- * Default local text file store.
+ * Default local file store.
  */
 public final class LocalFileStore implements VKFileStore {
     public static final String MODE = "local";
