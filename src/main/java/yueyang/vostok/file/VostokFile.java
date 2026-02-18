@@ -221,6 +221,16 @@ public class VostokFile {
         return path;
     }
 
+    public static VKFileMigrateResult migrateBaseDir(String targetBaseDir) {
+        return migrateBaseDir(targetBaseDir, new VKFileMigrateOptions());
+    }
+
+    public static VKFileMigrateResult migrateBaseDir(String targetBaseDir, VKFileMigrateOptions options) {
+        requireNotBlank(targetBaseDir, "Target baseDir is blank");
+        requireNotNull(options, "VKFileMigrateOptions is null");
+        return store().migrateBaseDir(targetBaseDir, options);
+    }
+
     public static byte[] thumbnail(String imagePath, VKThumbnailOptions options) {
         return store().thumbnail(imagePath, options);
     }

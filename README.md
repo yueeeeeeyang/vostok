@@ -1355,6 +1355,24 @@ public interface Vostok.File {
     public static String writeFromByDatePath(String relativePath, InputStream input);
 
     /**
+     * 迁移当前 baseDir 全部文件到目标目录（默认 COPY_ONLY + FAIL）。
+     *
+     * - targetBaseDir：目标根目录（绝对路径），类型为 String，不能为空且不能位于当前 baseDir 内部。
+     * - 返回值：VKFileMigrateResult（迁移统计结果）。
+     */
+    public static VKFileMigrateResult migrateBaseDir(String targetBaseDir);
+
+    /**
+     * 迁移当前 baseDir 全部文件到目标目录（自定义迁移参数）。
+     *
+     * - targetBaseDir：目标根目录（绝对路径），类型为 String，不能为空且不能位于当前 baseDir 内部。
+     * - options：迁移参数，类型为 VKFileMigrateOptions，不能为空。
+     *   options.parallelism > 1 时启用并行迁移；任务进入有界队列，队列满时采用阻塞背压（不会丢任务）。
+     * - 返回值：VKFileMigrateResult（迁移统计结果）。
+     */
+    public static VKFileMigrateResult migrateBaseDir(String targetBaseDir, VKFileMigrateOptions options);
+
+    /**
      * 生成图片缩略图并以字节数组返回。
      *
      * - imagePath：源图片路径，类型为 String。
@@ -1689,6 +1707,26 @@ public class FileApiDemo {
         String p1 = Vostok.File.writeByDatePath("upload/t1.txt", "hello");
         String p2 = Vostok.File.writeBytesByDatePath("upload/t2.bin", new byte[]{8,9});
         String p3 = Vostok.File.writeFromByDatePath("upload/t3.bin", new java.io.ByteArrayInputStream(new byte[]{10,11}));
+
+        VKFileMigrateResult migrateResult = Vostok.File.migrateBaseDir("/tmp/vostok-files-backup",
+                new VKFileMigrateOptions()
+                        .mode(VKFileMigrateMode.COPY_ONLY)
+                        .conflictStrategy(VKFileConflictStrategy.OVERWRITE)
+                        .verifyHash(true)
+                        .includeHidden(true)
+                        .parallelism(4)
+                        .queueCapacity(2048)
+                        .checkpointFile("/tmp/vostok-migrate.ckpt")
+                        .maxRetries(2)
+                        .retryIntervalMs(300)
+                        .progressListener(progress -> {
+                            // progress.status(): RETRYING / MIGRATED / SKIPPED / FAILED / DONE
+                            // progress.path(): 当前文件相对路径（DONE 时为 null）
+                        })
+                        .dryRun(false));
+        boolean migrateOk = migrateResult.success();
+        long migratedCount = migrateResult.migratedFiles();
+        List<VKFileMigrateResult.Failure> migrateFailures = migrateResult.failures();
         byte[] tb1 = Vostok.File.thumbnail("img/origin.png",
                 VKThumbnailOptions.builder(200, 200)
                         .mode(VKThumbnailMode.FIT)
@@ -1776,6 +1814,38 @@ VKFileConfig cfg = new VKFileConfig()
     .datePartitionPattern("yyyy/MM/dd")
     // 日期分片时区（用于 suggestDatePath / write*ByDatePath）。默认系统时区。
     .datePartitionZoneId("UTC");
+```
+
+```java
+import yueyang.vostok.file.VKFileMigrateMode;
+import yueyang.vostok.file.VKFileConflictStrategy;
+import yueyang.vostok.file.VKFileMigrateOptions;
+
+VKFileMigrateOptions migrateOptions = new VKFileMigrateOptions()
+    // 迁移模式：COPY_ONLY（只复制）或 MOVE（复制后删除源文件）。默认 COPY_ONLY。
+    .mode(VKFileMigrateMode.COPY_ONLY)
+    // 冲突策略：FAIL / SKIP / OVERWRITE。默认 FAIL。
+    .conflictStrategy(VKFileConflictStrategy.FAIL)
+    // 是否校验源/目标文件哈希一致（SHA-256）。默认 false。
+    .verifyHash(false)
+    // 是否包含隐藏文件。默认 true。
+    .includeHidden(true)
+    // 并行 worker 数。默认 1（串行）；>1 启用并行迁移。
+    .parallelism(4)
+    // 有界任务队列容量。默认 1024；队列满时生产者阻塞等待（背压，不丢任务）。
+    .queueCapacity(2048)
+    // 断点续传文件路径（建议使用 source baseDir 外部绝对路径）；为空则不启用断点续传。
+    .checkpointFile("/tmp/vostok-migrate.ckpt")
+    // 单文件失败后最大重试次数。默认 0（不重试）。
+    .maxRetries(2)
+    // 重试间隔毫秒。默认 200。
+    .retryIntervalMs(300)
+    // 迁移进度回调（可用于日志/指标/告警）。
+    .progressListener(progress -> {})
+    // MOVE 模式下是否清理迁移后源目录中的空目录。默认 true。
+    .deleteEmptyDirsAfterMove(true)
+    // 仅演练不落盘。默认 false。
+    .dryRun(false);
 ```
 
 ---

@@ -3,8 +3,13 @@ package yueyang.vostok;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.Assumptions;
 import yueyang.vostok.file.VKFileConflictStrategy;
 import yueyang.vostok.file.VKFileConfig;
+import yueyang.vostok.file.VKFileMigrateMode;
+import yueyang.vostok.file.VKFileMigrateOptions;
+import yueyang.vostok.file.VKFileMigrateProgressStatus;
+import yueyang.vostok.file.VKFileMigrateResult;
 import yueyang.vostok.file.VKUnzipOptions;
 import yueyang.vostok.file.VKFileWatchEventType;
 import yueyang.vostok.file.exception.VKFileErrorCode;
@@ -12,10 +17,12 @@ import yueyang.vostok.file.exception.VKFileException;
 
 import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -334,5 +341,237 @@ public class VostokFileAdvancedTest {
         VKFileException ex = assertThrows(VKFileException.class,
                 () -> Vostok.File.suggestDatePath("/abs/a.txt"));
         assertEquals(VKFileErrorCode.INVALID_ARGUMENT, ex.getErrorCode());
+    }
+
+    @Test
+    void testMigrateBaseDirCopyOnly() throws Exception {
+        init();
+        Vostok.File.write("mig/a.txt", "A");
+        Vostok.File.write("mig/sub/b.txt", "BB");
+
+        Path target = tempDir.resolveSibling(tempDir.getFileName() + "-copy");
+        VKFileMigrateResult result = Vostok.File.migrateBaseDir(target.toString(),
+                new VKFileMigrateOptions()
+                        .mode(VKFileMigrateMode.COPY_ONLY)
+                        .conflictStrategy(VKFileConflictStrategy.FAIL)
+                        .verifyHash(true));
+
+        assertTrue(result.success());
+        assertEquals(2, result.totalFiles());
+        assertEquals(2, result.migratedFiles());
+        assertEquals(0, result.failedFiles());
+        assertEquals("A", Vostok.File.read("mig/a.txt"));
+        assertEquals("A", Files.readString(target.resolve("mig/a.txt")));
+        assertEquals("BB", Files.readString(target.resolve("mig/sub/b.txt")));
+    }
+
+    @Test
+    void testMigrateBaseDirMoveWithCleanup() throws Exception {
+        init();
+        Vostok.File.write("mv/d1/a.txt", "1");
+        Vostok.File.write("mv/d2/b.txt", "2");
+
+        Path target = tempDir.resolveSibling(tempDir.getFileName() + "-move");
+        VKFileMigrateResult result = Vostok.File.migrateBaseDir(target.toString(),
+                new VKFileMigrateOptions()
+                        .mode(VKFileMigrateMode.MOVE)
+                        .conflictStrategy(VKFileConflictStrategy.OVERWRITE)
+                        .deleteEmptyDirsAfterMove(true));
+
+        assertTrue(result.success());
+        assertEquals(2, result.migratedFiles());
+        assertFalse(Vostok.File.exists("mv/d1/a.txt"));
+        assertFalse(Vostok.File.exists("mv/d2/b.txt"));
+        assertFalse(Vostok.File.exists("mv/d1"));
+        assertFalse(Vostok.File.exists("mv/d2"));
+        assertEquals("1", Files.readString(target.resolve("mv/d1/a.txt")));
+        assertEquals("2", Files.readString(target.resolve("mv/d2/b.txt")));
+    }
+
+    @Test
+    void testMigrateBaseDirConflictSkipAndDryRun() throws Exception {
+        init();
+        Vostok.File.write("conflict/a.txt", "src");
+
+        Path target = tempDir.resolveSibling(tempDir.getFileName() + "-skip");
+        Files.createDirectories(target.resolve("conflict"));
+        Files.writeString(target.resolve("conflict/a.txt"), "dst");
+
+        VKFileMigrateResult skipResult = Vostok.File.migrateBaseDir(target.toString(),
+                new VKFileMigrateOptions()
+                        .mode(VKFileMigrateMode.COPY_ONLY)
+                        .conflictStrategy(VKFileConflictStrategy.SKIP));
+        assertTrue(skipResult.success());
+        assertEquals(1, skipResult.totalFiles());
+        assertEquals(0, skipResult.migratedFiles());
+        assertEquals(1, skipResult.skippedFiles());
+        assertEquals("dst", Files.readString(target.resolve("conflict/a.txt")));
+
+        Path dryTarget = tempDir.resolveSibling(tempDir.getFileName() + "-dry");
+        VKFileMigrateResult dryRunResult = Vostok.File.migrateBaseDir(dryTarget.toString(),
+                new VKFileMigrateOptions()
+                        .mode(VKFileMigrateMode.COPY_ONLY)
+                        .conflictStrategy(VKFileConflictStrategy.OVERWRITE)
+                        .dryRun(true));
+        assertTrue(dryRunResult.success());
+        assertEquals(1, dryRunResult.migratedFiles());
+        assertFalse(Files.exists(dryTarget));
+    }
+
+    @Test
+    void testMigrateBaseDirExcludeHiddenAndDefaultApi() throws Exception {
+        init();
+        Vostok.File.write(".hidden.txt", "h");
+        Vostok.File.write("normal.txt", "n");
+
+        Path target = tempDir.resolveSibling(tempDir.getFileName() + "-hidden");
+        VKFileMigrateResult result = Vostok.File.migrateBaseDir(target.toString(),
+                new VKFileMigrateOptions().includeHidden(false));
+        assertTrue(result.success());
+        assertEquals(1, result.totalFiles());
+        assertTrue(Files.exists(target.resolve("normal.txt")));
+        assertFalse(Files.exists(target.resolve(".hidden.txt")));
+
+        Path target2 = tempDir.resolveSibling(tempDir.getFileName() + "-default");
+        VKFileMigrateResult result2 = Vostok.File.migrateBaseDir(target2.toString());
+        assertEquals(2, result2.totalFiles());
+        assertEquals(2, result2.migratedFiles());
+    }
+
+    @Test
+    void testMigrateBaseDirTargetInsideSourceNotAllowed() {
+        init();
+        Vostok.File.write("a.txt", "1");
+        VKFileException ex = assertThrows(VKFileException.class,
+                () -> Vostok.File.migrateBaseDir(tempDir.resolve("inside").toString()));
+        assertEquals(VKFileErrorCode.INVALID_ARGUMENT, ex.getErrorCode());
+    }
+
+    @Test
+    void testMigrateBaseDirResumeByCheckpoint() throws Exception {
+        init();
+        Vostok.File.write("resume/a.txt", "A");
+        Vostok.File.write("resume/b.txt", "B");
+        Path sourceB = tempDir.resolve("resume/b.txt");
+        boolean changed = sourceB.toFile().setReadable(false, false);
+        Assumptions.assumeTrue(changed && !Files.isReadable(sourceB), "Cannot simulate unreadable file on this fs");
+
+        Path checkpoint = tempDir.resolveSibling(tempDir.getFileName() + "-resume.ckpt");
+        Path target = tempDir.resolveSibling(tempDir.getFileName() + "-resume-target");
+        try {
+            VKFileMigrateResult r1 = Vostok.File.migrateBaseDir(target.toString(),
+                    new VKFileMigrateOptions()
+                            .mode(VKFileMigrateMode.COPY_ONLY)
+                            .conflictStrategy(VKFileConflictStrategy.OVERWRITE)
+                            .checkpointFile(checkpoint.toString())
+                            .maxRetries(0));
+            assertEquals(1, r1.failedFiles());
+            assertEquals(1, r1.migratedFiles());
+
+            assertTrue(sourceB.toFile().setReadable(true, false));
+            VKFileMigrateResult r2 = Vostok.File.migrateBaseDir(target.toString(),
+                    new VKFileMigrateOptions()
+                            .mode(VKFileMigrateMode.COPY_ONLY)
+                            .conflictStrategy(VKFileConflictStrategy.OVERWRITE)
+                            .checkpointFile(checkpoint.toString())
+                            .maxRetries(0));
+            assertTrue(r2.success());
+            assertEquals(1, r2.migratedFiles());
+            assertTrue(r2.skippedFiles() >= 1);
+            assertEquals("A", Files.readString(target.resolve("resume/a.txt")));
+            assertEquals("B", Files.readString(target.resolve("resume/b.txt")));
+        } finally {
+            sourceB.toFile().setReadable(true, false);
+        }
+    }
+
+    @Test
+    void testMigrateBaseDirRetryAndProgress() throws Exception {
+        init();
+        Vostok.File.write("retry/a.txt", "A");
+        Path source = tempDir.resolve("retry/a.txt");
+        boolean changed = source.toFile().setReadable(false, false);
+        Assumptions.assumeTrue(changed && !Files.isReadable(source), "Cannot simulate unreadable file on this fs");
+
+        List<VKFileMigrateProgressStatus> statuses = new CopyOnWriteArrayList<>();
+        Path target = tempDir.resolveSibling(tempDir.getFileName() + "-retry");
+        try {
+            VKFileMigrateResult result = Vostok.File.migrateBaseDir(target.toString(),
+                    new VKFileMigrateOptions()
+                            .mode(VKFileMigrateMode.COPY_ONLY)
+                            .conflictStrategy(VKFileConflictStrategy.OVERWRITE)
+                            .maxRetries(2)
+                            .retryIntervalMs(10)
+                            .progressListener(p -> {
+                                statuses.add(p.status());
+                                if (p.status() == VKFileMigrateProgressStatus.RETRYING) {
+                                    source.toFile().setReadable(true, false);
+                                }
+                            }));
+
+            assertTrue(result.success());
+            assertTrue(statuses.contains(VKFileMigrateProgressStatus.RETRYING));
+            assertTrue(statuses.contains(VKFileMigrateProgressStatus.MIGRATED));
+            assertEquals(VKFileMigrateProgressStatus.DONE, statuses.get(statuses.size() - 1));
+            assertEquals("A", Files.readString(target.resolve("retry/a.txt")));
+        } finally {
+            source.toFile().setReadable(true, false);
+        }
+    }
+
+    @Test
+    void testMigrateBaseDirInvalidRetryAndCheckpointOptions() {
+        init();
+        Vostok.File.write("a.txt", "1");
+        VKFileException ex1 = assertThrows(VKFileException.class,
+                () -> Vostok.File.migrateBaseDir(tempDir.resolveSibling("x").toString(),
+                        new VKFileMigrateOptions().maxRetries(-1)));
+        assertEquals(VKFileErrorCode.INVALID_ARGUMENT, ex1.getErrorCode());
+
+        VKFileException ex2 = assertThrows(VKFileException.class,
+                () -> Vostok.File.migrateBaseDir(tempDir.resolveSibling("y").toString(),
+                        new VKFileMigrateOptions().checkpointFile(tempDir.resolve("resume.ckpt").toString())));
+        assertEquals(VKFileErrorCode.INVALID_ARGUMENT, ex2.getErrorCode());
+    }
+
+    @Test
+    void testMigrateBaseDirParallelWithSmallQueue() throws Exception {
+        init();
+        for (int i = 0; i < 80; i++) {
+            Vostok.File.write("p/" + i + ".txt", "v" + i);
+        }
+        Path target = tempDir.resolveSibling(tempDir.getFileName() + "-parallel");
+        AtomicInteger migratedEvents = new AtomicInteger();
+        VKFileMigrateResult result = Vostok.File.migrateBaseDir(target.toString(),
+                new VKFileMigrateOptions()
+                        .mode(VKFileMigrateMode.COPY_ONLY)
+                        .parallelism(4)
+                        .queueCapacity(1)
+                        .progressListener(p -> {
+                            if (p.status() == VKFileMigrateProgressStatus.MIGRATED) {
+                                migratedEvents.incrementAndGet();
+                            }
+                        }));
+        assertTrue(result.success());
+        assertEquals(80, result.totalFiles());
+        assertEquals(80, result.migratedFiles());
+        assertEquals(80, migratedEvents.get());
+        assertEquals("v0", Files.readString(target.resolve("p/0.txt")));
+        assertEquals("v79", Files.readString(target.resolve("p/79.txt")));
+    }
+
+    @Test
+    void testMigrateBaseDirInvalidParallelOptions() {
+        init();
+        Vostok.File.write("a.txt", "1");
+        VKFileException ex1 = assertThrows(VKFileException.class,
+                () -> Vostok.File.migrateBaseDir(tempDir.resolveSibling("p1").toString(),
+                        new VKFileMigrateOptions().parallelism(0)));
+        assertEquals(VKFileErrorCode.INVALID_ARGUMENT, ex1.getErrorCode());
+
+        VKFileException ex2 = assertThrows(VKFileException.class,
+                () -> Vostok.File.migrateBaseDir(tempDir.resolveSibling("p2").toString(),
+                        new VKFileMigrateOptions().queueCapacity(0)));
+        assertEquals(VKFileErrorCode.INVALID_ARGUMENT, ex2.getErrorCode());
     }
 }

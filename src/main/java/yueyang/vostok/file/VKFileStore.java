@@ -41,6 +41,8 @@ public interface VKFileStore {
 
     String suggestDatePath(String relativePath, Instant atTime, VKFileConfig config);
 
+    VKFileMigrateResult migrateBaseDir(String targetBaseDir, VKFileMigrateOptions options);
+
     byte[] thumbnail(String imagePath, VKThumbnailOptions options);
 
     void thumbnailTo(String imagePath, String targetPath, VKThumbnailOptions options);

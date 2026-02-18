@@ -29,21 +29,31 @@ import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
+import java.nio.file.FileVisitResult;
+import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.FileTime;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.Iterator;
 import java.util.Locale;
+import java.util.Queue;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
@@ -306,6 +316,317 @@ public final class LocalFileStore implements VKFileStore {
             throw new VKFileException(VKFileErrorCode.CONFIG_ERROR,
                     "Invalid date partition settings: pattern=" + config.getDatePartitionPattern()
                             + ", zoneId=" + config.getDatePartitionZoneId(), e);
+        }
+    }
+
+    @Override
+    public VKFileMigrateResult migrateBaseDir(String targetBaseDir, VKFileMigrateOptions options) {
+        requireNotBlank(targetBaseDir, "Target baseDir is blank");
+        requireNotNull(options, "VKFileMigrateOptions is null");
+        requireNotNull(options.getMode(), "Migrate mode is null");
+        requireNotNull(options.getConflictStrategy(), "Conflict strategy is null");
+        if (options.getMaxRetries() < 0) {
+            throw arg("Max retries must be >= 0");
+        }
+        if (options.getRetryIntervalMs() < 0) {
+            throw arg("Retry interval must be >= 0");
+        }
+        if (options.getParallelism() <= 0) {
+            throw arg("Parallelism must be > 0");
+        }
+        if (options.getQueueCapacity() <= 0) {
+            throw arg("Queue capacity must be > 0");
+        }
+
+        Path sourceBase = root.toAbsolutePath().normalize();
+        Path targetBase = Path.of(targetBaseDir.trim()).toAbsolutePath().normalize();
+        if (targetBase.startsWith(sourceBase)) {
+            throw arg("Target baseDir cannot be inside source baseDir: " + targetBaseDir);
+        }
+        CheckpointState checkpoint = prepareCheckpoint(sourceBase, options.getCheckpointFile(), options.isDryRun());
+
+        long start = System.currentTimeMillis();
+        VKFileMigrateResult r = new VKFileMigrateResult();
+        r.fromBaseDir(sourceBase.toString());
+        r.toBaseDir(targetBase.toString());
+        if (!options.isDryRun()) {
+            try {
+                Files.createDirectories(targetBase);
+            } catch (IOException e) {
+                throw io("Create target baseDir failed: " + targetBaseDir, e);
+            }
+        }
+
+        MigrateCounters c = options.getParallelism() <= 1
+                ? migrateSequential(sourceBase, targetBase, options, checkpoint)
+                : migrateParallel(sourceBase, targetBase, options, checkpoint);
+
+        for (VKFileMigrateResult.Failure f : c.drainFailures()) {
+            r.addFailure(f.path(), f.message());
+        }
+        r.totalFiles(c.totalFiles());
+        r.totalDirs(c.totalDirs());
+        r.migratedFiles(c.migratedFiles());
+        r.skippedFiles(c.skippedFiles());
+        r.failedFiles(c.failedFiles());
+        r.totalBytes(c.totalBytes());
+        r.migratedBytes(c.migratedBytes());
+        r.durationMs(System.currentTimeMillis() - start);
+        emitProgress(options, c, null, VKFileMigrateProgressStatus.DONE, 0, null);
+        return r;
+    }
+
+    private MigrateCounters migrateSequential(Path sourceBase,
+                                              Path targetBase,
+                                              VKFileMigrateOptions options,
+                                              CheckpointState checkpoint) {
+        MigrateCounters c = new MigrateCounters();
+        try {
+            Files.walkFileTree(sourceBase, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    if (dir.equals(sourceBase)) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    if (!options.isIncludeHidden() && isHiddenSafe(dir)) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    c.incTotalDirs();
+                    if (!options.isDryRun()) {
+                        Path rel = sourceBase.relativize(dir);
+                        Path dst = targetBase.resolve(rel).normalize();
+                        try {
+                            Files.createDirectories(dst);
+                        } catch (IOException e) {
+                            c.incFailedFiles();
+                            c.addFailure(normalizeRelPath(rel), "Create target dir failed: " + e.getMessage());
+                            return FileVisitResult.SKIP_SUBTREE;
+                        }
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                    if (!options.isIncludeHidden() && isHiddenSafe(file)) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    Path rel = sourceBase.relativize(file);
+                    String relPath = normalizeRelPath(rel);
+                    long sz = sizeSafe(file);
+                    c.incTotalFiles();
+                    c.addTotalBytes(Math.max(0L, sz));
+                    if (checkpoint.enabled && checkpoint.completed.contains(relPath)) {
+                        c.incSkippedFiles();
+                        emitProgress(options, c, relPath, VKFileMigrateProgressStatus.SKIPPED, 1,
+                                "Skipped by checkpoint");
+                        return FileVisitResult.CONTINUE;
+                    }
+                    processMigrateFile(file, targetBase.resolve(rel).normalize(), relPath, sz, options, checkpoint, c);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            if (!options.isDryRun()
+                    && options.getMode() == VKFileMigrateMode.MOVE
+                    && options.isDeleteEmptyDirsAfterMove()) {
+                cleanupEmptyDirs(sourceBase);
+            }
+            return c;
+        } catch (IOException e) {
+            throw io("Migrate baseDir failed: " + sourceBase + " -> " + targetBase, e);
+        }
+    }
+
+    private MigrateCounters migrateParallel(Path sourceBase,
+                                            Path targetBase,
+                                            VKFileMigrateOptions options,
+                                            CheckpointState checkpoint) {
+        MigrateCounters c = new MigrateCounters();
+        BlockingQueue<MigrateTask> queue = new ArrayBlockingQueue<>(options.getQueueCapacity());
+        AtomicReference<RuntimeException> workerError = new AtomicReference<>();
+        Thread[] workers = new Thread[options.getParallelism()];
+        for (int i = 0; i < workers.length; i++) {
+            Thread worker = new Thread(() -> runMigrateWorker(queue, options, checkpoint, c, workerError),
+                    "vostok-file-migrate-" + i);
+            worker.setDaemon(true);
+            worker.start();
+            workers[i] = worker;
+        }
+
+        try {
+            Files.walkFileTree(sourceBase, new SimpleFileVisitor<>() {
+                @Override
+                public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                    if (dir.equals(sourceBase)) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    if (!options.isIncludeHidden() && isHiddenSafe(dir)) {
+                        return FileVisitResult.SKIP_SUBTREE;
+                    }
+                    c.incTotalDirs();
+                    if (!options.isDryRun()) {
+                        Path rel = sourceBase.relativize(dir);
+                        Path dst = targetBase.resolve(rel).normalize();
+                        try {
+                            Files.createDirectories(dst);
+                        } catch (IOException e) {
+                            c.incFailedFiles();
+                            c.addFailure(normalizeRelPath(rel), "Create target dir failed: " + e.getMessage());
+                            return FileVisitResult.SKIP_SUBTREE;
+                        }
+                    }
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    if (!options.isIncludeHidden() && isHiddenSafe(file)) {
+                        return FileVisitResult.CONTINUE;
+                    }
+                    Path rel = sourceBase.relativize(file);
+                    String relPath = normalizeRelPath(rel);
+                    long sz = sizeSafe(file);
+                    c.incTotalFiles();
+                    c.addTotalBytes(Math.max(0L, sz));
+                    if (checkpoint.enabled && checkpoint.completed.contains(relPath)) {
+                        c.incSkippedFiles();
+                        emitProgress(options, c, relPath, VKFileMigrateProgressStatus.SKIPPED, 1,
+                                "Skipped by checkpoint");
+                        return FileVisitResult.CONTINUE;
+                    }
+                    putTask(queue, new MigrateTask(file, targetBase.resolve(rel).normalize(), relPath, sz, false));
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException e) {
+            workerError.compareAndSet(null, io("Migrate baseDir walk failed: " + sourceBase + " -> " + targetBase, e));
+        } catch (RuntimeException e) {
+            workerError.compareAndSet(null, e);
+        } finally {
+            for (int i = 0; i < workers.length; i++) {
+                putTask(queue, MigrateTask.POISON);
+            }
+            joinWorkers(workers);
+        }
+
+        if (workerError.get() != null) {
+            throw workerError.get();
+        }
+        if (!options.isDryRun()
+                && options.getMode() == VKFileMigrateMode.MOVE
+                && options.isDeleteEmptyDirsAfterMove()) {
+            cleanupEmptyDirs(sourceBase);
+        }
+        return c;
+    }
+
+    private void runMigrateWorker(BlockingQueue<MigrateTask> queue,
+                                  VKFileMigrateOptions options,
+                                  CheckpointState checkpoint,
+                                  MigrateCounters counters,
+                                  AtomicReference<RuntimeException> workerError) {
+        try {
+            while (true) {
+                MigrateTask task = queue.take();
+                if (task.poison) {
+                    return;
+                }
+                processMigrateFile(task.source, task.target, task.relPath, task.size, options, checkpoint, counters);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException e) {
+            workerError.compareAndSet(null, e);
+        }
+    }
+
+    private void processMigrateFile(Path source,
+                                    Path dst,
+                                    String relPath,
+                                    long size,
+                                    VKFileMigrateOptions options,
+                                    CheckpointState checkpoint,
+                                    MigrateCounters c) {
+        if (Files.exists(dst)) {
+            if (options.getConflictStrategy() == VKFileConflictStrategy.SKIP) {
+                c.incSkippedFiles();
+                emitProgress(options, c, relPath, VKFileMigrateProgressStatus.SKIPPED, 1,
+                        "Target already exists");
+                return;
+            }
+            if (options.getConflictStrategy() == VKFileConflictStrategy.FAIL) {
+                c.incFailedFiles();
+                c.addFailure(relPath, "Target already exists");
+                emitProgress(options, c, relPath, VKFileMigrateProgressStatus.FAILED, 1,
+                        "Target already exists");
+                return;
+            }
+        }
+
+        if (options.isDryRun()) {
+            c.incMigratedFiles();
+            c.addMigratedBytes(Math.max(0L, size));
+            emitProgress(options, c, relPath, VKFileMigrateProgressStatus.MIGRATED, 1, "Dry run");
+            return;
+        }
+
+        int maxAttempts = options.getMaxRetries() + 1;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                ensureParent(dst);
+                if (Files.isDirectory(dst)) {
+                    deleteRecursivelyPath(dst);
+                }
+                long copied = copyFileByStream(source, dst, true);
+                if (options.isVerifyHash()) {
+                    String srcHash = hashByPath(source, "SHA-256");
+                    String dstHash = hashByPath(dst, "SHA-256");
+                    if (!srcHash.equals(dstHash)) {
+                        throw state("Hash verify failed after migrate");
+                    }
+                }
+                if (options.getMode() == VKFileMigrateMode.MOVE) {
+                    Files.deleteIfExists(source);
+                }
+                c.incMigratedFiles();
+                c.addMigratedBytes(copied);
+                checkpointAppend(checkpoint, relPath);
+                emitProgress(options, c, relPath, VKFileMigrateProgressStatus.MIGRATED, attempt, null);
+                return;
+            } catch (Exception e) {
+                if (attempt < maxAttempts) {
+                    emitProgress(options, c, relPath, VKFileMigrateProgressStatus.RETRYING, attempt, e.getMessage());
+                    sleepRetry(options.getRetryIntervalMs());
+                    continue;
+                }
+                c.incFailedFiles();
+                c.addFailure(relPath, e.getMessage());
+                emitProgress(options, c, relPath, VKFileMigrateProgressStatus.FAILED, attempt, e.getMessage());
+                return;
+            }
+        }
+    }
+
+    private void putTask(BlockingQueue<MigrateTask> queue, MigrateTask task) {
+        try {
+            queue.put(task);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw state("Migrate task enqueue interrupted");
+        }
+    }
+
+    private void joinWorkers(Thread[] workers) {
+        for (Thread worker : workers) {
+            if (worker == null) {
+                continue;
+            }
+            try {
+                worker.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 
@@ -1273,6 +1594,257 @@ public final class LocalFileStore implements VKFileStore {
         return cause == null
                 ? new VKFileException(VKFileErrorCode.IMAGE_ENCODE_ERROR, message)
                 : new VKFileException(VKFileErrorCode.IMAGE_ENCODE_ERROR, message, cause);
+    }
+
+    private CheckpointState prepareCheckpoint(Path sourceBase, String checkpointFile, boolean dryRun) {
+        if (dryRun || checkpointFile == null || checkpointFile.trim().isEmpty()) {
+            return CheckpointState.disabled();
+        }
+        Path p = Path.of(checkpointFile.trim());
+        if (!p.isAbsolute()) {
+            p = p.toAbsolutePath().normalize();
+        } else {
+            p = p.toAbsolutePath().normalize();
+        }
+        if (p.startsWith(sourceBase)) {
+            throw arg("Checkpoint file must not be inside source baseDir: " + p);
+        }
+        try {
+            Set<String> done = ConcurrentHashMap.newKeySet();
+            if (Files.exists(p)) {
+                for (String line : Files.readAllLines(p, StandardCharsets.UTF_8)) {
+                    if (line != null && !line.isBlank()) {
+                        done.add(line.trim());
+                    }
+                }
+            }
+            return new CheckpointState(true, p, done);
+        } catch (IOException e) {
+            throw io("Read checkpoint file failed: " + p, e);
+        }
+    }
+
+    private synchronized void checkpointAppend(CheckpointState checkpoint, String relPath) throws IOException {
+        if (!checkpoint.enabled) {
+            return;
+        }
+        if (checkpoint.completed.contains(relPath)) {
+            return;
+        }
+        ensureParent(checkpoint.path);
+        Files.writeString(checkpoint.path, relPath + System.lineSeparator(), StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
+        checkpoint.completed.add(relPath);
+    }
+
+    private String normalizeRelPath(Path rel) {
+        return rel.toString().replace('\\', '/');
+    }
+
+    private void emitProgress(VKFileMigrateOptions options,
+                              MigrateCounters c,
+                              String relPath,
+                              VKFileMigrateProgressStatus status,
+                              int attempt,
+                              String message) {
+        VKFileMigrateProgressListener listener = options.getProgressListener();
+        if (listener == null) {
+            return;
+        }
+        try {
+            listener.onProgress(new VKFileMigrateProgress(
+                    status,
+                    relPath,
+                    c.totalFiles(),
+                    c.migratedFiles(),
+                    c.skippedFiles(),
+                    c.failedFiles(),
+                    c.totalBytes(),
+                    c.migratedBytes(),
+                    attempt,
+                    options.getMaxRetries(),
+                    message
+            ));
+        } catch (Exception ignore) {
+        }
+    }
+
+    private void sleepRetry(long retryIntervalMs) {
+        if (retryIntervalMs <= 0) {
+            return;
+        }
+        try {
+            Thread.sleep(retryIntervalMs);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private boolean isHiddenSafe(Path p) {
+        try {
+            return Files.isHidden(p);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    private long sizeSafe(Path p) {
+        try {
+            return Files.size(p);
+        } catch (IOException e) {
+            return 0L;
+        }
+    }
+
+    private long copyFileByStream(Path src, Path dst, boolean replaceExisting) throws IOException {
+        StandardOpenOption[] opts = replaceExisting
+                ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE}
+                : new StandardOpenOption[]{StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE};
+        try (InputStream in = Files.newInputStream(src, StandardOpenOption.READ);
+             OutputStream out = Files.newOutputStream(dst, opts)) {
+            return transferCount(in, out);
+        }
+    }
+
+    private String hashByPath(Path p, String algorithm) throws IOException, NoSuchAlgorithmException {
+        MessageDigest digest = MessageDigest.getInstance(algorithm);
+        try (InputStream in = Files.newInputStream(p, StandardOpenOption.READ)) {
+            byte[] buf = new byte[STREAM_BUFFER_SIZE];
+            int n;
+            while ((n = in.read(buf)) != -1) {
+                digest.update(buf, 0, n);
+            }
+        }
+        return toHex(digest.digest());
+    }
+
+    private void cleanupEmptyDirs(Path sourceBase) {
+        try (Stream<Path> s = Files.walk(sourceBase)) {
+            s.sorted(Comparator.reverseOrder())
+                    .filter(p -> !p.equals(sourceBase))
+                    .forEach(p -> {
+                        try {
+                            if (Files.isDirectory(p)) {
+                                try (Stream<Path> children = Files.list(p)) {
+                                    if (children.findAny().isEmpty()) {
+                                        Files.deleteIfExists(p);
+                                    }
+                                }
+                            }
+                        } catch (IOException ignore) {
+                        }
+                    });
+        } catch (IOException ignore) {
+        }
+    }
+
+    private static final class MigrateCounters {
+        private final LongAdder totalFiles = new LongAdder();
+        private final LongAdder totalDirs = new LongAdder();
+        private final LongAdder migratedFiles = new LongAdder();
+        private final LongAdder skippedFiles = new LongAdder();
+        private final LongAdder failedFiles = new LongAdder();
+        private final LongAdder totalBytes = new LongAdder();
+        private final LongAdder migratedBytes = new LongAdder();
+        private final Queue<VKFileMigrateResult.Failure> failures = new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+        private void incTotalFiles() {
+            totalFiles.increment();
+        }
+
+        private void incTotalDirs() {
+            totalDirs.increment();
+        }
+
+        private void incMigratedFiles() {
+            migratedFiles.increment();
+        }
+
+        private void incSkippedFiles() {
+            skippedFiles.increment();
+        }
+
+        private void incFailedFiles() {
+            failedFiles.increment();
+        }
+
+        private void addTotalBytes(long bytes) {
+            totalBytes.add(bytes);
+        }
+
+        private void addMigratedBytes(long bytes) {
+            migratedBytes.add(bytes);
+        }
+
+        private void addFailure(String path, String message) {
+            failures.add(new VKFileMigrateResult.Failure(path, message));
+        }
+
+        private List<VKFileMigrateResult.Failure> drainFailures() {
+            return List.copyOf(failures);
+        }
+
+        private long totalFiles() {
+            return totalFiles.sum();
+        }
+
+        private long totalDirs() {
+            return totalDirs.sum();
+        }
+
+        private long migratedFiles() {
+            return migratedFiles.sum();
+        }
+
+        private long skippedFiles() {
+            return skippedFiles.sum();
+        }
+
+        private long failedFiles() {
+            return failedFiles.sum();
+        }
+
+        private long totalBytes() {
+            return totalBytes.sum();
+        }
+
+        private long migratedBytes() {
+            return migratedBytes.sum();
+        }
+    }
+
+    private static final class MigrateTask {
+        private static final MigrateTask POISON = new MigrateTask(null, null, null, 0L, true);
+
+        private final Path source;
+        private final Path target;
+        private final String relPath;
+        private final long size;
+        private final boolean poison;
+
+        private MigrateTask(Path source, Path target, String relPath, long size, boolean poison) {
+            this.source = source;
+            this.target = target;
+            this.relPath = relPath;
+            this.size = size;
+            this.poison = poison;
+        }
+    }
+
+    private static final class CheckpointState {
+        private final boolean enabled;
+        private final Path path;
+        private final Set<String> completed;
+
+        private CheckpointState(boolean enabled, Path path, Set<String> completed) {
+            this.enabled = enabled;
+            this.path = path;
+            this.completed = completed;
+        }
+
+        private static CheckpointState disabled() {
+            return new CheckpointState(false, null, Set.of());
+        }
     }
 
     private String orEmpty(String value) {
