@@ -2,6 +2,7 @@ package yueyang.vostok.web.core;
 
 import yueyang.vostok.web.VKErrorHandler;
 import yueyang.vostok.web.VKHandler;
+import yueyang.vostok.web.VKHttpMethod;
 import yueyang.vostok.web.VKWebConfig;
 import yueyang.vostok.web.http.VKRequest;
 import yueyang.vostok.web.http.VKResponse;
@@ -134,11 +135,11 @@ public final class VKWebServer {
         this.globalRateLimiter = new VKRateLimiter(config);
     }
 
-    public void setRouteRateLimit(String method, String path, VKRateLimitConfig config) {
+    public void setRouteRateLimit(VKHttpMethod method, String path, VKRateLimitConfig config) {
         if (method == null || path == null || config == null) {
             return;
         }
-        String key = routeLimitKey(method, path);
+        String key = routeLimitKey(method.name(), path);
         routeRateLimiters.put(key, new VKRateLimiter(config));
     }
 

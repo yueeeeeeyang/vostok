@@ -112,7 +112,7 @@ public class VostokWeb {
         return this;
     }
 
-    public VostokWeb rateLimit(String method, String path, VKRateLimitConfig config) {
+    public VostokWeb rateLimit(VKHttpMethod method, String path, VKRateLimitConfig config) {
         ensureServer();
         server.setRouteRateLimit(method, path, config);
         return this;

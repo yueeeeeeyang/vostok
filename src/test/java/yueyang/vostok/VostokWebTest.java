@@ -308,7 +308,7 @@ public class VostokWebTest {
                 .rateLimit(new yueyang.vostok.web.rate.VKRateLimitConfig()
                         .capacity(2).refillTokens(2).refillPeriodMs(60_000)
                         .keyStrategy(yueyang.vostok.web.rate.VKRateLimitKeyStrategy.TRACE_ID))
-                .rateLimit("GET", "/strict", new yueyang.vostok.web.rate.VKRateLimitConfig()
+                .rateLimit(yueyang.vostok.web.VKHttpMethod.GET, "/strict", new yueyang.vostok.web.rate.VKRateLimitConfig()
                         .capacity(1).refillTokens(1).refillPeriodMs(60_000).rejectBody("route limit"))
                 .get("/strict", (req, res) -> res.text("strict"))
                 .get("/open", (req, res) -> res.text("open"));
