@@ -98,7 +98,8 @@ MyType obj2 = VKJson.fromJson(json, MyType.class);
 **核心特性**
 - 统一入口：`Vostok.File`
 - 默认模式：本地文本文件（UTF-8）
-- 覆盖常见文件能力：增删改查、追加、按行读写、复制、移动、目录创建、递归列举、时间戳与大小查询
+- 覆盖常见文件能力：增删改查、追加、按行读写、复制、移动、目录创建、递归列举、时间戳与大小查询、哈希、目录冲突策略复制/移动、文件监听
+- 支持压缩/解压：可压缩文件或目录，解压支持覆盖策略
 - 可扩展文件模式：通过 `registerStore` 接入 OSS/对象存储
 
 **本地文本快速上手**
@@ -126,6 +127,79 @@ var files = Vostok.File.list("notes", true);
 Vostok.File.delete("archive/b.txt");
 ```
 
+**压缩 / 解压示例**
+```java
+import yueyang.vostok.Vostok;
+
+Vostok.File.initLocal("/tmp/vostok-files");
+
+// 压缩单文件
+Vostok.File.zip("notes/a.txt", "zip/a.zip");
+
+// 压缩目录（包含子目录）
+Vostok.File.zip("notes", "zip/notes.zip");
+
+// 解压（默认覆盖）
+Vostok.File.unzip("zip/notes.zip", "unzip");
+
+// 解压（不覆盖）
+Vostok.File.unzip("zip/notes.zip", "unzip", false);
+```
+
+**高级接口示例**
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.file.VKFileConflictStrategy;
+import yueyang.vostok.file.VKFileWatchEventType;
+
+Vostok.File.initLocal("/tmp/vostok-files");
+
+// hash
+String sha256 = Vostok.File.hash("notes/a.txt", "SHA-256");
+
+// mkdir / isFile / isDirectory / rename
+Vostok.File.mkdirs("data");
+Vostok.File.mkdir("data/tmp");
+boolean file = Vostok.File.isFile("notes/a.txt");
+boolean dir = Vostok.File.isDirectory("data/tmp");
+Vostok.File.rename("notes/a.txt", "a-renamed.txt");
+
+// walk + filter
+var txtFiles = Vostok.File.walk("data", true, info -> !info.directory() && info.path().endsWith(".txt"));
+
+// deleteIfExists / deleteRecursively
+Vostok.File.deleteIfExists("data/old.txt");
+Vostok.File.deleteRecursively("data/tmp");
+
+// copyDir / moveDir（带冲突策略）
+Vostok.File.copyDir("projectA", "backup/projectA", VKFileConflictStrategy.OVERWRITE);
+Vostok.File.moveDir("staging", "archive/staging", VKFileConflictStrategy.FAIL);
+
+// watch（目录监听）
+try (var handle = Vostok.File.watch("projectA", event -> {
+    if (event.type() == VKFileWatchEventType.CREATE) {
+        System.out.println("create: " + event.path());
+    } else if (event.type() == VKFileWatchEventType.MODIFY) {
+        System.out.println("modify: " + event.path());
+    } else if (event.type() == VKFileWatchEventType.DELETE) {
+        System.out.println("delete: " + event.path());
+    } else {
+        System.out.println("overflow: " + event.path());
+    }
+})) {
+    Vostok.File.write("projectA/new.txt", "hello");
+    Vostok.File.append("projectA/new.txt", "\nworld");
+    Vostok.File.deleteIfExists("projectA/new.txt");
+}
+
+// watch（单文件监听：实际监听父目录并过滤为该文件）
+try (var fileHandle = Vostok.File.watch("projectA/config.yml", event -> {
+    System.out.println("config changed: " + event.type() + " -> " + event.path());
+})) {
+    Vostok.File.write("projectA/config.yml", "k: v");
+}
+```
+
 **扩展 OSS/对象存储（示例）**
 ```java
 import yueyang.vostok.Vostok;
@@ -141,18 +215,31 @@ public class OssFileStore implements VKFileStore {
     @Override public void write(String path, String content) { throw new UnsupportedOperationException(); }
     @Override public void update(String path, String content) { throw new UnsupportedOperationException(); }
     @Override public String read(String path) { throw new UnsupportedOperationException(); }
+    @Override public String hash(String path, String algorithm) { throw new UnsupportedOperationException(); }
     @Override public boolean delete(String path) { throw new UnsupportedOperationException(); }
+    @Override public boolean deleteIfExists(String path) { throw new UnsupportedOperationException(); }
+    @Override public boolean deleteRecursively(String path) { throw new UnsupportedOperationException(); }
     @Override public boolean exists(String path) { throw new UnsupportedOperationException(); }
+    @Override public boolean isFile(String path) { throw new UnsupportedOperationException(); }
+    @Override public boolean isDirectory(String path) { throw new UnsupportedOperationException(); }
     @Override public void append(String path, String content) { throw new UnsupportedOperationException(); }
     @Override public List<String> readLines(String path) { throw new UnsupportedOperationException(); }
     @Override public void writeLines(String path, List<String> lines) { throw new UnsupportedOperationException(); }
     @Override public List<VKFileInfo> list(String path, boolean recursive) { throw new UnsupportedOperationException(); }
+    @Override public List<VKFileInfo> walk(String path, boolean recursive, java.util.function.Predicate<VKFileInfo> filter) { throw new UnsupportedOperationException(); }
+    @Override public void mkdir(String path) { throw new UnsupportedOperationException(); }
     @Override public void mkdirs(String path) { throw new UnsupportedOperationException(); }
+    @Override public void rename(String path, String newName) { throw new UnsupportedOperationException(); }
     @Override public void copy(String sourcePath, String targetPath, boolean replaceExisting) { throw new UnsupportedOperationException(); }
     @Override public void move(String sourcePath, String targetPath, boolean replaceExisting) { throw new UnsupportedOperationException(); }
+    @Override public void copyDir(String sourceDir, String targetDir, yueyang.vostok.file.VKFileConflictStrategy strategy) { throw new UnsupportedOperationException(); }
+    @Override public void moveDir(String sourceDir, String targetDir, yueyang.vostok.file.VKFileConflictStrategy strategy) { throw new UnsupportedOperationException(); }
     @Override public void touch(String path) { throw new UnsupportedOperationException(); }
     @Override public long size(String path) { throw new UnsupportedOperationException(); }
     @Override public Instant lastModified(String path) { throw new UnsupportedOperationException(); }
+    @Override public void zip(String sourcePath, String zipPath) { throw new UnsupportedOperationException(); }
+    @Override public void unzip(String zipPath, String targetDir, boolean replaceExisting) { throw new UnsupportedOperationException(); }
+    @Override public yueyang.vostok.file.VKFileWatchHandle watch(String path, yueyang.vostok.file.VKFileWatchListener listener) { throw new UnsupportedOperationException(); }
 }
 
 Vostok.File.registerStore("oss", new OssFileStore());

@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /**
@@ -101,12 +102,32 @@ public class VostokFile {
         return store().read(path);
     }
 
+    public static String hash(String path, String algorithm) {
+        return store().hash(path, algorithm);
+    }
+
     public static boolean delete(String path) {
         return store().delete(path);
     }
 
+    public static boolean deleteIfExists(String path) {
+        return store().deleteIfExists(path);
+    }
+
+    public static boolean deleteRecursively(String path) {
+        return store().deleteRecursively(path);
+    }
+
     public static boolean exists(String path) {
         return store().exists(path);
+    }
+
+    public static boolean isFile(String path) {
+        return store().isFile(path);
+    }
+
+    public static boolean isDirectory(String path) {
+        return store().isDirectory(path);
     }
 
     public static void append(String path, String content) {
@@ -129,8 +150,24 @@ public class VostokFile {
         return store().list(path, recursive);
     }
 
+    public static List<VKFileInfo> walk(String path, boolean recursive, Predicate<VKFileInfo> filter) {
+        return store().walk(path, recursive, filter);
+    }
+
+    public static List<VKFileInfo> walk(String path, boolean recursive) {
+        return store().walk(path, recursive, null);
+    }
+
+    public static void mkdir(String path) {
+        store().mkdir(path);
+    }
+
     public static void mkdirs(String path) {
         store().mkdirs(path);
+    }
+
+    public static void rename(String path, String newName) {
+        store().rename(path, newName);
     }
 
     public static void copy(String sourcePath, String targetPath) {
@@ -149,6 +186,14 @@ public class VostokFile {
         store().move(sourcePath, targetPath, replaceExisting);
     }
 
+    public static void copyDir(String sourceDir, String targetDir, VKFileConflictStrategy strategy) {
+        store().copyDir(sourceDir, targetDir, strategy);
+    }
+
+    public static void moveDir(String sourceDir, String targetDir, VKFileConflictStrategy strategy) {
+        store().moveDir(sourceDir, targetDir, strategy);
+    }
+
     public static void touch(String path) {
         store().touch(path);
     }
@@ -159,6 +204,22 @@ public class VostokFile {
 
     public static Instant lastModified(String path) {
         return store().lastModified(path);
+    }
+
+    public static void zip(String sourcePath, String zipPath) {
+        store().zip(sourcePath, zipPath);
+    }
+
+    public static void unzip(String zipPath, String targetDir) {
+        store().unzip(zipPath, targetDir, true);
+    }
+
+    public static void unzip(String zipPath, String targetDir, boolean replaceExisting) {
+        store().unzip(zipPath, targetDir, replaceExisting);
+    }
+
+    public static VKFileWatchHandle watch(String path, VKFileWatchListener listener) {
+        return store().watch(path, listener);
     }
 
     private static VKFileStore store() {
