@@ -1,6 +1,8 @@
 package yueyang.vostok;
 
 import yueyang.vostok.data.VostokData;
+import yueyang.vostok.file.VostokFile;
+import yueyang.vostok.log.VostokLog;
 import yueyang.vostok.web.VostokWeb;
 
 /**
@@ -23,6 +25,22 @@ public final class Vostok {
      */
     public static final class Web extends VostokWeb {
         private Web() {
+        }
+    }
+
+    /**
+     * File entry (local text file by default, extensible to OSS/object storage).
+     */
+    public static final class File extends VostokFile {
+        private File() {
+        }
+    }
+
+    /**
+     * Log entry.
+     */
+    public static final class Log extends VostokLog {
+        private Log() {
         }
     }
 }

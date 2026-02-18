@@ -1,6 +1,6 @@
 # Vostok
 
-Vostok 是一个面向 JDK 17+ 的全能框架，当前包含高性能数据访问（Data）与轻量 Web 服务器（Web）两大模块，整体保持零依赖（测试依赖除外）。
+Vostok 是一个面向 JDK 17+ 的全能框架，当前包含高性能数据访问（Data）、轻量 Web 服务器（Web）、文件能力（File）与日志能力（Log）四大模块，整体保持零依赖（测试依赖除外）。
 
 **重要提醒**
 当前项目仅用于实验和技术验证，不建议用于生产环境。
@@ -9,6 +9,8 @@ Vostok 是一个面向 JDK 17+ 的全能框架，当前包含高性能数据访�
 - Common：通用注解、实体扫描与 JSON 序列化。
 - Data：纯 JDBC 的零依赖 ORM/CRUD 组件，内建连接池、事务、SQL 构建与多数据源。
 - Web：高性能 Web 服务器，支持中间件、静态资源、TraceId、异步 AccessLog、动态路由与自动 CRUD API。
+- File：统一文件门面，默认本地文本文件操作，支持后续扩展 OSS/对象存储实现。
+- Log：高性能异步日志，支持统一入口、自动调用类识别、文件滚动分割与输出目录配置。
 
 **运行环境**
 - JDK 17+
@@ -90,6 +92,128 @@ MyType obj2 = VKJson.fromJson(json, MyType.class);
 说明：
 - 支持嵌套对象、数组、List、Map、基础类型。
 - JSON 与实体字段名一一对应（无第三方依赖）。
+
+**File 模块**
+
+**核心特性**
+- 统一入口：`Vostok.File`
+- 默认模式：本地文本文件（UTF-8）
+- 覆盖常见文件能力：增删改查、追加、按行读写、复制、移动、目录创建、递归列举、时间戳与大小查询
+- 可扩展文件模式：通过 `registerStore` 接入 OSS/对象存储
+
+**本地文本快速上手**
+```java
+import yueyang.vostok.Vostok;
+
+// 可选：指定本地文件根目录（默认 user.dir）
+Vostok.File.initLocal("/tmp/vostok-files");
+
+Vostok.File.create("notes/a.txt", "hello");
+Vostok.File.append("notes/a.txt", "\nworld");
+String text = Vostok.File.read("notes/a.txt");
+
+Vostok.File.writeLines("notes/b.txt", java.util.List.of("L1", "L2"));
+java.util.List<String> lines = Vostok.File.readLines("notes/b.txt");
+
+boolean exists = Vostok.File.exists("notes/a.txt");
+long size = Vostok.File.size("notes/a.txt");
+java.time.Instant modified = Vostok.File.lastModified("notes/a.txt");
+
+Vostok.File.copy("notes/a.txt", "backup/a.txt");
+Vostok.File.move("notes/b.txt", "archive/b.txt");
+var files = Vostok.File.list("notes", true);
+
+Vostok.File.delete("archive/b.txt");
+```
+
+**扩展 OSS/对象存储（示例）**
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.file.VKFileInfo;
+import yueyang.vostok.file.VKFileStore;
+
+import java.time.Instant;
+import java.util.List;
+
+public class OssFileStore implements VKFileStore {
+    @Override public String mode() { return "oss"; }
+    @Override public void create(String path, String content) { throw new UnsupportedOperationException(); }
+    @Override public void write(String path, String content) { throw new UnsupportedOperationException(); }
+    @Override public void update(String path, String content) { throw new UnsupportedOperationException(); }
+    @Override public String read(String path) { throw new UnsupportedOperationException(); }
+    @Override public boolean delete(String path) { throw new UnsupportedOperationException(); }
+    @Override public boolean exists(String path) { throw new UnsupportedOperationException(); }
+    @Override public void append(String path, String content) { throw new UnsupportedOperationException(); }
+    @Override public List<String> readLines(String path) { throw new UnsupportedOperationException(); }
+    @Override public void writeLines(String path, List<String> lines) { throw new UnsupportedOperationException(); }
+    @Override public List<VKFileInfo> list(String path, boolean recursive) { throw new UnsupportedOperationException(); }
+    @Override public void mkdirs(String path) { throw new UnsupportedOperationException(); }
+    @Override public void copy(String sourcePath, String targetPath, boolean replaceExisting) { throw new UnsupportedOperationException(); }
+    @Override public void move(String sourcePath, String targetPath, boolean replaceExisting) { throw new UnsupportedOperationException(); }
+    @Override public void touch(String path) { throw new UnsupportedOperationException(); }
+    @Override public long size(String path) { throw new UnsupportedOperationException(); }
+    @Override public Instant lastModified(String path) { throw new UnsupportedOperationException(); }
+}
+
+Vostok.File.registerStore("oss", new OssFileStore());
+Vostok.File.withMode("oss", () -> {
+    // 在 OSS 模式下执行文件操作
+    // Vostok.File.write("bucket/path/a.txt", "content");
+});
+```
+
+**Log 模块**
+
+**核心特性**
+- 统一入口：`Vostok.Log`
+- 异步写日志：业务线程只入队，后台线程批量落盘
+- 自动调用类识别：无需手动传 logger/class
+- 日志滚动分割：按日期变化或文件大小阈值触发滚动
+- 输出配置可调：目录、文件前缀、单文件大小、保留备份数
+
+**快速上手**
+```java
+import yueyang.vostok.Vostok;
+
+Vostok.Log.info("service started");
+Vostok.Log.warn("cache miss: key={}", "user:1001");
+
+try {
+    throw new RuntimeException("boom");
+} catch (Exception e) {
+    Vostok.Log.error("request failed", e);
+}
+```
+
+**日志配置**
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.log.VKLogLevel;
+
+Vostok.Log.setLevel(VKLogLevel.INFO);     // 日志级别
+Vostok.Log.setOutputDir("/tmp/vostok-log"); // 输出目录
+Vostok.Log.setFilePrefix("app");          // 日志文件前缀
+Vostok.Log.setMaxFileSizeMb(128);         // 单文件最大 MB（触发滚动）
+Vostok.Log.setMaxBackups(30);             // 最大保留历史文件数
+Vostok.Log.setConsoleEnabled(true);       // 是否同时输出控制台
+```
+
+**滚动与文件命名**
+- 当前写入文件：`<filePrefix>.log`（如 `app.log`）
+- 滚动后文件：`<filePrefix>-yyyyMMdd-HHmmss-<seq>.log`
+- 触发条件：
+  - 日期变化（跨天）
+  - 当前文件大小超过 `setMaxFileSizeMb` 阈值
+
+**刷新与关闭（可选）**
+```java
+Vostok.Log.flush();    // 强制刷新队列到磁盘
+Vostok.Log.shutdown(); // 主动关闭日志线程（通常用于进程退出前）
+```
+
+**说明**
+- Data/Web/File 内部日志也统一通过 `Vostok.Log` 输出。
+- 若异步队列已满，日志会丢弃；可通过 `Vostok.Log.droppedLogs()` 查看累计丢弃数。
 
 **Data 模块**
 
