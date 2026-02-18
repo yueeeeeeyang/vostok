@@ -1922,3 +1922,273 @@ VKConfigOptions options = new VKConfigOptions()
     // 可选：自定义系统属性提供器。
     .systemPropertiesProvider(System::getProperties);
 ```
+
+---
+
+# 7. Security 模块
+
+`Vostok.Security` 为独立安全模块，当前提供以下检测能力（不依赖 `Data/Web` 自动集成）：
+
+- SQL 注入检测（含风险函数扩展：`pg_sleep/load_file/into outfile/copy ... program/xp_cmdshell`）
+- XSS 检测
+- 命令注入检测
+- 路径穿越检测
+- 响应敏感信息检测与脱敏
+- 文件魔数识别与白名单校验
+- 可执行脚本上传检测（扩展名 + 魔数 + 内容特征）
+
+## 7.1 接口定义
+
+```java
+public interface Vostok.Security {
+    /**
+     * 使用默认配置初始化 Security 模块。
+     *
+     * - 无参数。
+     */
+    public static void init();
+
+    /**
+     * 使用指定配置初始化 Security 模块（幂等，重复 init 会忽略后续调用）。
+     *
+     * - config：安全模块配置，类型为 VKSecurityConfig；传 null 时使用默认配置。
+     */
+    public static void init(VKSecurityConfig config);
+
+    /**
+     * 使用指定配置重建 Security 模块（可用于运行中动态调整规则与阈值）。
+     *
+     * - config：安全模块配置，类型为 VKSecurityConfig；传 null 时使用默认配置。
+     */
+    public static void reinit(VKSecurityConfig config);
+
+    /**
+     * 判断 Security 模块是否已初始化。
+     *
+     * - 返回值：boolean，true 表示已初始化。
+     */
+    public static boolean started();
+
+    /**
+     * 关闭 Security 模块（释放当前扫描器实例，不清理自定义规则列表）。
+     */
+    public static void close();
+
+    /**
+     * 注册自定义安全规则（追加到内置规则链之后执行）。
+     *
+     * - rule：自定义规则实现，类型为 VKSecurityRule；为 null 时忽略。
+     */
+    public static void registerRule(VKSecurityRule rule);
+
+    /**
+     * 清空当前已注册的所有自定义规则。
+     */
+    public static void clearCustomRules();
+
+    /**
+     * 获取当前生效规则名称列表（包含内置规则与自定义规则）。
+     *
+     * - 返回值：List<String>，规则名称列表。
+     */
+    public static List<String> listRules();
+
+    /**
+     * 检测 SQL 字符串的安全性（不含参数数量校验）。
+     *
+     * - sql：待检测 SQL 文本，类型为 String。
+     * - 返回值：VKSqlCheckResult，包含是否安全、风险等级、命中规则与原因。
+     */
+    public static VKSqlCheckResult checkSql(String sql);
+
+    /**
+     * 检测 SQL 字符串的安全性（包含占位符与参数数量一致性校验）。
+     *
+     * - sql：待检测 SQL 文本，类型为 String。
+     * - params：SQL 参数列表，类型为 Object...。
+     * - 返回值：VKSqlCheckResult，包含是否安全、风险等级、命中规则与原因。
+     */
+    public static VKSqlCheckResult checkSql(String sql, Object... params);
+
+    /**
+     * 快速判断 SQL 是否安全。
+     *
+     * - sql：待检测 SQL 文本，类型为 String。
+     * - 返回值：boolean，true 表示通过当前阈值判定。
+     */
+    public static boolean isSafeSql(String sql);
+
+    /**
+     * 断言 SQL 安全，不安全时抛出 VKSecurityException。
+     *
+     * - sql：待检测 SQL 文本，类型为 String。
+     */
+    public static void assertSafeSql(String sql);
+
+    /**
+     * 检测输入文本是否存在 XSS 风险。
+     *
+     * - input：待检测文本，类型为 String。
+     * - 返回值：VKSecurityCheckResult，包含风险等级与命中规则。
+     */
+    public static VKSecurityCheckResult checkXss(String input);
+
+    /**
+     * 断言输入文本无 XSS 风险，不安全时抛出 VKSecurityException。
+     *
+     * - input：待检测文本，类型为 String。
+     */
+    public static void assertSafeXss(String input);
+
+    /**
+     * 检测输入文本是否存在命令注入风险。
+     *
+     * - input：待检测命令文本，类型为 String。
+     * - 返回值：VKSecurityCheckResult，包含风险等级与命中规则。
+     */
+    public static VKSecurityCheckResult checkCommandInjection(String input);
+
+    /**
+     * 断言输入文本无命令注入风险，不安全时抛出 VKSecurityException。
+     *
+     * - input：待检测命令文本，类型为 String。
+     */
+    public static void assertSafeCommand(String input);
+
+    /**
+     * 检测路径字符串是否存在路径穿越风险。
+     *
+     * - inputPath：待检测路径，类型为 String。
+     * - 返回值：VKSecurityCheckResult，包含风险等级与命中规则。
+     */
+    public static VKSecurityCheckResult checkPathTraversal(String inputPath);
+
+    /**
+     * 断言路径字符串无穿越风险，不安全时抛出 VKSecurityException。
+     *
+     * - inputPath：待检测路径，类型为 String。
+     */
+    public static void assertSafePath(String inputPath);
+
+    /**
+     * 检测响应文本是否包含敏感信息（手机号、邮箱、证件号、银行卡等）。
+     *
+     * - payload：响应文本，类型为 String。
+     * - 返回值：VKSecurityCheckResult，包含风险等级与命中规则。
+     */
+    public static VKSecurityCheckResult checkSensitiveResponse(String payload);
+
+    /**
+     * 对响应文本中的敏感信息进行脱敏。
+     *
+     * - payload：响应文本，类型为 String。
+     * - 返回值：String，脱敏后的文本。
+     */
+    public static String maskSensitiveResponse(String payload);
+
+    /**
+     * 根据文件魔数识别文件类型。
+     *
+     * - content：文件字节内容，类型为 byte[]。
+     * - 返回值：VKFileType，识别出的文件类型（未知时为 UNKNOWN）。
+     */
+    public static VKFileType detectFileType(byte[] content);
+
+    /**
+     * 校验文件魔数是否属于允许类型白名单。
+     *
+     * - content：文件字节内容，类型为 byte[]。
+     * - allowed：允许的文件类型，类型为 VKFileType...。
+     * - 返回值：VKSecurityCheckResult，安全时表示命中白名单。
+     */
+    public static VKSecurityCheckResult checkFileMagic(byte[] content, VKFileType... allowed);
+
+    /**
+     * 检测上传文件是否包含可执行脚本风险（扩展名/魔数/内容特征）。
+     *
+     * - fileName：上传文件名，类型为 String。
+     * - content：上传文件字节内容，类型为 byte[]。
+     * - 返回值：VKSecurityCheckResult，包含风险等级与命中规则。
+     */
+    public static VKSecurityCheckResult checkExecutableScriptUpload(String fileName, byte[] content);
+}
+```
+
+## 7.2 使用 Demo
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.security.VKSecurityConfig;
+import yueyang.vostok.security.VKSecurityRiskLevel;
+import yueyang.vostok.security.file.VKFileType;
+
+public class SecurityApiDemo {
+    public static void main(String[] args) {
+        Vostok.Security.init(new VKSecurityConfig()
+                .riskThreshold(VKSecurityRiskLevel.MEDIUM)
+                .allowMultiStatement(false)
+                .allowCommentToken(false)
+                .maxSqlLength(10000));
+
+        var safe = Vostok.Security.checkSql("SELECT * FROM t_user WHERE id = ?", 1L);
+        var unsafe = Vostok.Security.checkSql("SELECT * FROM t_user WHERE id = 1 OR 1=1 --");
+
+        System.out.println("safe=" + safe.isSafe());
+        System.out.println("unsafe=" + unsafe.isSafe() + ", reasons=" + unsafe.getReasons());
+
+        Vostok.Security.assertSafeSql("SELECT * FROM t_user WHERE id = 1");
+
+        var xss = Vostok.Security.checkXss("<script>alert(1)</script>");
+        var cmd = Vostok.Security.checkCommandInjection("ls; rm -rf /");
+        var path = Vostok.Security.checkPathTraversal("../../etc/passwd");
+        var resp = Vostok.Security.checkSensitiveResponse("{\"phone\":\"13800138000\"}");
+        String masked = Vostok.Security.maskSensitiveResponse("{\"phone\":\"13800138000\"}");
+
+        byte[] png = new byte[]{(byte)0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
+        VKFileType type = Vostok.Security.detectFileType(png);
+        var magic = Vostok.Security.checkFileMagic(png, VKFileType.PNG, VKFileType.JPEG);
+        var upload = Vostok.Security.checkExecutableScriptUpload("run.sh", "#!/bin/bash".getBytes());
+    }
+}
+```
+
+## 7.3 配置详解（VKSecurityConfig）
+
+```java
+import yueyang.vostok.security.VKSecurityConfig;
+import yueyang.vostok.security.VKSecurityRiskLevel;
+
+VKSecurityConfig cfg = new VKSecurityConfig()
+    // 是否启用 Security 检测。
+    .enabled(true)
+    // 严格模式：增加更激进的关键词策略。
+    .strictMode(false)
+    // 是否允许 SQL 多语句。
+    .allowMultiStatement(false)
+    // 是否允许 SQL 注释 token（-- / /* */ / #）。
+    .allowCommentToken(false)
+    // 最大 SQL 长度阈值。
+    .maxSqlLength(10_000)
+    // 风险阈值：达到该等级及以上判定为 unsafe。
+    .riskThreshold(VKSecurityRiskLevel.MEDIUM)
+    // 是否启用内置规则。
+    .builtinRulesEnabled(true)
+    // 自定义白名单正则（命中则快速放行）。
+    .whitelistPatterns("^SELECT\\s+1$")
+    // 自定义黑名单正则（命中则高风险）。
+    .blacklistPatterns(".*\\bUNION\\b.*")
+    // 对空 SQL 等无效输入是否直接抛错。
+    .failOnInvalidInput(true);
+```
+
+## 7.4 检测说明
+
+- `checkSql(...)`：SQL 注入与危险函数模式检测，支持占位符参数数量校验。
+- `checkXss(...)`：检测 `script` 标签、事件处理器、`javascript:` 协议等 payload。
+- `checkCommandInjection(...)`：检测 shell 元字符与危险命令组合。
+- `checkPathTraversal(...)`：检测 `../`、URL 编码穿越、空字节绕过模式。
+- `checkSensitiveResponse(...)`：检测手机号、邮箱、身份证号、银行卡号泄露。
+- `maskSensitiveResponse(...)`：对敏感字段进行掩码输出。
+- `detectFileType(...)`：按魔数识别常见文件类型。
+- `checkFileMagic(...)`：按白名单校验文件魔数类型。
+- `checkExecutableScriptUpload(...)`：识别脚本扩展名、可执行魔数和可执行脚本内容特征。

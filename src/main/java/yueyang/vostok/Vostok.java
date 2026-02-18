@@ -4,6 +4,7 @@ import yueyang.vostok.data.VostokData;
 import yueyang.vostok.config.VostokConfig;
 import yueyang.vostok.file.VostokFile;
 import yueyang.vostok.log.VostokLog;
+import yueyang.vostok.security.VostokSecurity;
 import yueyang.vostok.web.VostokWeb;
 
 /**
@@ -50,6 +51,14 @@ public final class Vostok {
      */
     public static final class Log extends VostokLog {
         private Log() {
+        }
+    }
+
+    /**
+     * Security entry.
+     */
+    public static final class Security extends VostokSecurity {
+        private Security() {
         }
     }
 }
