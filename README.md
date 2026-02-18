@@ -617,6 +617,15 @@ VKDataConfig cfg = new VKDataConfig()
     .queryTimeoutMs(0);
 ```
 
+## 2.4 Data 模块 Options 配置项说明
+
+当前版本 Data 模块无独立 `*Options` 类，配置参数统一收敛在 `VKDataConfig`。
+
+- `Data Options 类扫描范围`：`yueyang.vostok.data` 包下所有类。
+- `当前匹配结果`：无 `*Options` 命名类。
+- `等效配置入口`：`VKDataConfig`（见上方 `2.3 配置详解`）。
+- `维护约定`：后续若新增 Data 专属 `*Options` 类，将在本节按相同格式补充字段含义、默认值、取值约束、适用接口。
+
 ---
 
 # 3. Web 模块
@@ -1106,6 +1115,98 @@ VKWebConfig cfg = new VKWebConfig()
     .websocketPongTimeoutMs(10_000)
     // WebSocket 空闲超时毫秒。默认 120000。
     .websocketIdleTimeoutMs(120_000);
+```
+
+## 3.4 Options 配置详解（Web）
+
+### 3.4.1 限流配置（VKRateLimitConfig）
+
+```java
+import yueyang.vostok.web.rate.VKRateLimitConfig;
+import yueyang.vostok.web.rate.VKRateLimitKeyStrategy;
+
+VKRateLimitConfig limit = new VKRateLimitConfig()
+    // 令牌桶容量（桶中最多令牌数）。默认 100；内部最小 1。
+    .capacity(100)
+    // 每个补充周期新增令牌数。默认 100；内部最小 1。
+    .refillTokens(100)
+    // 补充周期（毫秒）。默认 1000；内部最小 1。
+    .refillPeriodMs(1000)
+    // 限流 key 计算策略。默认 IP。
+    // IP：按客户端 IP 限流
+    // TRACE_ID：按请求 traceId 限流
+    // HEADER：按指定请求头限流
+    // CUSTOM：按自定义函数限流
+    .keyStrategy(VKRateLimitKeyStrategy.IP)
+    // HEADER 模式时读取的请求头名。默认 X-Rate-Limit-Key。
+    .headerName("X-Rate-Limit-Key")
+    // CUSTOM 模式时的 key 生成函数（req -> key）。
+    .customKeyResolver(req -> req.queryParam("tenantId"))
+    // 超限响应状态码。默认 429；<=0 时回退为 429。
+    .rejectStatus(429)
+    // 超限响应内容。默认 "Too Many Requests"；null 时按空串。
+    .rejectBody("Too Many Requests");
+```
+
+```java
+// 全局限流
+Vostok.Web.init(8080)
+    .rateLimit(new VKRateLimitConfig()
+        .capacity(500)
+        .refillTokens(500)
+        .refillPeriodMs(1000));
+
+// 路由限流（method 改为枚举，避免误传）
+Vostok.Web.init(8080)
+    .rateLimit(VKHttpMethod.POST, "/api/order/create", new VKRateLimitConfig()
+        .capacity(50)
+        .refillTokens(50)
+        .refillPeriodMs(1000)
+        .keyStrategy(VKRateLimitKeyStrategy.HEADER)
+        .headerName("X-User-Id"));
+```
+
+### 3.4.2 WebSocket 路由配置（VKWebSocketConfig）
+
+```java
+import yueyang.vostok.web.websocket.VKWebSocketConfig;
+
+VKWebSocketConfig ws = new VKWebSocketConfig()
+    // 单帧 payload 最大字节数。默认 1MB；内部最小 1024。
+    .maxFramePayloadBytes(1024 * 1024)
+    // 单消息（含分片聚合）最大字节数。默认 4MB；内部最小 1024。
+    .maxMessageBytes(4 * 1024 * 1024)
+    // 单连接发送队列最大帧数。默认 1024；内部最小 16。
+    .maxPendingFrames(1024)
+    // 单连接发送队列最大字节数。默认 8MB；内部最小 1024。
+    .maxPendingBytes(8 * 1024 * 1024)
+    // 服务端主动 ping 间隔毫秒。默认 30000；内部最小 1000。
+    .pingIntervalMs(30_000)
+    // 发送 ping 后等待 pong 超时毫秒。默认 10000；内部最小 1000。
+    .pongTimeoutMs(10_000)
+    // 连接空闲超时毫秒。默认 120000；内部最小 1000。
+    .idleTimeoutMs(120_000);
+```
+
+```java
+import yueyang.vostok.web.websocket.VKWebSocketHandler;
+import yueyang.vostok.web.websocket.VKWebSocketSession;
+
+Vostok.Web.init(8080)
+    .websocket("/ws/chat", new VKWebSocketConfig()
+        .maxMessageBytes(2 * 1024 * 1024)
+        .pingIntervalMs(15_000)
+        .pongTimeoutMs(5_000), new VKWebSocketHandler() {
+        @Override
+        public void onOpen(VKWebSocketSession session) {
+            session.sendText("welcome");
+        }
+
+        @Override
+        public void onText(VKWebSocketSession session, String text) {
+            session.sendText("echo:" + text);
+        }
+    });
 ```
 
 ---
@@ -1816,36 +1917,82 @@ VKFileConfig cfg = new VKFileConfig()
     .datePartitionZoneId("UTC");
 ```
 
+## 4.4 Options 配置详解（File）
+
+```java
+import yueyang.vostok.file.VKUnzipOptions;
+
+VKUnzipOptions unzipOptions = VKUnzipOptions.builder()
+    // 解压时若目标文件已存在，是否覆盖。默认 true。
+    .replaceExisting(true)
+    // 最大解压条目数。默认 -1（不限制）；建议生产环境设置上限。
+    .maxEntries(10_000)
+    // 总解压字节上限。默认 -1（不限制）；建议设置防止磁盘被打满。
+    .maxTotalUncompressedBytes(2L * 1024 * 1024 * 1024)
+    // 单个条目解压字节上限。默认 -1（不限制）；建议设置防止异常大文件。
+    .maxEntryUncompressedBytes(512L * 1024 * 1024)
+    .build();
+```
+
+```java
+import yueyang.vostok.file.VKThumbnailMode;
+import yueyang.vostok.file.VKThumbnailOptions;
+import java.awt.Color;
+
+VKThumbnailOptions thumbnailOptions = VKThumbnailOptions.builder(320, 240)
+    // 缩放模式：FIT（完整显示）/ FILL（填满裁切）。默认 FIT。
+    .mode(VKThumbnailMode.FIT)
+    // 输出格式（jpg/png/webp 等，依赖运行时 ImageIO 编解码器）。默认 null（沿用源格式）。
+    .format("jpg")
+    // 压缩质量 [0,1]。默认 0.85。
+    .quality(0.85f)
+    // 是否保持原图宽高比。默认 true。
+    .keepAspectRatio(true)
+    // 是否允许放大到目标尺寸。默认 false。
+    .upscale(false)
+    // 背景色（如透明图转 jpg 时生效）。默认白色。
+    .background(Color.WHITE)
+    // 是否移除元数据。默认 true。
+    .stripMetadata(true)
+    // 是否锐化。默认 false。
+    .sharpen(false)
+    // 输入像素上限。默认 100_000_000。
+    .maxInputPixels(100_000_000L)
+    // 输出像素上限。默认 64_000_000。
+    .maxOutputPixels(64_000_000L)
+    .build();
+```
+
 ```java
 import yueyang.vostok.file.VKFileMigrateMode;
 import yueyang.vostok.file.VKFileConflictStrategy;
 import yueyang.vostok.file.VKFileMigrateOptions;
 
 VKFileMigrateOptions migrateOptions = new VKFileMigrateOptions()
-    // 迁移模式：COPY_ONLY（只复制）或 MOVE（复制后删除源文件）。默认 COPY_ONLY。
+    // 迁移模式：COPY_ONLY（仅复制）/ MOVE（复制后删除源文件）。默认 COPY_ONLY。
     .mode(VKFileMigrateMode.COPY_ONLY)
     // 冲突策略：FAIL / SKIP / OVERWRITE。默认 FAIL。
     .conflictStrategy(VKFileConflictStrategy.FAIL)
-    // 是否校验源/目标文件哈希一致（SHA-256）。默认 false。
+    // 是否校验源/目标文件哈希（SHA-256）。默认 false。
     .verifyHash(false)
     // 是否包含隐藏文件。默认 true。
     .includeHidden(true)
-    // 并行 worker 数。默认 1（串行）；>1 启用并行迁移。
-    .parallelism(4)
-    // 有界任务队列容量。默认 1024；队列满时生产者阻塞等待（背压，不丢任务）。
-    .queueCapacity(2048)
-    // 断点续传文件路径（建议使用 source baseDir 外部绝对路径）；为空则不启用断点续传。
-    .checkpointFile("/tmp/vostok-migrate.ckpt")
-    // 单文件失败后最大重试次数。默认 0（不重试）。
-    .maxRetries(2)
-    // 重试间隔毫秒。默认 200。
-    .retryIntervalMs(300)
-    // 迁移进度回调（可用于日志/指标/告警）。
-    .progressListener(progress -> {})
-    // MOVE 模式下是否清理迁移后源目录中的空目录。默认 true。
+    // MOVE 模式下是否清理迁移后的空目录。默认 true。
     .deleteEmptyDirsAfterMove(true)
     // 仅演练不落盘。默认 false。
-    .dryRun(false);
+    .dryRun(false)
+    // 单文件失败最大重试次数。默认 0（不重试）。
+    .maxRetries(2)
+    // 重试间隔（毫秒）。默认 200。
+    .retryIntervalMs(300)
+    // 并行 worker 数。默认 1（串行）；>1 启用并行迁移。
+    .parallelism(4)
+    // 有界任务队列容量。默认 1024；队列满时阻塞等待（背压，不丢任务）。
+    .queueCapacity(2048)
+    // 断点续传文件路径（建议使用 source baseDir 外部绝对路径）。
+    .checkpointFile("/tmp/vostok-migrate.ckpt")
+    // 进度回调（状态：RETRYING/MIGRATED/SKIPPED/FAILED/DONE）。
+    .progressListener(progress -> {});
 ```
 
 ---
@@ -2379,6 +2526,8 @@ public class ConfigDemo {
 
 ## 6.6 配置详解（VKConfigOptions）
 
+`Config` 模块当前仅包含 1 个 Options 类：`VKConfigOptions`。
+
 ```java
 import yueyang.vostok.config.VKConfigOptions;
 
@@ -2409,6 +2558,20 @@ VKConfigOptions options = new VKConfigOptions()
     // 可选：自定义系统属性提供器。
     .systemPropertiesProvider(System::getProperties);
 ```
+
+配置项说明（全量）：
+
+- `scanClasspath(boolean)`：默认 `true`。是否扫描 classpath（目录与 jar）中的配置文件。
+- `scanUserDir(boolean)`：默认 `true`。是否扫描 `System.getProperty("user.dir")` 下的配置文件。
+- `strictNamespaceConflict(boolean)`：默认 `false`。为 `true` 时，同名 namespace（如 `a.properties` 与 `a.yaml`）冲突直接 fail-fast。
+- `addScanDir(Path)`：默认空。追加业务自定义扫描目录，可多次调用。
+- `loadEnv(boolean)`：默认 `true`。是否启用环境变量层（优先级高于文件层）。
+- `loadSystemProperties(boolean)`：默认 `true`。是否启用 JVM `-D` 系统属性层（优先级高于环境变量层）。
+- `watchEnabled(boolean)`：默认 `false`。是否启用文件监听热更新。
+- `watchDebounceMs(long)`：默认 `300` 毫秒，最小 `50` 毫秒。热更新防抖时间窗口。
+- `classpath(String)`：默认 `System.getProperty("java.class.path", "")`。可在测试或特殊运行时覆盖 classpath 扫描来源。
+- `envProvider(Supplier<Map<String,String>>)`：默认 `System::getenv`。用于替换环境变量来源（常用于测试注入）。
+- `systemPropertiesProvider(Supplier<Properties>)`：默认 `System::getProperties`。用于替换 JVM 属性来源（常用于测试注入）。
 
 ---
 
