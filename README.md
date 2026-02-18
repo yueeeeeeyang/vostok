@@ -754,12 +754,12 @@ public interface Vostok.Web {
     /**
      * 注册指定路由限流器（仅命中 method+path 时生效）。
      *
-     * - method：HTTP 方法，类型为 String，例如 "GET"/"POST"。
+     * - method：HTTP 方法枚举，类型为 VKHttpMethod，例如 VKHttpMethod.GET/VKHttpMethod.POST。
      * - path：路由模板，类型为 String，例如 "/user/{id}"。
      * - config：限流配置，类型为 VKRateLimitConfig，不能为空。
      * - 返回值：VostokWeb（支持链式调用）。
      */
-    public VostokWeb rateLimit(String method, String path, VKRateLimitConfig config);
+    public VostokWeb rateLimit(VKHttpMethod method, String path, VKRateLimitConfig config);
 
 }
 ```
@@ -839,6 +839,7 @@ public interface VKResponse {
 
 ```java
 import yueyang.vostok.Vostok;
+import yueyang.vostok.web.VKHttpMethod;
 import yueyang.vostok.web.VKWebConfig;
 import yueyang.vostok.web.auto.VKCrudStyle;
 import yueyang.vostok.web.http.VKCookie;
@@ -865,7 +866,7 @@ public class WebApiDemo {
                         .refillTokens(200)
                         .refillPeriodMs(1000)
                         .keyStrategy(VKRateLimitKeyStrategy.IP))
-                .rateLimit("POST", "/upload", new VKRateLimitConfig()
+                .rateLimit(VKHttpMethod.POST, "/upload", new VKRateLimitConfig()
                         .capacity(20)
                         .refillTokens(20)
                         .refillPeriodMs(1000))
@@ -1139,6 +1140,24 @@ public interface Vostok.File {
      * - content：二进制内容，类型为 byte[]，不能为空。
      */
     public static void appendBytes(String path, byte[] content);
+
+    /**
+     * 生成图片缩略图并以字节数组返回。
+     *
+     * - imagePath：源图片路径，类型为 String。
+     * - options：缩略图参数，类型为 VKThumbnailOptions，不能为空。
+     * - 返回值：byte[]（缩略图内容）。
+     */
+    public static byte[] thumbnail(String imagePath, VKThumbnailOptions options);
+
+    /**
+     * 生成图片缩略图并写入目标文件。
+     *
+     * - imagePath：源图片路径，类型为 String。
+     * - targetPath：目标文件路径，类型为 String。
+     * - options：缩略图参数，类型为 VKThumbnailOptions，不能为空。
+     */
+    public static void thumbnailTo(String imagePath, String targetPath, VKThumbnailOptions options);
 
     /**
      * 计算文件摘要值。
@@ -1447,6 +1466,17 @@ public class FileApiDemo {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         long copied = Vostok.File.readRangeTo("b.bin", 0, 10, out);
         Vostok.File.appendBytes("b.bin", new byte[]{6,7});
+        byte[] tb1 = Vostok.File.thumbnail("img/origin.png",
+                VKThumbnailOptions.builder(200, 200)
+                        .mode(VKThumbnailMode.FIT)
+                        .format("jpg")
+                        .quality(0.85f)
+                        .upscale(false)
+                        .build());
+        Vostok.File.thumbnailTo("img/origin.png", "img/thumb_200.jpg",
+                VKThumbnailOptions.builder(200, 200)
+                        .mode(VKThumbnailMode.FILL)
+                        .build());
 
         String sha = Vostok.File.hash("b.bin", "SHA-256");
 

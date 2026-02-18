@@ -3,6 +3,13 @@ package yueyang.vostok.file;
 import yueyang.vostok.file.exception.VKFileErrorCode;
 import yueyang.vostok.file.exception.VKFileException;
 
+import java.awt.AlphaComposite;
+import java.awt.Color;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.awt.image.ConvolveOp;
+import java.awt.image.Kernel;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -31,6 +38,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Iterator;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Predicate;
@@ -38,6 +47,14 @@ import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
+import javax.imageio.IIOImage;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReadParam;
+import javax.imageio.ImageReader;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageInputStream;
+import javax.imageio.stream.ImageOutputStream;
 
 /**
  * Default local text file store.
@@ -202,6 +219,33 @@ public final class LocalTextFileStore implements VKFileStore {
             Files.write(p, content, StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
         } catch (IOException e) {
             throw io("Append bytes failed: " + path, e);
+        }
+    }
+
+    @Override
+    public byte[] thumbnail(String imagePath, VKThumbnailOptions options) {
+        requireNotNull(options, "VKThumbnailOptions is null");
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        thumbnailInternal(imagePath, options, out);
+        try {
+            out.flush();
+            return out.toByteArray();
+        } catch (IOException e) {
+            throw imageEncode("Thumbnail encode flush failed: " + imagePath, e);
+        }
+    }
+
+    @Override
+    public void thumbnailTo(String imagePath, String targetPath, VKThumbnailOptions options) {
+        requireNotNull(options, "VKThumbnailOptions is null");
+        Path target = resolve(targetPath);
+        try {
+            ensureParent(target);
+            try (OutputStream out = Files.newOutputStream(target, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+                thumbnailInternal(imagePath, options, out);
+            }
+        } catch (IOException e) {
+            throw imageEncode("Thumbnail write failed: " + imagePath + " -> " + targetPath, e);
         }
     }
 
@@ -893,6 +937,244 @@ public final class LocalTextFileStore implements VKFileStore {
             sb.append(Character.forDigit(b & 0xF, 16));
         }
         return sb.toString();
+    }
+
+    private String thumbnailInternal(String imagePath, VKThumbnailOptions options, OutputStream output) {
+        validateThumbnailOptions(options);
+        Path source = resolve(imagePath);
+        requireFile(source, imagePath);
+
+        String requestedFormat = normalizeFormat(options.format());
+        try (ImageInputStream iis = ImageIO.createImageInputStream(Files.newInputStream(source, StandardOpenOption.READ))) {
+            if (iis == null) {
+                throw imageDecode("Cannot open image input stream: " + imagePath, null);
+            }
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            if (!readers.hasNext()) {
+                throw new VKFileException(VKFileErrorCode.UNSUPPORTED_IMAGE_FORMAT, "Unsupported image format: " + imagePath);
+            }
+            ImageReader reader = readers.next();
+            try {
+                reader.setInput(iis, true, true);
+                int srcW = reader.getWidth(0);
+                int srcH = reader.getHeight(0);
+                long inputPixels = (long) srcW * srcH;
+                if (inputPixels > options.maxInputPixels()) {
+                    throw new VKFileException(VKFileErrorCode.IMAGE_LIMIT_EXCEEDED,
+                            "Input image pixels exceed limit: " + inputPixels + " > " + options.maxInputPixels());
+                }
+                int[] outputSize = calcOutputSize(srcW, srcH, options);
+                long outputPixels = (long) outputSize[0] * outputSize[1];
+                if (outputPixels > options.maxOutputPixels()) {
+                    throw new VKFileException(VKFileErrorCode.IMAGE_LIMIT_EXCEEDED,
+                            "Output image pixels exceed limit: " + outputPixels + " > " + options.maxOutputPixels());
+                }
+
+                int subsampling = chooseSubsampling(srcW, srcH, outputSize[0], outputSize[1]);
+                ImageReadParam param = reader.getDefaultReadParam();
+                if (subsampling > 1) {
+                    param.setSourceSubsampling(subsampling, subsampling, 0, 0);
+                }
+                BufferedImage src = reader.read(0, param);
+                if (src == null) {
+                    throw imageDecode("Failed to decode image: " + imagePath, null);
+                }
+                BufferedImage result = renderThumbnail(src, options);
+                if (options.sharpen()) {
+                    result = applySharpen(result);
+                }
+
+                String sourceFormat = normalizeFormat(reader.getFormatName());
+                String outFormat = requestedFormat == null ? sourceFormat : requestedFormat;
+                if (!canWriteFormat(outFormat)) {
+                    throw new VKFileException(VKFileErrorCode.UNSUPPORTED_IMAGE_FORMAT, "Unsupported output format: " + outFormat);
+                }
+                writeImage(result, outFormat, options.quality(), output);
+                return outFormat;
+            } finally {
+                reader.dispose();
+            }
+        } catch (VKFileException e) {
+            throw e;
+        } catch (IOException e) {
+            throw imageDecode("Thumbnail decode failed: " + imagePath, e);
+        }
+    }
+
+    private void validateThumbnailOptions(VKThumbnailOptions options) {
+        if (options.width() <= 0 || options.height() <= 0) {
+            throw arg("Thumbnail width/height must be > 0");
+        }
+        if (options.quality() < 0f || options.quality() > 1f) {
+            throw arg("Thumbnail quality must be in [0,1]");
+        }
+        if (options.maxInputPixels() <= 0 || options.maxOutputPixels() <= 0) {
+            throw arg("Thumbnail pixel limits must be > 0");
+        }
+    }
+
+    private int[] calcOutputSize(int srcW, int srcH, VKThumbnailOptions options) {
+        if (!options.keepAspectRatio()) {
+            int w = options.upscale() ? options.width() : Math.min(options.width(), srcW);
+            int h = options.upscale() ? options.height() : Math.min(options.height(), srcH);
+            return new int[]{Math.max(1, w), Math.max(1, h)};
+        }
+        double wr = (double) options.width() / srcW;
+        double hr = (double) options.height() / srcH;
+        double scale = options.mode() == VKThumbnailMode.FILL ? Math.max(wr, hr) : Math.min(wr, hr);
+        if (!options.upscale() && scale > 1d) {
+            scale = 1d;
+        }
+        int w = Math.max(1, (int) Math.round(srcW * scale));
+        int h = Math.max(1, (int) Math.round(srcH * scale));
+        if (options.mode() == VKThumbnailMode.FILL) {
+            return new int[]{options.width(), options.height()};
+        }
+        return new int[]{w, h};
+    }
+
+    private int chooseSubsampling(int srcW, int srcH, int targetW, int targetH) {
+        int sx = Math.max(1, srcW / Math.max(1, targetW));
+        int sy = Math.max(1, srcH / Math.max(1, targetH));
+        int s = Math.min(sx, sy);
+        int p = 1;
+        while (p * 2 <= s) {
+            p *= 2;
+        }
+        return Math.max(1, p);
+    }
+
+    private BufferedImage renderThumbnail(BufferedImage src, VKThumbnailOptions options) {
+        if (!options.keepAspectRatio()) {
+            int w = options.upscale() ? options.width() : Math.min(options.width(), src.getWidth());
+            int h = options.upscale() ? options.height() : Math.min(options.height(), src.getHeight());
+            return scaleImage(src, Math.max(1, w), Math.max(1, h), options.background());
+        }
+
+        if (options.mode() == VKThumbnailMode.FILL) {
+            double wr = (double) options.width() / src.getWidth();
+            double hr = (double) options.height() / src.getHeight();
+            double scale = Math.max(wr, hr);
+            if (!options.upscale() && scale > 1d) {
+                scale = 1d;
+            }
+            int scaledW = Math.max(1, (int) Math.round(src.getWidth() * scale));
+            int scaledH = Math.max(1, (int) Math.round(src.getHeight() * scale));
+            BufferedImage scaled = scaleImage(src, scaledW, scaledH, options.background());
+            BufferedImage out = new BufferedImage(options.width(), options.height(), pickImageType(scaled));
+            Graphics2D g = out.createGraphics();
+            configureQuality(g);
+            g.setComposite(AlphaComposite.Src);
+            g.setColor(options.background());
+            g.fillRect(0, 0, out.getWidth(), out.getHeight());
+            int x = (out.getWidth() - scaled.getWidth()) / 2;
+            int y = (out.getHeight() - scaled.getHeight()) / 2;
+            g.drawImage(scaled, x, y, null);
+            g.dispose();
+            return out;
+        }
+
+        double wr = (double) options.width() / src.getWidth();
+        double hr = (double) options.height() / src.getHeight();
+        double scale = Math.min(wr, hr);
+        if (!options.upscale() && scale > 1d) {
+            scale = 1d;
+        }
+        int w = Math.max(1, (int) Math.round(src.getWidth() * scale));
+        int h = Math.max(1, (int) Math.round(src.getHeight() * scale));
+        return scaleImage(src, w, h, options.background());
+    }
+
+    private BufferedImage scaleImage(BufferedImage src, int w, int h, Color bg) {
+        BufferedImage out = new BufferedImage(w, h, pickImageType(src));
+        Graphics2D g = out.createGraphics();
+        configureQuality(g);
+        g.setComposite(AlphaComposite.Src);
+        g.setColor(bg == null ? Color.WHITE : bg);
+        g.fillRect(0, 0, w, h);
+        g.drawImage(src, 0, 0, w, h, null);
+        g.dispose();
+        return out;
+    }
+
+    private void configureQuality(Graphics2D g) {
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+    }
+
+    private int pickImageType(BufferedImage img) {
+        int t = img.getType();
+        return t == BufferedImage.TYPE_CUSTOM ? BufferedImage.TYPE_INT_ARGB : t;
+    }
+
+    private BufferedImage applySharpen(BufferedImage src) {
+        float[] kernel = new float[]{
+                0f, -1f, 0f,
+                -1f, 5f, -1f,
+                0f, -1f, 0f
+        };
+        ConvolveOp op = new ConvolveOp(new Kernel(3, 3, kernel), ConvolveOp.EDGE_NO_OP, null);
+        return op.filter(src, null);
+    }
+
+    private boolean canWriteFormat(String format) {
+        String[] names = ImageIO.getWriterFormatNames();
+        for (String name : names) {
+            if (name != null && name.equalsIgnoreCase(format)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void writeImage(BufferedImage image, String format, float quality, OutputStream output) {
+        Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName(format);
+        if (!writers.hasNext()) {
+            throw new VKFileException(VKFileErrorCode.UNSUPPORTED_IMAGE_FORMAT, "No writer for format: " + format);
+        }
+        ImageWriter writer = writers.next();
+        try (ImageOutputStream ios = ImageIO.createImageOutputStream(output)) {
+            if (ios == null) {
+                throw imageEncode("Cannot open image output stream for format: " + format, null);
+            }
+            writer.setOutput(ios);
+            ImageWriteParam wp = writer.getDefaultWriteParam();
+            if (wp.canWriteCompressed() && quality >= 0f && quality <= 1f) {
+                wp.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+                wp.setCompressionQuality(quality);
+            }
+            IIOImage iio = new IIOImage(image, null, null);
+            writer.write(null, iio, wp);
+            ios.flush();
+        } catch (IOException e) {
+            throw imageEncode("Write thumbnail failed: format=" + format, e);
+        } finally {
+            writer.dispose();
+        }
+    }
+
+    private String normalizeFormat(String format) {
+        if (format == null || format.isBlank()) {
+            return null;
+        }
+        String f = format.trim().toLowerCase(Locale.ROOT);
+        if ("jpeg".equals(f)) {
+            return "jpg";
+        }
+        return f;
+    }
+
+    private VKFileException imageDecode(String message, Throwable cause) {
+        return cause == null
+                ? new VKFileException(VKFileErrorCode.IMAGE_DECODE_ERROR, message)
+                : new VKFileException(VKFileErrorCode.IMAGE_DECODE_ERROR, message, cause);
+    }
+
+    private VKFileException imageEncode(String message, Throwable cause) {
+        return cause == null
+                ? new VKFileException(VKFileErrorCode.IMAGE_ENCODE_ERROR, message)
+                : new VKFileException(VKFileErrorCode.IMAGE_ENCODE_ERROR, message, cause);
     }
 
     private String orEmpty(String value) {

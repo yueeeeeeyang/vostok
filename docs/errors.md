@@ -32,6 +32,10 @@
 | FK-520 | SECURITY_ERROR | 安全错误（如 Zip Slip） |
 | FK-530 | UNSUPPORTED | 不支持的能力 |
 | FK-540 | ZIP_BOMB_RISK | 解压风险（zip bomb 限制触发） |
+| FK-550 | IMAGE_DECODE_ERROR | 图片解码失败 |
+| FK-551 | IMAGE_ENCODE_ERROR | 图片编码失败 |
+| FK-552 | IMAGE_LIMIT_EXCEEDED | 图片尺寸/像素限制触发 |
+| FK-553 | UNSUPPORTED_IMAGE_FORMAT | 不支持的图片格式 |
 
 ## Config 错误码（VKConfigErrorCode）
 | Code | 枚举 | 含义 |

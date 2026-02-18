@@ -170,6 +170,14 @@ public class VostokFile {
         store().appendBytes(path, content);
     }
 
+    public static byte[] thumbnail(String imagePath, VKThumbnailOptions options) {
+        return store().thumbnail(imagePath, options);
+    }
+
+    public static void thumbnailTo(String imagePath, String targetPath, VKThumbnailOptions options) {
+        store().thumbnailTo(imagePath, targetPath, options);
+    }
+
     public static String hash(String path, String algorithm) {
         return store().hash(path, algorithm);
     }

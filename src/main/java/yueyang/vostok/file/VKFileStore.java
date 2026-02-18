@@ -30,6 +30,10 @@ public interface VKFileStore {
 
     void appendBytes(String path, byte[] content);
 
+    byte[] thumbnail(String imagePath, VKThumbnailOptions options);
+
+    void thumbnailTo(String imagePath, String targetPath, VKThumbnailOptions options);
+
     String hash(String path, String algorithm);
 
     boolean delete(String path);
