@@ -9,7 +9,7 @@ import yueyang.vostok.data.plugin.VKInterceptorRegistry;
 import yueyang.vostok.common.scan.VKScanner;
 import yueyang.vostok.data.sql.VKSqlWhitelist;
 import yueyang.vostok.util.VKAssert;
-import yueyang.vostok.util.VKLog;
+import yueyang.vostok.Vostok;
 
 import java.util.Map;
 import java.util.Set;
@@ -45,7 +45,7 @@ public final class VostokBootstrap {
                 VostokRuntime.initPackages = basePackages == null ? new String[0] : basePackages.clone();
 
                 if (basePackages == null || basePackages.length == 0) {
-                    VKLog.warn("No basePackages provided, scanning full classpath.");
+                    Vostok.Log.warn("No basePackages provided, scanning full classpath.");
                 }
 
                 Set<Class<?>> classes = VostokRuntime.SCANNER.scan(basePackages);
@@ -59,7 +59,7 @@ public final class VostokBootstrap {
                     VKDdlValidator.validate(VostokInternal.currentHolder().getDataSource(), MetaRegistry.all(), config.getDdlSchema());
                 }
 
-                VKLog.info("Vostok initialized. Entity count: " + MetaRegistry.size());
+                Vostok.Log.info("Vostok initialized. Entity count: " + MetaRegistry.size());
                 VostokRuntime.initialized = true;
             } catch (RuntimeException e) {
                 VKDataSourceRegistry.clear();

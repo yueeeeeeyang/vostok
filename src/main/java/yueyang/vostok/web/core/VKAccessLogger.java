@@ -1,6 +1,6 @@
 package yueyang.vostok.web.core;
 
-import yueyang.vostok.util.VKLog;
+import yueyang.vostok.Vostok;
 
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -53,7 +53,7 @@ final class VKAccessLogger {
                 String line = queue.poll(500, TimeUnit.MILLISECONDS);
                 if (line != null) {
                     flushDropped();
-                    VKLog.info(line);
+                    Vostok.Log.info(line);
                 }
             } catch (InterruptedException ignore) {
                 Thread.currentThread().interrupt();
@@ -65,7 +65,7 @@ final class VKAccessLogger {
     private void flushDropped() {
         long n = dropped.getAndSet(0);
         if (n > 0) {
-            VKLog.warn("AccessLog queue full, dropped=" + n);
+            Vostok.Log.warn("AccessLog queue full, dropped=" + n);
         }
     }
 }

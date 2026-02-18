@@ -1,6 +1,6 @@
 package yueyang.vostok.common.scan;
 
-import yueyang.vostok.util.VKLog;
+import yueyang.vostok.Vostok;
 
 import java.io.File;
 import java.io.IOException;
@@ -82,7 +82,7 @@ public final class VKScanner {
                     }
                 }
             } catch (Exception e) {
-                VKLog.error("Failed to scan package: " + pkg, e);
+                Vostok.Log.error("Failed to scan package: " + pkg, e);
             }
         }
         if (!found) {
@@ -123,7 +123,7 @@ public final class VKScanner {
                 loadClass(className, result);
             });
         } catch (IOException e) {
-            VKLog.error("Failed to scan directory: " + dir, e);
+            Vostok.Log.error("Failed to scan directory: " + dir, e);
         }
     }
 
@@ -143,7 +143,7 @@ public final class VKScanner {
                 loadClass(className, result);
             }
         } catch (IOException e) {
-            VKLog.error("Failed to scan jar: " + jarFile.getAbsolutePath(), e);
+            Vostok.Log.error("Failed to scan jar: " + jarFile.getAbsolutePath(), e);
         }
     }
 
@@ -200,7 +200,7 @@ public final class VKScanner {
             Class<?> clazz = Class.forName(className, false, cl);
             result.add(clazz);
         } catch (Throwable e) {
-            VKLog.warn("Skip class: " + className + " due to: " + e.getClass().getSimpleName());
+            Vostok.Log.warn("Skip class: " + className + " due to: " + e.getClass().getSimpleName());
         }
     }
 }

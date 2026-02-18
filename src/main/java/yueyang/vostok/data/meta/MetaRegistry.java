@@ -4,7 +4,7 @@ import yueyang.vostok.common.annotation.VKEntity;
 import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.sql.SqlTemplateCache;
 import yueyang.vostok.util.VKAssert;
-import yueyang.vostok.util.VKLog;
+import yueyang.vostok.Vostok;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -99,7 +99,7 @@ public final class MetaRegistry {
         MetaSnapshot snapshot = SNAPSHOT.get();
         SqlTemplateCache cache = snapshot.templateCaches.get(dataSourceName);
         if (cache == null) {
-            VKLog.warn("Template cache not found for dataSource: " + dataSourceName);
+            Vostok.Log.warn("Template cache not found for dataSource: " + dataSourceName);
             return new SqlTemplateCache(0);
         }
         return cache;

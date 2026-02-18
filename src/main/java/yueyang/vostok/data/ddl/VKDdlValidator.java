@@ -8,7 +8,7 @@ import yueyang.vostok.data.meta.EntityMeta;
 import yueyang.vostok.data.meta.FieldMeta;
 import yueyang.vostok.data.pool.VKDataSource;
 import yueyang.vostok.util.VKAssert;
-import yueyang.vostok.util.VKLog;
+import yueyang.vostok.Vostok;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
@@ -62,7 +62,7 @@ public final class VKDdlValidator {
                     continue;
                 }
                 String sql = buildCreateTableSql(em, schema, dialectType);
-                VKLog.info("Auto creating table: " + table);
+                Vostok.Log.info("Auto creating table: " + table);
                 try (Statement stmt = conn.createStatement()) {
                     stmt.execute(sql);
                 }

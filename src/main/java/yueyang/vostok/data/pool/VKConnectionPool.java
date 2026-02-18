@@ -2,7 +2,7 @@ package yueyang.vostok.data.pool;
 
 import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.util.VKAssert;
-import yueyang.vostok.util.VKLog;
+import yueyang.vostok.Vostok;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -263,7 +263,7 @@ public class VKConnectionPool {
             }
         }
         lastLeakStack = sb.toString();
-        VKLog.warn(lastLeakStack);
+        Vostok.Log.warn(lastLeakStack);
     }
 
     private Connection createConnection() {
@@ -274,7 +274,7 @@ public class VKConnectionPool {
             totalCount.incrementAndGet();
             return conn;
         } catch (SQLException e) {
-            VKLog.error("Failed to create connection", e);
+            Vostok.Log.error("Failed to create connection", e);
             return null;
         }
     }

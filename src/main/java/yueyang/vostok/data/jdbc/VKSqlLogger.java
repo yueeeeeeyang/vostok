@@ -1,7 +1,7 @@
 package yueyang.vostok.data.jdbc;
 
 import yueyang.vostok.data.VKDataConfig;
-import yueyang.vostok.util.VKLog;
+import yueyang.vostok.Vostok;
 
 import java.util.Arrays;
 
@@ -21,9 +21,9 @@ public final class VKSqlLogger {
             return;
         }
         if (logParams) {
-            VKLog.info(formatSql(sql, params, true));
+            Vostok.Log.info(formatSql(sql, params, true));
         } else {
-            VKLog.info(formatSql(sql, params, false));
+            Vostok.Log.info(formatSql(sql, params, false));
         }
     }
 
@@ -32,9 +32,9 @@ public final class VKSqlLogger {
             return;
         }
         if (logParams) {
-            VKLog.warn(formatSlow(sql, params, costMs, true));
+            Vostok.Log.warn(formatSlow(sql, params, costMs, true));
         } else {
-            VKLog.warn(formatSlow(sql, params, costMs, false));
+            Vostok.Log.warn(formatSlow(sql, params, costMs, false));
         }
     }
 

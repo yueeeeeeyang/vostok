@@ -16,7 +16,7 @@ import yueyang.vostok.data.meta.MetaRegistry;
 import yueyang.vostok.data.sql.SqlAndParams;
 import yueyang.vostok.data.sql.SqlTemplateCache;
 import yueyang.vostok.util.VKAssert;
-import yueyang.vostok.util.VKLog;
+import yueyang.vostok.Vostok;
 
 import java.sql.SQLException;
 import java.util.ArrayList;
@@ -133,7 +133,7 @@ final class VostokInternal {
 
     static void handleBatchError(String message, SQLException e) {
         if (currentConfig().getBatchFailStrategy() == VKBatchFailStrategy.CONTINUE) {
-            VKLog.warn(message + ", strategy=CONTINUE, err=" + e.getMessage());
+            Vostok.Log.warn(message + ", strategy=CONTINUE, err=" + e.getMessage());
             return;
         }
         throw VKExceptionTranslator.translate(message, e);
