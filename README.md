@@ -14,7 +14,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 
 ---
 
-# 2. 注意事项
+# 1. 注意事项
 
 - 当前项目定位为实验与技术验证，不建议直接用于生产环境。
 - 运行环境为 `JDK 17+`。
@@ -27,13 +27,11 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 
 ---
 
-# 3. Vostok 统一入口接口列表
+---
 
-> 入口类：`/Users/yueyang/Develop/code/codex/Vostok/src/main/java/yueyang/vostok/Vostok.java`
->
-> 下面所有接口均通过 `Vostok.Data / Vostok.Web / Vostok.File / Vostok.Log / Vostok.Config` 调用。
+# 2. Data 模块
 
-## 3.1 Data 接口定义
+## 2.1 接口定义
 
 ```java
 public interface Vostok.Data {
@@ -411,7 +409,215 @@ public interface Vostok.Data {
 }
 ```
 
-## 3.2 Web 接口定义
+## 2.2 使用 Demo
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.common.annotation.VKEntity;
+import yueyang.vostok.common.scan.VKScanner;
+import yueyang.vostok.data.VKDataConfig;
+import yueyang.vostok.data.annotation.VKColumn;
+import yueyang.vostok.data.annotation.VKId;
+import yueyang.vostok.data.config.VKTxIsolation;
+import yueyang.vostok.data.config.VKTxPropagation;
+import yueyang.vostok.data.dialect.VKDialectType;
+import yueyang.vostok.data.plugin.VKInterceptor;
+import yueyang.vostok.data.query.*;
+
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+
+@VKEntity(table = "t_user")
+class User {
+    @VKId private Long id;
+    @VKColumn(name = "user_name") private String name;
+    private Integer age;
+
+    public void setId(Long id) { this.id = id; }
+    public void setName(String name) { this.name = name; }
+    public void setAge(Integer age) { this.age = age; }
+}
+
+public class DataApiDemo {
+    public static void main(String[] args) {
+        VKDataConfig cfg = new VKDataConfig()
+                .url("jdbc:h2:mem:vostok;MODE=MySQL;DB_CLOSE_DELAY=-1")
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.MYSQL);
+
+        // init / scanner / meta
+        Vostok.Data.init(cfg, "com.example.entity");
+        Vostok.Data.refreshMeta();
+        Vostok.Data.refreshMeta("com.example.entity");
+        Vostok.Data.setScanner(VKScanner::scan);
+
+        // datasource
+        Vostok.Data.registerDataSource("ds2", cfg);
+        Vostok.Data.withDataSource("ds2", () -> {});
+        Integer x = Vostok.Data.withDataSource("ds2", () -> 1);
+
+        // context capture + wrap
+        var ctx = Vostok.Data.captureContext();
+        Runnable r1 = Vostok.Data.wrap(() -> {});
+        var s1 = Vostok.Data.wrap(() -> 1);
+        Runnable r2 = Vostok.Data.wrap(ctx, () -> {});
+        var s2 = Vostok.Data.wrap(ctx, () -> 2);
+        CompletableFuture.runAsync(r1).join();
+        s1.get(); r2.run(); s2.get();
+
+        // interceptor / whitelist
+        Vostok.Data.registerInterceptor(new VKInterceptor() {});
+        Vostok.Data.registerRawSql("COUNT(1)");
+        Vostok.Data.registerRawSql("ds2", new String[]{"COUNT(1)"});
+        Vostok.Data.registerSubquery("SELECT id FROM t_user WHERE age >= ?");
+        Vostok.Data.registerSubquery("ds2", new String[]{"SELECT id FROM t_user WHERE age >= ?"});
+        Vostok.Data.clearInterceptors();
+
+        // tx (lambda)
+        Vostok.Data.tx(() -> {});
+        Vostok.Data.tx(() -> {}, VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT);
+        Vostok.Data.tx(() -> {}, VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT, false);
+        Integer tx1 = Vostok.Data.tx(() -> 1);
+        Integer tx2 = Vostok.Data.tx(() -> 2, VKTxPropagation.REQUIRES_NEW, VKTxIsolation.READ_COMMITTED);
+        Integer tx3 = Vostok.Data.tx(() -> 3, VKTxPropagation.REQUIRES_NEW, VKTxIsolation.READ_COMMITTED, true);
+
+        // tx (manual)
+        Vostok.Data.beginTx();
+        Vostok.Data.commitTx();
+        Vostok.Data.beginTx(VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT);
+        Vostok.Data.rollbackTx();
+        Vostok.Data.beginTx(VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT, true);
+        Vostok.Data.rollbackTx();
+
+        // CRUD / query
+        User u = new User();
+        u.setName("tom");
+        u.setAge(18);
+
+        int inserted = Vostok.Data.insert(u);
+        int bi = Vostok.Data.batchInsert(List.of(u));
+        var bid = Vostok.Data.batchInsertDetail(List.of(u));
+
+        u.setName("tom-2");
+        int updated = Vostok.Data.update(u);
+        int bu = Vostok.Data.batchUpdate(List.of(u));
+        var bud = Vostok.Data.batchUpdateDetail(List.of(u));
+
+        int deleted = Vostok.Data.delete(User.class, 1L);
+        int bd = Vostok.Data.batchDelete(User.class, List.of(1L, 2L));
+        var bdd = Vostok.Data.batchDeleteDetail(User.class, List.of(1L, 2L));
+
+        User one = Vostok.Data.findById(User.class, 1L);
+        List<User> all = Vostok.Data.findAll(User.class);
+
+        VKQuery q = VKQuery.create()
+                .where(VKCondition.of("age", VKOperator.GE, 18))
+                .orderBy(VKOrder.desc("id"))
+                .limit(10)
+                .offset(0);
+        List<User> list = Vostok.Data.query(User.class, q);
+        List<User> cols = Vostok.Data.queryColumns(User.class, q, "name");
+        List<Object[]> agg = Vostok.Data.aggregate(User.class, VKQuery.create(), VKAggregate.countAll("cnt"));
+        long count = Vostok.Data.count(User.class, q);
+
+        // metrics / report
+        var metrics = Vostok.Data.poolMetrics();
+        String report = Vostok.Data.report();
+
+        Vostok.Data.close();
+    }
+}
+```
+
+## 2.3 配置详解（VKDataConfig）
+
+```java
+import yueyang.vostok.data.VKDataConfig;
+import yueyang.vostok.data.config.VKBatchFailStrategy;
+import yueyang.vostok.data.dialect.VKDialectType;
+
+VKDataConfig cfg = new VKDataConfig()
+    // JDBC URL。必填；示例：jdbc:mysql://127.0.0.1:3306/demo
+    .url("jdbc:mysql://127.0.0.1:3306/demo")
+    // 数据库用户名。必填。
+    .username("root")
+    // 数据库密码。可为空字符串。
+    .password("123456")
+    // JDBC 驱动类名。必填；例如 com.mysql.cj.jdbc.Driver。
+    .driver("com.mysql.cj.jdbc.Driver")
+    // SQL 方言。可选；不设置时按 URL 自动推断。常见：MYSQL/POSTGRESQL/ORACLE/SQLSERVER/DB2。
+    .dialect(VKDialectType.MYSQL)
+    // 是否执行 DDL 校验。默认 false；开启后初始化时会检查实体与表结构一致性。
+    .validateDdl(false)
+    // DDL 校验 schema。默认 null；多 schema 数据库建议显式设置。
+    .ddlSchema(null)
+    // 初始化/refreshMeta 时是否自动创建缺失表。默认 false。
+    .autoCreateTable(false)
+    // 最小空闲连接数。默认 1；应 <= maxActive。
+    .minIdle(1)
+    // 最大活动连接数。默认 10；池并发上限。
+    .maxActive(10)
+    // 借连接最大等待毫秒。默认 30000；超时将抛异常。
+    .maxWaitMs(30000)
+    // 借出连接时是否校验可用性。默认 false；开启会增加延迟。
+    .testOnBorrow(false)
+    // 归还连接时是否校验可用性。默认 false；开启会增加开销。
+    .testOnReturn(false)
+    // 连接校验 SQL。默认 null；设置后优先于 Connection.isValid。
+    .validationQuery("SELECT 1")
+    // 校验超时秒数。默认 2；用于 validationQuery 或 isValid。
+    .validationTimeoutSec(2)
+    // 空闲校验与回收间隔毫秒。默认 0（关闭）；>0 时启用周期任务。
+    .idleValidationIntervalMs(0)
+    // 是否预热连接池。默认 true；初始化时预建 minIdle 连接。
+    .preheatEnabled(true)
+    // 空闲连接超时毫秒。默认 0（不回收）；>0 时会回收长时间空闲连接。
+    .idleTimeoutMs(0)
+    // 连接泄露检测阈值毫秒。默认 0（不检测）；>0 时超阈值打印告警。
+    .leakDetectMs(0)
+    // 每连接 PreparedStatement 缓存大小。默认 50；0 表示不缓存。
+    .statementCacheSize(50)
+    // 每数据源 SQL 模板缓存大小。默认 200；0 表示不缓存模板。
+    .sqlTemplateCacheSize(200)
+    // 是否启用 SQL 异常重试。默认 false；只对可重试异常生效。
+    .retryEnabled(false)
+    // 最大重试次数。默认 2；仅在 retryEnabled=true 时生效。
+    .maxRetries(2)
+    // 指数退避基数毫秒。默认 50；第 N 次重试延迟按指数增长。
+    .retryBackoffBaseMs(50)
+    // 指数退避最大毫秒。默认 2000；防止退避时间无限增长。
+    .retryBackoffMaxMs(2000)
+    // 可重试 SQLState 前缀白名单。默认 {"08","40","57"}；按数据库可调整。
+    .retrySqlStatePrefixes("08", "40", "57")
+    // 批处理分片大小。默认 500；大批量写入时按此拆分。
+    .batchSize(500)
+    // 批处理失败策略。默认 FAIL_FAST；CONTINUE 表示跳过失败分片继续。
+    .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
+    // 是否打印 SQL 文本。默认 false；排障时可开启。
+    .logSql(false)
+    // 是否打印 SQL 参数。默认 false；注意敏感信息暴露风险。
+    .logParams(false)
+    // 慢 SQL 阈值毫秒。默认 0（关闭）；>0 时超阈值记录慢 SQL。
+    .slowSqlMs(0)
+    // 是否启用 SQL 耗时分布统计。默认 true；可用于 report/pool 诊断。
+    .sqlMetricsEnabled(true)
+    // 慢 SQL TopN 数量。默认 0（关闭）；>0 时保留最慢 N 条。
+    .slowSqlTopN(0)
+    // 是否启用事务 savepoint。默认 true；用于嵌套事务回滚点。
+    .savepointEnabled(true)
+    // 事务超时毫秒。默认 0（不限制）；>0 时超时会触发回滚。
+    .txTimeoutMs(0)
+    // 非事务 SQL 超时毫秒。默认 0（不限制）；>0 会设置 Statement timeout。
+    .queryTimeoutMs(0);
+```
+
+---
+
+# 3. Web 模块
+
+## 3.1 接口定义
 
 ```java
 public interface Vostok.Web {
@@ -536,7 +742,84 @@ public interface Vostok.Web {
 }
 ```
 
-## 3.3 File 接口定义
+## 3.2 使用 Demo
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.web.VKWebConfig;
+import yueyang.vostok.web.auto.VKCrudStyle;
+
+public class WebApiDemo {
+    public static void main(String[] args) {
+        // init(int)
+        Vostok.Web.init(8080)
+                .get("/ping", (req, res) -> res.text("ok"))
+                .post("/echo", (req, res) -> res.text(req.bodyText()))
+                .route("PUT", "/v1/user/1", (req, res) -> res.text("updated"))
+                .autoCrudApi("com.example.entity")
+                .autoCrudApi()
+                .autoCrudApi(VKCrudStyle.TRADITIONAL, "com.example.entity")
+                .use((req, res, chain) -> {
+                    res.header("X-Trace-Id", "demo");
+                    chain.next(req, res);
+                })
+                .staticDir("/static", "/tmp/www")
+                .error((err, req, res) -> res.status(500).text("custom error"));
+
+        Vostok.Web.start();
+        boolean started = Vostok.Web.started();
+        int p = Vostok.Web.port();
+        Vostok.Web.stop();
+
+        // init(VKWebConfig)
+        VKWebConfig cfg = new VKWebConfig().port(0);
+        Vostok.Web.init(cfg)
+                .get("/health", (req, res) -> res.json("{\"ok\":true}"));
+        Vostok.Web.start();
+        Vostok.Web.stop();
+    }
+}
+```
+
+## 3.3 配置详解（VKWebConfig）
+
+```java
+import yueyang.vostok.web.VKWebConfig;
+
+VKWebConfig cfg = new VKWebConfig()
+    // 监听端口。默认 8080；设为 0 表示随机可用端口。
+    .port(8080)
+    // IO Reactor 线程数。默认 1；内部会强制 >=1。
+    .ioThreads(1)
+    // 业务线程池线程数。默认 max(2, CPU*2)；内部会强制 >=1。
+    .workerThreads(Math.max(2, Runtime.getRuntime().availableProcessors() * 2))
+    // ServerSocket backlog。默认 1024；内部会强制 >=1。
+    .backlog(1024)
+    // 每连接读缓冲区大小（字节）。默认 16KB；内部最小 1024。
+    .readBufferSize(16 * 1024)
+    // 最大请求头字节数。默认 32KB；内部最小 4096。
+    .maxHeaderBytes(32 * 1024)
+    // 最大请求体字节数。默认 4MB；内部最小 1024。
+    .maxBodyBytes(4 * 1024 * 1024)
+    // Keep-Alive 空闲超时毫秒。默认 30000；内部最小 1000。
+    .keepAliveTimeoutMs(30_000)
+    // 最大连接数。默认 10000；超出后新连接会被拒绝。内部最小 1。
+    .maxConnections(10_000)
+    // 读请求超时毫秒。默认 15000；内部最小 1000。
+    .readTimeoutMs(15_000)
+    // 业务线程池队列长度。默认 10000；内部最小 1。
+    .workerQueueSize(10_000)
+    // 是否启用 AccessLog。默认 true。
+    .accessLogEnabled(true)
+    // AccessLog 异步队列长度。默认 8192；内部最小 256。
+    .accessLogQueueSize(8_192);
+```
+
+---
+
+# 4. File 模块
+
+## 4.1 接口定义
 
 ```java
 public interface Vostok.File {
@@ -967,7 +1250,122 @@ public interface Vostok.File {
 }
 ```
 
-## 3.4 Log 接口定义
+## 4.2 使用 Demo
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.file.*;
+
+import java.io.ByteArrayOutputStream;
+import java.time.Instant;
+import java.util.List;
+import java.util.Set;
+
+public class FileApiDemo {
+    public static void main(String[] args) throws Exception {
+        Vostok.File.init(new VKFileConfig().mode("local").baseDir("/tmp/vostok-files"));
+        boolean s = Vostok.File.started();
+        VKFileConfig cfg = Vostok.File.config();
+
+        Vostok.File.registerStore("local2", new LocalTextFileStore(java.nio.file.Path.of("/tmp/vostok-files-2")));
+        Vostok.File.setDefaultMode("local");
+        String d = Vostok.File.defaultMode();
+        Set<String> ms = Vostok.File.modes();
+
+        Vostok.File.withMode("local", () -> {});
+        String modeName = Vostok.File.withMode("local", Vostok.File::currentMode);
+        String current = Vostok.File.currentMode();
+
+        Vostok.File.create("a.txt", "hello");
+        Vostok.File.write("a.txt", "world");
+        Vostok.File.update("a.txt", "world2");
+        String txt = Vostok.File.read("a.txt");
+
+        Vostok.File.writeBytes("b.bin", new byte[]{1,2,3,4,5});
+        byte[] all = Vostok.File.readBytes("b.bin");
+        byte[] part = Vostok.File.readRange("b.bin", 1, 2);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        long copied = Vostok.File.readRangeTo("b.bin", 0, 10, out);
+        Vostok.File.appendBytes("b.bin", new byte[]{6,7});
+
+        String sha = Vostok.File.hash("b.bin", "SHA-256");
+
+        boolean ex = Vostok.File.exists("a.txt");
+        boolean isF = Vostok.File.isFile("a.txt");
+        boolean isD = Vostok.File.isDirectory("dir");
+
+        Vostok.File.append("a.txt", "\nline2");
+        List<String> lines = Vostok.File.readLines("a.txt");
+        Vostok.File.writeLines("c.txt", List.of("l1", "l2"));
+
+        List<VKFileInfo> l1 = Vostok.File.list(".");
+        List<VKFileInfo> l2 = Vostok.File.list(".", true);
+        List<VKFileInfo> w1 = Vostok.File.walk(".", true, info -> !info.directory());
+        List<VKFileInfo> w2 = Vostok.File.walk(".", false);
+
+        Vostok.File.mkdir("dir");
+        Vostok.File.mkdirs("dir/sub");
+        Vostok.File.rename("a.txt", "a2.txt");
+
+        Vostok.File.copy("a2.txt", "copy/a2.txt");
+        Vostok.File.copy("a2.txt", "copy/a3.txt", true);
+        Vostok.File.move("c.txt", "moved/c.txt");
+        Vostok.File.move("moved/c.txt", "moved/c2.txt", true);
+
+        Vostok.File.copyDir("dir", "dir-copy", VKFileConflictStrategy.OVERWRITE);
+        Vostok.File.moveDir("dir-copy", "dir-move", VKFileConflictStrategy.OVERWRITE);
+
+        Vostok.File.touch("touch.txt");
+        long size = Vostok.File.size("a2.txt");
+        Instant lm = Vostok.File.lastModified("a2.txt");
+
+        Vostok.File.zip("dir-move", "archive.zip");
+        Vostok.File.unzip("archive.zip", "unz1");
+        Vostok.File.unzip("archive.zip", "unz2", true);
+        Vostok.File.unzip("archive.zip", "unz3", VKUnzipOptions.builder().replaceExisting(true).build());
+
+        try (VKFileWatchHandle h1 = Vostok.File.watch(".", event -> {});
+             VKFileWatchHandle h2 = Vostok.File.watch(".", true, event -> {})) {
+            // watching...
+        }
+
+        boolean del1 = Vostok.File.delete("a2.txt");
+        boolean del2 = Vostok.File.deleteIfExists("touch.txt");
+        boolean del3 = Vostok.File.deleteRecursively("dir-move");
+
+        Vostok.File.close();
+    }
+}
+```
+
+## 4.3 配置详解（VKFileConfig）
+
+```java
+import yueyang.vostok.file.VKFileConfig;
+import java.nio.charset.StandardCharsets;
+
+VKFileConfig cfg = new VKFileConfig()
+    // 文件模式。默认 "local"；自定义存储需先 registerStore 再切换模式。
+    .mode("local")
+    // 基础目录。默认 System.getProperty("user.dir", ".")；所有相对路径都基于该目录。
+    .baseDir("/tmp/vostok-files")
+    // 文本读写字符集。默认 UTF-8。
+    .charset(StandardCharsets.UTF_8)
+    // 解压最大文件条目数。默认 -1（不限制）；建议生产环境设置上限防 zip bomb。
+    .unzipMaxEntries(-1)
+    // 解压总解压字节上限。默认 -1（不限制）；建议设置防止磁盘打满。
+    .unzipMaxTotalUncompressedBytes(-1)
+    // 单文件解压字节上限。默认 -1（不限制）；建议设置防止异常大文件。
+    .unzipMaxEntryUncompressedBytes(-1)
+    // watch(path, listener) 的默认递归策略。默认 false。
+    .watchRecursiveDefault(false);
+```
+
+---
+
+# 5. Log 模块
+
+## 5.1 接口定义
 
 ```java
 public interface Vostok.Log {
@@ -1255,260 +1653,8 @@ public interface Vostok.Log {
 ```
 
 ---
-# 4. 按模块对每个接口的调用 demo
 
-> 以下 demo 重点展示“接口覆盖调用方式”。
-
-## 4.1 Data 模块 demo（覆盖全部 Data 入口）
-
-```java
-import yueyang.vostok.Vostok;
-import yueyang.vostok.common.annotation.VKEntity;
-import yueyang.vostok.common.scan.VKScanner;
-import yueyang.vostok.data.VKDataConfig;
-import yueyang.vostok.data.annotation.VKColumn;
-import yueyang.vostok.data.annotation.VKId;
-import yueyang.vostok.data.config.VKTxIsolation;
-import yueyang.vostok.data.config.VKTxPropagation;
-import yueyang.vostok.data.dialect.VKDialectType;
-import yueyang.vostok.data.plugin.VKInterceptor;
-import yueyang.vostok.data.query.*;
-
-import java.util.List;
-import java.util.concurrent.CompletableFuture;
-
-@VKEntity(table = "t_user")
-class User {
-    @VKId private Long id;
-    @VKColumn(name = "user_name") private String name;
-    private Integer age;
-
-    public void setId(Long id) { this.id = id; }
-    public void setName(String name) { this.name = name; }
-    public void setAge(Integer age) { this.age = age; }
-}
-
-public class DataApiDemo {
-    public static void main(String[] args) {
-        VKDataConfig cfg = new VKDataConfig()
-                .url("jdbc:h2:mem:vostok;MODE=MySQL;DB_CLOSE_DELAY=-1")
-                .username("sa")
-                .password("")
-                .driver("org.h2.Driver")
-                .dialect(VKDialectType.MYSQL);
-
-        // init / scanner / meta
-        Vostok.Data.init(cfg, "com.example.entity");
-        Vostok.Data.refreshMeta();
-        Vostok.Data.refreshMeta("com.example.entity");
-        Vostok.Data.setScanner(VKScanner::scan);
-
-        // datasource
-        Vostok.Data.registerDataSource("ds2", cfg);
-        Vostok.Data.withDataSource("ds2", () -> {});
-        Integer x = Vostok.Data.withDataSource("ds2", () -> 1);
-
-        // context capture + wrap
-        var ctx = Vostok.Data.captureContext();
-        Runnable r1 = Vostok.Data.wrap(() -> {});
-        var s1 = Vostok.Data.wrap(() -> 1);
-        Runnable r2 = Vostok.Data.wrap(ctx, () -> {});
-        var s2 = Vostok.Data.wrap(ctx, () -> 2);
-        CompletableFuture.runAsync(r1).join();
-        s1.get(); r2.run(); s2.get();
-
-        // interceptor / whitelist
-        Vostok.Data.registerInterceptor(new VKInterceptor() {});
-        Vostok.Data.registerRawSql("COUNT(1)");
-        Vostok.Data.registerRawSql("ds2", new String[]{"COUNT(1)"});
-        Vostok.Data.registerSubquery("SELECT id FROM t_user WHERE age >= ?");
-        Vostok.Data.registerSubquery("ds2", new String[]{"SELECT id FROM t_user WHERE age >= ?"});
-        Vostok.Data.clearInterceptors();
-
-        // tx (lambda)
-        Vostok.Data.tx(() -> {});
-        Vostok.Data.tx(() -> {}, VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT);
-        Vostok.Data.tx(() -> {}, VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT, false);
-        Integer tx1 = Vostok.Data.tx(() -> 1);
-        Integer tx2 = Vostok.Data.tx(() -> 2, VKTxPropagation.REQUIRES_NEW, VKTxIsolation.READ_COMMITTED);
-        Integer tx3 = Vostok.Data.tx(() -> 3, VKTxPropagation.REQUIRES_NEW, VKTxIsolation.READ_COMMITTED, true);
-
-        // tx (manual)
-        Vostok.Data.beginTx();
-        Vostok.Data.commitTx();
-        Vostok.Data.beginTx(VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT);
-        Vostok.Data.rollbackTx();
-        Vostok.Data.beginTx(VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT, true);
-        Vostok.Data.rollbackTx();
-
-        // CRUD / query
-        User u = new User();
-        u.setName("tom");
-        u.setAge(18);
-
-        int inserted = Vostok.Data.insert(u);
-        int bi = Vostok.Data.batchInsert(List.of(u));
-        var bid = Vostok.Data.batchInsertDetail(List.of(u));
-
-        u.setName("tom-2");
-        int updated = Vostok.Data.update(u);
-        int bu = Vostok.Data.batchUpdate(List.of(u));
-        var bud = Vostok.Data.batchUpdateDetail(List.of(u));
-
-        int deleted = Vostok.Data.delete(User.class, 1L);
-        int bd = Vostok.Data.batchDelete(User.class, List.of(1L, 2L));
-        var bdd = Vostok.Data.batchDeleteDetail(User.class, List.of(1L, 2L));
-
-        User one = Vostok.Data.findById(User.class, 1L);
-        List<User> all = Vostok.Data.findAll(User.class);
-
-        VKQuery q = VKQuery.create()
-                .where(VKCondition.of("age", VKOperator.GE, 18))
-                .orderBy(VKOrder.desc("id"))
-                .limit(10)
-                .offset(0);
-        List<User> list = Vostok.Data.query(User.class, q);
-        List<User> cols = Vostok.Data.queryColumns(User.class, q, "name");
-        List<Object[]> agg = Vostok.Data.aggregate(User.class, VKQuery.create(), VKAggregate.countAll("cnt"));
-        long count = Vostok.Data.count(User.class, q);
-
-        // metrics / report
-        var metrics = Vostok.Data.poolMetrics();
-        String report = Vostok.Data.report();
-
-        Vostok.Data.close();
-    }
-}
-```
-
-## 4.2 Web 模块 demo（覆盖全部 Web 入口）
-
-```java
-import yueyang.vostok.Vostok;
-import yueyang.vostok.web.VKWebConfig;
-import yueyang.vostok.web.auto.VKCrudStyle;
-
-public class WebApiDemo {
-    public static void main(String[] args) {
-        // init(int)
-        Vostok.Web.init(8080)
-                .get("/ping", (req, res) -> res.text("ok"))
-                .post("/echo", (req, res) -> res.text(req.bodyText()))
-                .route("PUT", "/v1/user/1", (req, res) -> res.text("updated"))
-                .autoCrudApi("com.example.entity")
-                .autoCrudApi()
-                .autoCrudApi(VKCrudStyle.TRADITIONAL, "com.example.entity")
-                .use((req, res, chain) -> {
-                    res.header("X-Trace-Id", "demo");
-                    chain.next(req, res);
-                })
-                .staticDir("/static", "/tmp/www")
-                .error((err, req, res) -> res.status(500).text("custom error"));
-
-        Vostok.Web.start();
-        boolean started = Vostok.Web.started();
-        int p = Vostok.Web.port();
-        Vostok.Web.stop();
-
-        // init(VKWebConfig)
-        VKWebConfig cfg = new VKWebConfig().port(0);
-        Vostok.Web.init(cfg)
-                .get("/health", (req, res) -> res.json("{\"ok\":true}"));
-        Vostok.Web.start();
-        Vostok.Web.stop();
-    }
-}
-```
-
-## 4.3 File 模块 demo（覆盖全部 File 入口）
-
-```java
-import yueyang.vostok.Vostok;
-import yueyang.vostok.file.*;
-
-import java.io.ByteArrayOutputStream;
-import java.time.Instant;
-import java.util.List;
-import java.util.Set;
-
-public class FileApiDemo {
-    public static void main(String[] args) throws Exception {
-        Vostok.File.init(new VKFileConfig().mode("local").baseDir("/tmp/vostok-files"));
-        boolean s = Vostok.File.started();
-        VKFileConfig cfg = Vostok.File.config();
-
-        Vostok.File.registerStore("local2", new LocalTextFileStore(java.nio.file.Path.of("/tmp/vostok-files-2")));
-        Vostok.File.setDefaultMode("local");
-        String d = Vostok.File.defaultMode();
-        Set<String> ms = Vostok.File.modes();
-
-        Vostok.File.withMode("local", () -> {});
-        String modeName = Vostok.File.withMode("local", Vostok.File::currentMode);
-        String current = Vostok.File.currentMode();
-
-        Vostok.File.create("a.txt", "hello");
-        Vostok.File.write("a.txt", "world");
-        Vostok.File.update("a.txt", "world2");
-        String txt = Vostok.File.read("a.txt");
-
-        Vostok.File.writeBytes("b.bin", new byte[]{1,2,3,4,5});
-        byte[] all = Vostok.File.readBytes("b.bin");
-        byte[] part = Vostok.File.readRange("b.bin", 1, 2);
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        long copied = Vostok.File.readRangeTo("b.bin", 0, 10, out);
-        Vostok.File.appendBytes("b.bin", new byte[]{6,7});
-
-        String sha = Vostok.File.hash("b.bin", "SHA-256");
-
-        boolean ex = Vostok.File.exists("a.txt");
-        boolean isF = Vostok.File.isFile("a.txt");
-        boolean isD = Vostok.File.isDirectory("dir");
-
-        Vostok.File.append("a.txt", "\nline2");
-        List<String> lines = Vostok.File.readLines("a.txt");
-        Vostok.File.writeLines("c.txt", List.of("l1", "l2"));
-
-        List<VKFileInfo> l1 = Vostok.File.list(".");
-        List<VKFileInfo> l2 = Vostok.File.list(".", true);
-        List<VKFileInfo> w1 = Vostok.File.walk(".", true, info -> !info.directory());
-        List<VKFileInfo> w2 = Vostok.File.walk(".", false);
-
-        Vostok.File.mkdir("dir");
-        Vostok.File.mkdirs("dir/sub");
-        Vostok.File.rename("a.txt", "a2.txt");
-
-        Vostok.File.copy("a2.txt", "copy/a2.txt");
-        Vostok.File.copy("a2.txt", "copy/a3.txt", true);
-        Vostok.File.move("c.txt", "moved/c.txt");
-        Vostok.File.move("moved/c.txt", "moved/c2.txt", true);
-
-        Vostok.File.copyDir("dir", "dir-copy", VKFileConflictStrategy.OVERWRITE);
-        Vostok.File.moveDir("dir-copy", "dir-move", VKFileConflictStrategy.OVERWRITE);
-
-        Vostok.File.touch("touch.txt");
-        long size = Vostok.File.size("a2.txt");
-        Instant lm = Vostok.File.lastModified("a2.txt");
-
-        Vostok.File.zip("dir-move", "archive.zip");
-        Vostok.File.unzip("archive.zip", "unz1");
-        Vostok.File.unzip("archive.zip", "unz2", true);
-        Vostok.File.unzip("archive.zip", "unz3", VKUnzipOptions.builder().replaceExisting(true).build());
-
-        try (VKFileWatchHandle h1 = Vostok.File.watch(".", event -> {});
-             VKFileWatchHandle h2 = Vostok.File.watch(".", true, event -> {})) {
-            // watching...
-        }
-
-        boolean del1 = Vostok.File.delete("a2.txt");
-        boolean del2 = Vostok.File.deleteIfExists("touch.txt");
-        boolean del3 = Vostok.File.deleteRecursively("dir-move");
-
-        Vostok.File.close();
-    }
-}
-```
-
-## 4.4 Log 模块 demo（覆盖全部 Log 入口）
+## 5.2 使用 Demo
 
 ```java
 import yueyang.vostok.Vostok;
@@ -1567,150 +1713,7 @@ public class LogApiDemo {
 }
 ```
 
-# 5. 配置详解
-
-本节按配置类给出“完整配置代码清单”，并在每一个配置项上用行内注释说明用途、默认值、建议和约束。
-
-## 5.1 VKDataConfig 全量配置项
-
-```java
-import yueyang.vostok.data.VKDataConfig;
-import yueyang.vostok.data.config.VKBatchFailStrategy;
-import yueyang.vostok.data.dialect.VKDialectType;
-
-VKDataConfig cfg = new VKDataConfig()
-    // JDBC URL。必填；示例：jdbc:mysql://127.0.0.1:3306/demo
-    .url("jdbc:mysql://127.0.0.1:3306/demo")
-    // 数据库用户名。必填。
-    .username("root")
-    // 数据库密码。可为空字符串。
-    .password("123456")
-    // JDBC 驱动类名。必填；例如 com.mysql.cj.jdbc.Driver。
-    .driver("com.mysql.cj.jdbc.Driver")
-    // SQL 方言。可选；不设置时按 URL 自动推断。常见：MYSQL/POSTGRESQL/ORACLE/SQLSERVER/DB2。
-    .dialect(VKDialectType.MYSQL)
-    // 是否执行 DDL 校验。默认 false；开启后初始化时会检查实体与表结构一致性。
-    .validateDdl(false)
-    // DDL 校验 schema。默认 null；多 schema 数据库建议显式设置。
-    .ddlSchema(null)
-    // 初始化/refreshMeta 时是否自动创建缺失表。默认 false。
-    .autoCreateTable(false)
-    // 最小空闲连接数。默认 1；应 <= maxActive。
-    .minIdle(1)
-    // 最大活动连接数。默认 10；池并发上限。
-    .maxActive(10)
-    // 借连接最大等待毫秒。默认 30000；超时将抛异常。
-    .maxWaitMs(30000)
-    // 借出连接时是否校验可用性。默认 false；开启会增加延迟。
-    .testOnBorrow(false)
-    // 归还连接时是否校验可用性。默认 false；开启会增加开销。
-    .testOnReturn(false)
-    // 连接校验 SQL。默认 null；设置后优先于 Connection.isValid。
-    .validationQuery("SELECT 1")
-    // 校验超时秒数。默认 2；用于 validationQuery 或 isValid。
-    .validationTimeoutSec(2)
-    // 空闲校验与回收间隔毫秒。默认 0（关闭）；>0 时启用周期任务。
-    .idleValidationIntervalMs(0)
-    // 是否预热连接池。默认 true；初始化时预建 minIdle 连接。
-    .preheatEnabled(true)
-    // 空闲连接超时毫秒。默认 0（不回收）；>0 时会回收长时间空闲连接。
-    .idleTimeoutMs(0)
-    // 连接泄露检测阈值毫秒。默认 0（不检测）；>0 时超阈值打印告警。
-    .leakDetectMs(0)
-    // 每连接 PreparedStatement 缓存大小。默认 50；0 表示不缓存。
-    .statementCacheSize(50)
-    // 每数据源 SQL 模板缓存大小。默认 200；0 表示不缓存模板。
-    .sqlTemplateCacheSize(200)
-    // 是否启用 SQL 异常重试。默认 false；只对可重试异常生效。
-    .retryEnabled(false)
-    // 最大重试次数。默认 2；仅在 retryEnabled=true 时生效。
-    .maxRetries(2)
-    // 指数退避基数毫秒。默认 50；第 N 次重试延迟按指数增长。
-    .retryBackoffBaseMs(50)
-    // 指数退避最大毫秒。默认 2000；防止退避时间无限增长。
-    .retryBackoffMaxMs(2000)
-    // 可重试 SQLState 前缀白名单。默认 {"08","40","57"}；按数据库可调整。
-    .retrySqlStatePrefixes("08", "40", "57")
-    // 批处理分片大小。默认 500；大批量写入时按此拆分。
-    .batchSize(500)
-    // 批处理失败策略。默认 FAIL_FAST；CONTINUE 表示跳过失败分片继续。
-    .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
-    // 是否打印 SQL 文本。默认 false；排障时可开启。
-    .logSql(false)
-    // 是否打印 SQL 参数。默认 false；注意敏感信息暴露风险。
-    .logParams(false)
-    // 慢 SQL 阈值毫秒。默认 0（关闭）；>0 时超阈值记录慢 SQL。
-    .slowSqlMs(0)
-    // 是否启用 SQL 耗时分布统计。默认 true；可用于 report/pool 诊断。
-    .sqlMetricsEnabled(true)
-    // 慢 SQL TopN 数量。默认 0（关闭）；>0 时保留最慢 N 条。
-    .slowSqlTopN(0)
-    // 是否启用事务 savepoint。默认 true；用于嵌套事务回滚点。
-    .savepointEnabled(true)
-    // 事务超时毫秒。默认 0（不限制）；>0 时超时会触发回滚。
-    .txTimeoutMs(0)
-    // 非事务 SQL 超时毫秒。默认 0（不限制）；>0 会设置 Statement timeout。
-    .queryTimeoutMs(0);
-```
-
-## 5.2 VKWebConfig 全量配置项
-
-```java
-import yueyang.vostok.web.VKWebConfig;
-
-VKWebConfig cfg = new VKWebConfig()
-    // 监听端口。默认 8080；设为 0 表示随机可用端口。
-    .port(8080)
-    // IO Reactor 线程数。默认 1；内部会强制 >=1。
-    .ioThreads(1)
-    // 业务线程池线程数。默认 max(2, CPU*2)；内部会强制 >=1。
-    .workerThreads(Math.max(2, Runtime.getRuntime().availableProcessors() * 2))
-    // ServerSocket backlog。默认 1024；内部会强制 >=1。
-    .backlog(1024)
-    // 每连接读缓冲区大小（字节）。默认 16KB；内部最小 1024。
-    .readBufferSize(16 * 1024)
-    // 最大请求头字节数。默认 32KB；内部最小 4096。
-    .maxHeaderBytes(32 * 1024)
-    // 最大请求体字节数。默认 4MB；内部最小 1024。
-    .maxBodyBytes(4 * 1024 * 1024)
-    // Keep-Alive 空闲超时毫秒。默认 30000；内部最小 1000。
-    .keepAliveTimeoutMs(30_000)
-    // 最大连接数。默认 10000；超出后新连接会被拒绝。内部最小 1。
-    .maxConnections(10_000)
-    // 读请求超时毫秒。默认 15000；内部最小 1000。
-    .readTimeoutMs(15_000)
-    // 业务线程池队列长度。默认 10000；内部最小 1。
-    .workerQueueSize(10_000)
-    // 是否启用 AccessLog。默认 true。
-    .accessLogEnabled(true)
-    // AccessLog 异步队列长度。默认 8192；内部最小 256。
-    .accessLogQueueSize(8_192);
-```
-
-## 5.3 VKFileConfig 全量配置项
-
-```java
-import yueyang.vostok.file.VKFileConfig;
-import java.nio.charset.StandardCharsets;
-
-VKFileConfig cfg = new VKFileConfig()
-    // 文件模式。默认 "local"；自定义存储需先 registerStore 再切换模式。
-    .mode("local")
-    // 基础目录。默认 System.getProperty("user.dir", ".")；所有相对路径都基于该目录。
-    .baseDir("/tmp/vostok-files")
-    // 文本读写字符集。默认 UTF-8。
-    .charset(StandardCharsets.UTF_8)
-    // 解压最大文件条目数。默认 -1（不限制）；建议生产环境设置上限防 zip bomb。
-    .unzipMaxEntries(-1)
-    // 解压总解压字节上限。默认 -1（不限制）；建议设置防止磁盘打满。
-    .unzipMaxTotalUncompressedBytes(-1)
-    // 单文件解压字节上限。默认 -1（不限制）；建议设置防止异常大文件。
-    .unzipMaxEntryUncompressedBytes(-1)
-    // watch(path, listener) 的默认递归策略。默认 false。
-    .watchRecursiveDefault(false);
-```
-
-## 5.4 VKLogConfig 全量配置项
+## 5.3 配置详解（VKLogConfig）
 
 ```java
 import yueyang.vostok.log.*;
@@ -1757,9 +1760,11 @@ VKLogConfig cfg = new VKLogConfig()
     .fileRetryIntervalMs(3000);
 ```
 
-# 6. Config 模块（新增）
+---
 
-## 6.1 Config 接口定义
+# 6. Config 模块
+
+## 6.1 接口定义
 
 ```java
 public interface Vostok.Config {
@@ -1813,7 +1818,7 @@ public interface Vostok.Config {
 }
 ```
 
-## 6.2 命名空间与优先级（固化）
+## 6.2 命名空间与优先级
 
 - 文件命名空间：配置文件名（去扩展名）作为第一层 key。
 - 示例：`a.properties` 内容 `enabled=true`，读取 key 为 `a.enabled`。
@@ -1827,7 +1832,7 @@ public interface Vostok.Config {
   4. JVM `-D`（`loadSystemProperties=true`）
   5. 运行时覆盖（`putOverride`）
 
-## 6.3 配置校验（fail-fast）
+## 6.3 配置校验
 
 - 在 `init/reinit/reload` 阶段执行全部校验器。
 - 任意校验失败都会抛 `VKConfigException(VALIDATION_ERROR)`，并中止本次加载。
@@ -1848,7 +1853,7 @@ Vostok.Config.registerValidator(VKConfigValidators.cross(
 ));
 ```
 
-## 6.4 热更新（可靠回滚）
+## 6.4 热更新
 
 - 开启方式：`VKConfigOptions.watchEnabled(true)`。
 - 文件变更触发 debounce 后自动重载。
@@ -1856,7 +1861,7 @@ Vostok.Config.registerValidator(VKConfigValidators.cross(
   - 不替换当前快照（继续使用旧配置）
   - `lastWatchError()` 返回错误信息
 
-## 6.5 Config 使用 demo
+## 6.5 使用 Demo
 
 ```java
 import yueyang.vostok.Vostok;
@@ -1885,7 +1890,7 @@ public class ConfigDemo {
 }
 ```
 
-## 6.6 VKConfigOptions 全量配置项
+## 6.6 配置详解（VKConfigOptions）
 
 ```java
 import yueyang.vostok.config.VKConfigOptions;
