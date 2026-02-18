@@ -1311,6 +1311,50 @@ public interface Vostok.File {
     public static long appendFrom(String path, InputStream input);
 
     /**
+     * 根据日期分片规则生成建议存储路径（当前时间）。
+     *
+     * - relativePath：业务相对路径（不含日期目录），类型为 String，必须为相对路径。
+     * - 返回值：String（如 "2026/02/18/upload/a.png"）。
+     */
+    public static String suggestDatePath(String relativePath);
+
+    /**
+     * 根据日期分片规则生成建议存储路径（指定时间）。
+     *
+     * - relativePath：业务相对路径，类型为 String，必须为相对路径。
+     * - atTime：指定时间，类型为 Instant，不能为空。
+     * - 返回值：String（含日期目录的建议路径）。
+     */
+    public static String suggestDatePath(String relativePath, Instant atTime);
+
+    /**
+     * 按日期分片目录写入文本，并返回实际写入路径。
+     *
+     * - relativePath：业务相对路径，类型为 String，必须为相对路径。
+     * - content：文本内容，类型为 String。
+     * - 返回值：String（实际写入路径）。
+     */
+    public static String writeByDatePath(String relativePath, String content);
+
+    /**
+     * 按日期分片目录写入二进制，并返回实际写入路径。
+     *
+     * - relativePath：业务相对路径，类型为 String，必须为相对路径。
+     * - content：二进制内容，类型为 byte[]。
+     * - 返回值：String（实际写入路径）。
+     */
+    public static String writeBytesByDatePath(String relativePath, byte[] content);
+
+    /**
+     * 按日期分片目录从输入流写入，并返回实际写入路径。
+     *
+     * - relativePath：业务相对路径，类型为 String，必须为相对路径。
+     * - input：输入流，类型为 InputStream。
+     * - 返回值：String（实际写入路径）。
+     */
+    public static String writeFromByDatePath(String relativePath, InputStream input);
+
+    /**
      * 生成图片缩略图并以字节数组返回。
      *
      * - imagePath：源图片路径，类型为 String。
@@ -1640,6 +1684,11 @@ public class FileApiDemo {
         long w1 = Vostok.File.writeFrom("stream/in.bin", new java.io.ByteArrayInputStream(new byte[]{1,2,3}));
         long w2 = Vostok.File.writeFrom("stream/in2.bin", new java.io.ByteArrayInputStream(new byte[]{4,5}), true);
         long w3 = Vostok.File.appendFrom("stream/in2.bin", new java.io.ByteArrayInputStream(new byte[]{6,7}));
+        String dp = Vostok.File.suggestDatePath("upload/a.txt");
+        String dp2 = Vostok.File.suggestDatePath("upload/b.txt", java.time.Instant.parse("2026-02-18T01:02:03Z"));
+        String p1 = Vostok.File.writeByDatePath("upload/t1.txt", "hello");
+        String p2 = Vostok.File.writeBytesByDatePath("upload/t2.bin", new byte[]{8,9});
+        String p3 = Vostok.File.writeFromByDatePath("upload/t3.bin", new java.io.ByteArrayInputStream(new byte[]{10,11}));
         byte[] tb1 = Vostok.File.thumbnail("img/origin.png",
                 VKThumbnailOptions.builder(200, 200)
                         .mode(VKThumbnailMode.FIT)
@@ -1664,8 +1713,8 @@ public class FileApiDemo {
 
         List<VKFileInfo> l1 = Vostok.File.list(".");
         List<VKFileInfo> l2 = Vostok.File.list(".", true);
-        List<VKFileInfo> w1 = Vostok.File.walk(".", true, info -> !info.directory());
-        List<VKFileInfo> w2 = Vostok.File.walk(".", false);
+        List<VKFileInfo> wl1 = Vostok.File.walk(".", true, info -> !info.directory());
+        List<VKFileInfo> wl2 = Vostok.File.walk(".", false);
 
         Vostok.File.mkdir("dir");
         Vostok.File.mkdirs("dir/sub");
@@ -1722,7 +1771,11 @@ VKFileConfig cfg = new VKFileConfig()
     // 单文件解压字节上限。默认 -1（不限制）；建议设置防止异常大文件。
     .unzipMaxEntryUncompressedBytes(-1)
     // watch(path, listener) 的默认递归策略。默认 false。
-    .watchRecursiveDefault(false);
+    .watchRecursiveDefault(false)
+    // 日期分片目录格式（用于 suggestDatePath / write*ByDatePath）。默认 "yyyy/MM/dd"。
+    .datePartitionPattern("yyyy/MM/dd")
+    // 日期分片时区（用于 suggestDatePath / write*ByDatePath）。默认系统时区。
+    .datePartitionZoneId("UTC");
 ```
 
 ---

@@ -1,10 +1,10 @@
 package yueyang.vostok.file;
 
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.time.Instant;
 import java.util.List;
 import java.util.function.Predicate;
-import java.io.OutputStream;
 
 /**
  * File store abstraction. Local file system is the default implementation.
@@ -38,6 +38,8 @@ public interface VKFileStore {
     long writeFrom(String path, InputStream input, boolean replaceExisting);
 
     long appendFrom(String path, InputStream input);
+
+    String suggestDatePath(String relativePath, Instant atTime, VKFileConfig config);
 
     byte[] thumbnail(String imagePath, VKThumbnailOptions options);
 

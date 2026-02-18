@@ -14,6 +14,8 @@ public final class VKFileConfig {
     private long unzipMaxTotalUncompressedBytes = -1;
     private long unzipMaxEntryUncompressedBytes = -1;
     private boolean watchRecursiveDefault = false;
+    private String datePartitionPattern = "yyyy/MM/dd";
+    private String datePartitionZoneId = java.time.ZoneId.systemDefault().getId();
 
     public String getMode() {
         return mode;
@@ -75,6 +77,24 @@ public final class VKFileConfig {
 
     public VKFileConfig watchRecursiveDefault(boolean watchRecursiveDefault) {
         this.watchRecursiveDefault = watchRecursiveDefault;
+        return this;
+    }
+
+    public String getDatePartitionPattern() {
+        return datePartitionPattern;
+    }
+
+    public VKFileConfig datePartitionPattern(String datePartitionPattern) {
+        this.datePartitionPattern = datePartitionPattern;
+        return this;
+    }
+
+    public String getDatePartitionZoneId() {
+        return datePartitionZoneId;
+    }
+
+    public VKFileConfig datePartitionZoneId(String datePartitionZoneId) {
+        this.datePartitionZoneId = datePartitionZoneId;
         return this;
     }
 }

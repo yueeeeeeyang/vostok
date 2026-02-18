@@ -6,7 +6,9 @@ import yueyang.vostok.file.exception.VKFileException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Path;
+import java.time.ZoneId;
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -35,6 +37,9 @@ public class VostokFile {
             requireNotBlank(fileConfig.getMode(), "Mode is blank");
             requireNotBlank(fileConfig.getBaseDir(), "Base directory is blank");
             requireNotNull(fileConfig.getCharset(), "Charset is null");
+            requireNotBlank(fileConfig.getDatePartitionPattern(), "Date partition pattern is blank");
+            requireNotBlank(fileConfig.getDatePartitionZoneId(), "Date partition zoneId is blank");
+            validateDatePartitionConfig(fileConfig);
 
             if (initialized) {
                 VKFileStore old = defaultMode == null ? null : STORES.get(defaultMode);
@@ -185,6 +190,35 @@ public class VostokFile {
 
     public static long appendFrom(String path, InputStream input) {
         return store().appendFrom(path, input);
+    }
+
+    public static String suggestDatePath(String relativePath) {
+        return suggestDatePath(relativePath, Instant.now());
+    }
+
+    public static String suggestDatePath(String relativePath, Instant atTime) {
+        ensureInitialized();
+        requireNotBlank(relativePath, "Relative path is blank");
+        requireNotNull(atTime, "Instant is null");
+        return store().suggestDatePath(relativePath, atTime, config());
+    }
+
+    public static String writeByDatePath(String relativePath, String content) {
+        String path = suggestDatePath(relativePath);
+        write(path, content);
+        return path;
+    }
+
+    public static String writeBytesByDatePath(String relativePath, byte[] content) {
+        String path = suggestDatePath(relativePath);
+        writeBytes(path, content);
+        return path;
+    }
+
+    public static String writeFromByDatePath(String relativePath, InputStream input) {
+        String path = suggestDatePath(relativePath);
+        writeFrom(path, input);
+        return path;
     }
 
     public static byte[] thumbnail(String imagePath, VKThumbnailOptions options) {
@@ -380,7 +414,9 @@ public class VostokFile {
                 .unzipMaxEntries(source.getUnzipMaxEntries())
                 .unzipMaxTotalUncompressedBytes(source.getUnzipMaxTotalUncompressedBytes())
                 .unzipMaxEntryUncompressedBytes(source.getUnzipMaxEntryUncompressedBytes())
-                .watchRecursiveDefault(source.isWatchRecursiveDefault());
+                .watchRecursiveDefault(source.isWatchRecursiveDefault())
+                .datePartitionPattern(source.getDatePartitionPattern())
+                .datePartitionZoneId(source.getDatePartitionZoneId());
     }
 
     private static void closeInternal() {
@@ -406,6 +442,21 @@ public class VostokFile {
     private static void requireNotNull(Object value, String message) {
         if (value == null) {
             throw new VKFileException(VKFileErrorCode.INVALID_ARGUMENT, message);
+        }
+    }
+
+    private static void validateDatePartitionConfig(VKFileConfig cfg) {
+        try {
+            DateTimeFormatter.ofPattern(cfg.getDatePartitionPattern());
+        } catch (Exception e) {
+            throw new VKFileException(VKFileErrorCode.CONFIG_ERROR,
+                    "Invalid datePartitionPattern: " + cfg.getDatePartitionPattern(), e);
+        }
+        try {
+            ZoneId.of(cfg.getDatePartitionZoneId());
+        } catch (Exception e) {
+            throw new VKFileException(VKFileErrorCode.CONFIG_ERROR,
+                    "Invalid datePartitionZoneId: " + cfg.getDatePartitionZoneId(), e);
         }
     }
 }

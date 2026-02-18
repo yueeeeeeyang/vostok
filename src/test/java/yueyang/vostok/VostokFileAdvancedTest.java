@@ -13,6 +13,7 @@ import yueyang.vostok.file.exception.VKFileException;
 import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -294,5 +295,44 @@ public class VostokFileAdvancedTest {
             Vostok.File.write("watch/deep/default.txt", "ok");
             assertTrue(latch.await(5, TimeUnit.SECONDS));
         }
+    }
+
+    @Test
+    void testSuggestDatePathAndWriteByDatePath() {
+        Vostok.File.init(new VKFileConfig()
+                .baseDir(tempDir.toString())
+                .datePartitionPattern("yyyy/MM/dd")
+                .datePartitionZoneId("UTC"));
+
+        String suggested = Vostok.File.suggestDatePath("upload/a.txt", Instant.parse("2026-02-18T01:02:03Z"));
+        assertEquals("2026/02/18/upload/a.txt", suggested);
+
+        String p1 = Vostok.File.writeByDatePath("upload/t1.txt", "hello");
+        assertTrue(p1.matches("\\d{4}/\\d{2}/\\d{2}/upload/t1\\.txt"));
+        assertEquals("hello", Vostok.File.read(p1));
+
+        String p2 = Vostok.File.writeBytesByDatePath("upload/t2.bin", new byte[]{1, 2, 3});
+        assertTrue(p2.matches("\\d{4}/\\d{2}/\\d{2}/upload/t2\\.bin"));
+        assertArrayEquals(new byte[]{1, 2, 3}, Vostok.File.readBytes(p2));
+
+        String p3 = Vostok.File.writeFromByDatePath("upload/t3.bin", new ByteArrayInputStream(new byte[]{4, 5}));
+        assertTrue(p3.matches("\\d{4}/\\d{2}/\\d{2}/upload/t3\\.bin"));
+        assertArrayEquals(new byte[]{4, 5}, Vostok.File.readBytes(p3));
+    }
+
+    @Test
+    void testNormalWriteUnchangedWhenDatePathApisExist() {
+        Vostok.File.init(new VKFileConfig().baseDir(tempDir.toString()));
+        Vostok.File.write("plain/a.txt", "x");
+        assertTrue(Vostok.File.exists("plain/a.txt"));
+        assertEquals("x", Vostok.File.read("plain/a.txt"));
+    }
+
+    @Test
+    void testSuggestDatePathInvalidRelativePath() {
+        Vostok.File.init(new VKFileConfig().baseDir(tempDir.toString()));
+        VKFileException ex = assertThrows(VKFileException.class,
+                () -> Vostok.File.suggestDatePath("/abs/a.txt"));
+        assertEquals(VKFileErrorCode.INVALID_ARGUMENT, ex.getErrorCode());
     }
 }

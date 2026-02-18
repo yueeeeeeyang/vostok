@@ -33,6 +33,8 @@ import java.nio.file.attribute.FileTime;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -267,6 +269,43 @@ public final class LocalFileStore implements VKFileStore {
             }
         } catch (IOException e) {
             throw io("Append from stream failed: " + path, e);
+        }
+    }
+
+    @Override
+    public String suggestDatePath(String relativePath, Instant atTime, VKFileConfig config) {
+        requireNotBlank(relativePath, "Relative path is blank");
+        requireNotNull(atTime, "Instant is null");
+        requireNotNull(config, "VKFileConfig is null");
+        requireNotBlank(config.getDatePartitionPattern(), "Date partition pattern is blank");
+        requireNotBlank(config.getDatePartitionZoneId(), "Date partition zoneId is blank");
+
+        Path rel = Path.of(relativePath.trim());
+        if (rel.isAbsolute()) {
+            throw arg("Relative path must not be absolute: " + relativePath);
+        }
+        Path normalizedRel = rel.normalize();
+        if (normalizedRel.toString().isBlank() || normalizedRel.startsWith("..")) {
+            throw arg("Relative path is invalid: " + relativePath);
+        }
+        try {
+            DateTimeFormatter fmt = DateTimeFormatter.ofPattern(config.getDatePartitionPattern())
+                    .withZone(ZoneId.of(config.getDatePartitionZoneId()));
+            String datePrefix = fmt.format(atTime).replace('\\', '/');
+            String relStr = normalizedRel.toString().replace('\\', '/');
+            String merged = datePrefix.endsWith("/") ? datePrefix + relStr : datePrefix + "/" + relStr;
+
+            Path check = root.resolve(merged).normalize();
+            if (!check.startsWith(root)) {
+                throw arg("Date partition path escapes root: " + relativePath);
+            }
+            return merged;
+        } catch (VKFileException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new VKFileException(VKFileErrorCode.CONFIG_ERROR,
+                    "Invalid date partition settings: pattern=" + config.getDatePartitionPattern()
+                            + ", zoneId=" + config.getDatePartitionZoneId(), e);
         }
     }
 
