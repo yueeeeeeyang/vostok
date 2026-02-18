@@ -17,171 +17,256 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import java.util.zip.GZIPOutputStream;
 
 /**
  * High-performance async logger for Vostok.
  */
 public class VostokLog {
-    private static final AsyncEngine ENGINE = new AsyncEngine();
+    private static final Object LOCK = new Object();
+    private static volatile AsyncEngine ENGINE;
+    private static volatile VKLogConfig CONFIG = VKLogConfig.defaults();
+    private static volatile boolean INITIALIZED;
     private static final StackWalker CALLER_WALKER = StackWalker.getInstance(StackWalker.Option.RETAIN_CLASS_REFERENCE);
+
+    static {
+        Runtime.getRuntime().addShutdownHook(new Thread(VostokLog::close, "vostok-log-shutdown"));
+    }
 
     protected VostokLog() {
     }
 
+    public static void init() {
+        init(VKLogConfig.defaults());
+    }
+
+    public static void init(VKLogConfig config) {
+        VKAssert.notNull(config, "VKLogConfig is null");
+        synchronized (LOCK) {
+            if (INITIALIZED) {
+                return;
+            }
+            CONFIG = config.copy();
+            ENGINE = new AsyncEngine(CONFIG);
+            INITIALIZED = true;
+        }
+    }
+
+    public static void reinit(VKLogConfig config) {
+        VKAssert.notNull(config, "VKLogConfig is null");
+        AsyncEngine old;
+        synchronized (LOCK) {
+            CONFIG = config.copy();
+            old = ENGINE;
+            ENGINE = new AsyncEngine(CONFIG);
+            INITIALIZED = true;
+        }
+        if (old != null) {
+            old.shutdown();
+        }
+    }
+
+    public static void close() {
+        AsyncEngine old;
+        synchronized (LOCK) {
+            old = ENGINE;
+            ENGINE = null;
+            INITIALIZED = false;
+        }
+        if (old != null) {
+            old.shutdown();
+        }
+    }
+
+    public static boolean initialized() {
+        return INITIALIZED;
+    }
+
     public static void trace(String msg) {
-        ENGINE.log(VKLogLevel.TRACE, resolveCaller(), msg, null);
+        current().log(VKLogLevel.TRACE, resolveCaller(), msg, null);
     }
 
     public static void debug(String msg) {
-        ENGINE.log(VKLogLevel.DEBUG, resolveCaller(), msg, null);
+        current().log(VKLogLevel.DEBUG, resolveCaller(), msg, null);
     }
 
     public static void info(String msg) {
-        ENGINE.log(VKLogLevel.INFO, resolveCaller(), msg, null);
+        current().log(VKLogLevel.INFO, resolveCaller(), msg, null);
     }
 
     public static void warn(String msg) {
-        ENGINE.log(VKLogLevel.WARN, resolveCaller(), msg, null);
+        current().log(VKLogLevel.WARN, resolveCaller(), msg, null);
     }
 
     public static void error(String msg) {
-        ENGINE.log(VKLogLevel.ERROR, resolveCaller(), msg, null);
+        current().log(VKLogLevel.ERROR, resolveCaller(), msg, null);
     }
 
     public static void error(String msg, Throwable t) {
-        ENGINE.log(VKLogLevel.ERROR, resolveCaller(), msg, t);
+        current().log(VKLogLevel.ERROR, resolveCaller(), msg, t);
     }
 
     public static void trace(String template, Object... args) {
-        ENGINE.log(VKLogLevel.TRACE, resolveCaller(), format(template, args), null);
+        current().log(VKLogLevel.TRACE, resolveCaller(), format(template, args), null);
     }
 
     public static void debug(String template, Object... args) {
-        ENGINE.log(VKLogLevel.DEBUG, resolveCaller(), format(template, args), null);
+        current().log(VKLogLevel.DEBUG, resolveCaller(), format(template, args), null);
     }
 
     public static void info(String template, Object... args) {
-        ENGINE.log(VKLogLevel.INFO, resolveCaller(), format(template, args), null);
+        current().log(VKLogLevel.INFO, resolveCaller(), format(template, args), null);
     }
 
     public static void warn(String template, Object... args) {
-        ENGINE.log(VKLogLevel.WARN, resolveCaller(), format(template, args), null);
+        current().log(VKLogLevel.WARN, resolveCaller(), format(template, args), null);
     }
 
     public static void error(String template, Object... args) {
-        ENGINE.log(VKLogLevel.ERROR, resolveCaller(), format(template, args), null);
+        current().log(VKLogLevel.ERROR, resolveCaller(), format(template, args), null);
     }
 
     public static void setLevel(VKLogLevel level) {
-        ENGINE.setLevel(level);
+        updateConfig(cfg -> cfg.level(level));
     }
 
     public static VKLogLevel level() {
-        return ENGINE.level();
+        AsyncEngine e = ENGINE;
+        return e == null ? CONFIG.getLevel() : e.level();
     }
 
     public static void setOutputDir(String outputDir) {
-        ENGINE.setOutputDir(outputDir);
+        updateConfig(cfg -> cfg.outputDir(outputDir));
     }
 
     public static void setFilePrefix(String filePrefix) {
-        ENGINE.setFilePrefix(filePrefix);
+        updateConfig(cfg -> cfg.filePrefix(filePrefix));
     }
 
     public static void setMaxFileSizeMb(long mb) {
-        ENGINE.setMaxFileSizeMb(mb);
+        updateConfig(cfg -> cfg.maxFileSizeMb(mb));
     }
 
     public static void setMaxFileSizeBytes(long bytes) {
-        ENGINE.setMaxFileSizeBytes(bytes);
+        updateConfig(cfg -> cfg.maxFileSizeBytes(bytes));
     }
 
     public static void setMaxBackups(int maxBackups) {
-        ENGINE.setMaxBackups(maxBackups);
+        updateConfig(cfg -> cfg.maxBackups(maxBackups));
     }
 
     public static void setMaxBackupDays(int maxBackupDays) {
-        ENGINE.setMaxBackupDays(maxBackupDays);
+        updateConfig(cfg -> cfg.maxBackupDays(maxBackupDays));
     }
 
     public static void setMaxTotalSizeMb(long mb) {
-        ENGINE.setMaxTotalSizeMb(mb);
+        updateConfig(cfg -> cfg.maxTotalSizeMb(mb));
     }
 
     public static void setConsoleEnabled(boolean enabled) {
-        ENGINE.setConsoleEnabled(enabled);
+        updateConfig(cfg -> cfg.consoleEnabled(enabled));
     }
 
     public static void setQueueFullPolicy(VKLogQueueFullPolicy policy) {
-        ENGINE.setQueueFullPolicy(policy);
+        updateConfig(cfg -> cfg.queueFullPolicy(policy));
     }
 
     public static void setQueueCapacity(int capacity) {
-        ENGINE.setQueueCapacity(capacity);
+        updateConfig(cfg -> cfg.queueCapacity(capacity));
     }
 
     public static void setFlushIntervalMs(long flushIntervalMs) {
-        ENGINE.setFlushIntervalMs(flushIntervalMs);
+        updateConfig(cfg -> cfg.flushIntervalMs(flushIntervalMs));
     }
 
     public static void setFlushBatchSize(int flushBatchSize) {
-        ENGINE.setFlushBatchSize(flushBatchSize);
+        updateConfig(cfg -> cfg.flushBatchSize(flushBatchSize));
     }
 
     public static void setShutdownTimeoutMs(long shutdownTimeoutMs) {
-        ENGINE.setShutdownTimeoutMs(shutdownTimeoutMs);
+        updateConfig(cfg -> cfg.shutdownTimeoutMs(shutdownTimeoutMs));
     }
 
     public static void setFsyncPolicy(VKLogFsyncPolicy fsyncPolicy) {
-        ENGINE.setFsyncPolicy(fsyncPolicy);
+        updateConfig(cfg -> cfg.fsyncPolicy(fsyncPolicy));
     }
 
     public static void setRollInterval(VKLogRollInterval interval) {
-        ENGINE.setRollInterval(interval);
+        updateConfig(cfg -> cfg.rollInterval(interval));
     }
 
     public static void setCompressRolledFiles(boolean compress) {
-        ENGINE.setCompressRolledFiles(compress);
+        updateConfig(cfg -> cfg.compressRolledFiles(compress));
     }
 
     public static void setFileRetryIntervalMs(long retryIntervalMs) {
-        ENGINE.setFileRetryIntervalMs(retryIntervalMs);
+        updateConfig(cfg -> cfg.fileRetryIntervalMs(retryIntervalMs));
     }
 
     public static long droppedLogs() {
-        return ENGINE.droppedLogs();
+        AsyncEngine e = ENGINE;
+        return e == null ? 0L : e.droppedLogs();
     }
 
     public static long fallbackWrites() {
-        return ENGINE.fallbackWrites();
+        AsyncEngine e = ENGINE;
+        return e == null ? 0L : e.fallbackWrites();
     }
 
     public static long fileWriteErrors() {
-        return ENGINE.fileWriteErrors();
+        AsyncEngine e = ENGINE;
+        return e == null ? 0L : e.fileWriteErrors();
     }
 
     public static void flush() {
-        ENGINE.flush();
+        AsyncEngine e = ENGINE;
+        if (e != null) {
+            e.flush();
+        }
     }
 
     public static void shutdown() {
-        ENGINE.shutdown();
+        close();
     }
 
     public static void resetDefaults() {
-        ENGINE.resetDefaults();
+        reinit(VKLogConfig.defaults());
     }
 
     static void resetForTests() {
-        ENGINE.resetDefaults();
+        reinit(VKLogConfig.defaults());
+    }
+
+    private static AsyncEngine current() {
+        AsyncEngine e = ENGINE;
+        if (e != null) {
+            return e;
+        }
+        synchronized (LOCK) {
+            if (ENGINE == null) {
+                ENGINE = new AsyncEngine(CONFIG);
+                INITIALIZED = true;
+            }
+            return ENGINE;
+        }
+    }
+
+    private static void updateConfig(Consumer<VKLogConfig> updater) {
+        synchronized (LOCK) {
+            VKLogConfig next = CONFIG.copy();
+            updater.accept(next);
+            CONFIG = next;
+            if (ENGINE != null) {
+                ENGINE.applyConfig(next);
+            }
+        }
     }
 
     private static String resolveCaller() {
@@ -279,11 +364,31 @@ public class VostokLog {
         private long activeSize;
         private int rollSeq;
 
-        private AsyncEngine() {
+        private AsyncEngine(VKLogConfig config) {
+            applyConfig(config);
             worker = new Thread(this::runLoop, "vostok-log-writer");
             worker.setDaemon(true);
             worker.start();
-            Runtime.getRuntime().addShutdownHook(new Thread(this::shutdown, "vostok-log-shutdown"));
+        }
+
+        private synchronized void applyConfig(VKLogConfig config) {
+            setLevel(config.getLevel());
+            setOutputDir(config.getOutputDir());
+            setFilePrefix(config.getFilePrefix());
+            setMaxFileSizeBytes(config.getMaxFileSizeBytes());
+            setMaxBackups(config.getMaxBackups());
+            setMaxBackupDays(config.getMaxBackupDays());
+            setMaxTotalSizeBytes(config.getMaxTotalSizeBytes());
+            setConsoleEnabled(config.isConsoleEnabled());
+            setQueueFullPolicy(config.getQueueFullPolicy());
+            setQueueCapacity(config.getQueueCapacity());
+            setFlushIntervalMs(config.getFlushIntervalMs());
+            setFlushBatchSize(config.getFlushBatchSize());
+            setShutdownTimeoutMs(config.getShutdownTimeoutMs());
+            setFsyncPolicy(config.getFsyncPolicy());
+            setRollInterval(config.getRollInterval());
+            setCompressRolledFiles(config.isCompressRolledFiles());
+            setFileRetryIntervalMs(config.getFileRetryIntervalMs());
         }
 
         private void log(VKLogLevel logLevel, String loggerName, String message, Throwable error) {
@@ -361,11 +466,6 @@ public class VostokLog {
             reopenRequested = true;
         }
 
-        private void setMaxFileSizeMb(long mb) {
-            VKAssert.isTrue(mb > 0, "maxFileSizeMb must be > 0");
-            setMaxFileSizeBytes(mb * 1024 * 1024);
-        }
-
         private void setMaxFileSizeBytes(long bytes) {
             VKAssert.isTrue(bytes > 0, "maxFileSizeBytes must be > 0");
             this.maxFileSizeBytes = bytes;
@@ -382,9 +482,9 @@ public class VostokLog {
             this.maxBackupDays = maxBackupDays;
         }
 
-        private void setMaxTotalSizeMb(long mb) {
-            VKAssert.isTrue(mb > 0, "maxTotalSizeMb must be > 0");
-            this.maxTotalSizeBytes = mb * 1024 * 1024;
+        private void setMaxTotalSizeBytes(long bytes) {
+            VKAssert.isTrue(bytes > 0, "maxTotalSizeBytes must be > 0");
+            this.maxTotalSizeBytes = bytes;
         }
 
         private void setConsoleEnabled(boolean consoleEnabled) {
@@ -480,34 +580,6 @@ public class VostokLog {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
-        }
-
-        private void resetDefaults() {
-            level = VKLogLevel.INFO;
-            outputDir = Path.of("logs");
-            filePrefix = "vostok";
-            maxFileSizeBytes = 64L * 1024 * 1024;
-            maxBackups = 20;
-            maxBackupDays = 30;
-            maxTotalSizeBytes = 1024L * 1024 * 1024;
-            consoleEnabled = true;
-            queueFullPolicy = VKLogQueueFullPolicy.DROP;
-            flushIntervalMs = 1000;
-            flushBatchSize = 256;
-            fsyncPolicy = VKLogFsyncPolicy.NEVER;
-            rollInterval = VKLogRollInterval.DAILY;
-            compressRolledFiles = false;
-            fileRetryIntervalMs = 3000;
-            reopenRequested = true;
-            nextFileRetryAt = 0;
-            dropped.set(0);
-            fallbackWrites.set(0);
-            fileWriteErrors.set(0);
-
-            while (queue.poll() != null) {
-                // clear queue
-            }
-            flush();
         }
 
         private void enqueueControl(LogEvent event) {
@@ -703,7 +775,7 @@ public class VostokLog {
                     Files.move(activeFile, rolled, StandardCopyOption.REPLACE_EXISTING);
                 }
                 if (compressRolledFiles) {
-                    rolled = compressFile(rolled);
+                    compressFile(rolled);
                 }
                 pruneBackups();
             } catch (Exception e) {
@@ -711,7 +783,7 @@ public class VostokLog {
             }
         }
 
-        private Path compressFile(Path source) throws IOException {
+        private void compressFile(Path source) throws IOException {
             Path gz = source.resolveSibling(source.getFileName().toString() + ".gz");
             try (InputStream in = Files.newInputStream(source);
                  OutputStream fout = Files.newOutputStream(gz, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -719,7 +791,6 @@ public class VostokLog {
                 in.transferTo(out);
             }
             Files.deleteIfExists(source);
-            return gz;
         }
 
         private void pruneBackups() {

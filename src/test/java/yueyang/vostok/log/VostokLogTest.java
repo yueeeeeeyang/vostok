@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class VostokLogTest {
@@ -25,22 +26,60 @@ class VostokLogTest {
     @BeforeEach
     void setUp() throws Exception {
         dir = Files.createTempDirectory("vostok-log-test");
-        Vostok.Log.resetDefaults();
-        Vostok.Log.setConsoleEnabled(false);
-        Vostok.Log.setOutputDir(dir.toString());
-        Vostok.Log.setFilePrefix("test");
-        Vostok.Log.setLevel(VKLogLevel.INFO);
-        Vostok.Log.setQueueCapacity(256);
-        Vostok.Log.setFlushIntervalMs(50);
-        Vostok.Log.setFlushBatchSize(32);
-        Vostok.Log.setQueueFullPolicy(VKLogQueueFullPolicy.DROP);
-        Vostok.Log.setRollInterval(VKLogRollInterval.DAILY);
+        Vostok.Log.close();
+        Vostok.Log.init(new VKLogConfig()
+                .consoleEnabled(false)
+                .outputDir(dir.toString())
+                .filePrefix("test")
+                .level(VKLogLevel.INFO)
+                .queueCapacity(256)
+                .flushIntervalMs(50)
+                .flushBatchSize(32)
+                .queueFullPolicy(VKLogQueueFullPolicy.DROP)
+                .rollInterval(VKLogRollInterval.DAILY));
     }
 
     @AfterEach
     void tearDown() {
         Vostok.Log.flush();
-        Vostok.Log.resetDefaults();
+        Vostok.Log.close();
+    }
+
+    @Test
+    void testInitAndInitialized() {
+        assertTrue(Vostok.Log.initialized());
+        Vostok.Log.close();
+        assertFalse(Vostok.Log.initialized());
+    }
+
+    @Test
+    void testInitIsIdempotent() {
+        Vostok.Log.init(new VKLogConfig().outputDir("/tmp/should-not-take-effect").filePrefix("other"));
+        assertTrue(Vostok.Log.initialized());
+        Vostok.Log.info("idempotent-check");
+        Vostok.Log.flush();
+        assertTrue(Files.exists(dir.resolve("test.log")));
+        assertFalse(Files.exists(Path.of("/tmp/should-not-take-effect").resolve("other.log")));
+    }
+
+    @Test
+    void testReinitAppliesNewConfig() throws Exception {
+        Path dir2 = Files.createTempDirectory("vostok-log-test2");
+        Vostok.Log.reinit(new VKLogConfig()
+                .consoleEnabled(false)
+                .outputDir(dir2.toString())
+                .filePrefix("reinit")
+                .level(VKLogLevel.INFO));
+        Vostok.Log.info("reinit-ok");
+        Vostok.Log.flush();
+        assertTrue(Files.exists(dir2.resolve("reinit.log")));
+        String text = Files.readString(dir2.resolve("reinit.log"));
+        assertTrue(text.contains("reinit-ok"));
+        Vostok.Log.reinit(new VKLogConfig()
+                .consoleEnabled(false)
+                .outputDir(dir.toString())
+                .filePrefix("test")
+                .level(VKLogLevel.INFO));
     }
 
     @Test

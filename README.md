@@ -319,6 +319,13 @@ Vostok.File.withMode("oss", () -> {
 **快速上手**
 ```java
 import yueyang.vostok.Vostok;
+import yueyang.vostok.log.VKLogConfig;
+import yueyang.vostok.log.VKLogLevel;
+
+Vostok.Log.init(new VKLogConfig()
+    .level(VKLogLevel.INFO)
+    .outputDir("/tmp/vostok-log")
+    .filePrefix("app"));
 
 Vostok.Log.info("service started");
 Vostok.Log.warn("cache miss: key={}", "user:1001");
@@ -333,29 +340,40 @@ try {
 **日志配置**
 ```java
 import yueyang.vostok.Vostok;
+import yueyang.vostok.log.VKLogConfig;
 import yueyang.vostok.log.VKLogLevel;
 import yueyang.vostok.log.VKLogQueueFullPolicy;
 import yueyang.vostok.log.VKLogFsyncPolicy;
 import yueyang.vostok.log.VKLogRollInterval;
 
-Vostok.Log.setLevel(VKLogLevel.INFO);     // 日志级别
-Vostok.Log.setOutputDir("/tmp/vostok-log"); // 输出目录
-Vostok.Log.setFilePrefix("app");          // 日志文件前缀
-Vostok.Log.setMaxFileSizeMb(128);         // 单文件最大 MB（触发滚动）
-Vostok.Log.setMaxBackups(30);             // 最大保留历史文件数
-Vostok.Log.setMaxBackupDays(7);           // 历史文件最大保留天数
-Vostok.Log.setMaxTotalSizeMb(2048);       // 历史文件总大小上限
-Vostok.Log.setConsoleEnabled(true);       // 是否同时输出控制台
-Vostok.Log.setRollInterval(VKLogRollInterval.DAILY); // NONE/HOURLY/DAILY
-Vostok.Log.setCompressRolledFiles(true);  // 滚动文件是否 gzip
+VKLogConfig cfg = new VKLogConfig()
+    .level(VKLogLevel.INFO)
+    .outputDir("/tmp/vostok-log")
+    .filePrefix("app")
+    .maxFileSizeMb(128)
+    .maxBackups(30)
+    .maxBackupDays(7)
+    .maxTotalSizeMb(2048)
+    .consoleEnabled(true)
+    .rollInterval(VKLogRollInterval.DAILY)
+    .compressRolledFiles(true)
+    .queueFullPolicy(VKLogQueueFullPolicy.BLOCK)
+    .queueCapacity(65536)
+    .flushIntervalMs(1000)
+    .flushBatchSize(512)
+    .fsyncPolicy(VKLogFsyncPolicy.EVERY_FLUSH)
+    .shutdownTimeoutMs(8000)
+    .fileRetryIntervalMs(3000);
 
-Vostok.Log.setQueueFullPolicy(VKLogQueueFullPolicy.BLOCK); // 队列满处理策略
-Vostok.Log.setQueueCapacity(65536);       // 异步队列容量
-Vostok.Log.setFlushIntervalMs(1000);      // 定时刷盘间隔
-Vostok.Log.setFlushBatchSize(512);        // 批量刷盘阈值
-Vostok.Log.setFsyncPolicy(VKLogFsyncPolicy.EVERY_FLUSH); // NEVER/EVERY_FLUSH/EVERY_WRITE
-Vostok.Log.setShutdownTimeoutMs(8000);    // 停机排空队列等待超时
-Vostok.Log.setFileRetryIntervalMs(3000);  // 文件失败后的重试间隔
+Vostok.Log.init(cfg);
+```
+
+**生命周期**
+```java
+Vostok.Log.init();          // 使用默认配置初始化（幂等）
+boolean ok = Vostok.Log.initialized();
+Vostok.Log.reinit(cfg);     // 运行期替换配置
+Vostok.Log.close();         // 优雅关闭 Log 模块
 ```
 
 **滚动与文件命名**
