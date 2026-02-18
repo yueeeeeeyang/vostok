@@ -167,9 +167,11 @@ Vostok.File.withMode("oss", () -> {
 **核心特性**
 - 统一入口：`Vostok.Log`
 - 异步写日志：业务线程只入队，后台线程批量落盘
+- 队列满策略：`DROP` / `BLOCK` / `SYNC_FALLBACK`
 - 自动调用类识别：无需手动传 logger/class
-- 日志滚动分割：按日期变化或文件大小阈值触发滚动
-- 输出配置可调：目录、文件前缀、单文件大小、保留备份数
+- 日志滚动分割：按时间周期（小时/天）和文件大小双触发
+- 文件不可写自动降级：自动回退 `stderr` 并周期重试文件恢复
+- 输出配置可调：目录、文件前缀、单文件大小、备份数量/天数/总大小、压缩
 
 **快速上手**
 ```java
@@ -189,21 +191,42 @@ try {
 ```java
 import yueyang.vostok.Vostok;
 import yueyang.vostok.log.VKLogLevel;
+import yueyang.vostok.log.VKLogQueueFullPolicy;
+import yueyang.vostok.log.VKLogFsyncPolicy;
+import yueyang.vostok.log.VKLogRollInterval;
 
 Vostok.Log.setLevel(VKLogLevel.INFO);     // 日志级别
 Vostok.Log.setOutputDir("/tmp/vostok-log"); // 输出目录
 Vostok.Log.setFilePrefix("app");          // 日志文件前缀
 Vostok.Log.setMaxFileSizeMb(128);         // 单文件最大 MB（触发滚动）
 Vostok.Log.setMaxBackups(30);             // 最大保留历史文件数
+Vostok.Log.setMaxBackupDays(7);           // 历史文件最大保留天数
+Vostok.Log.setMaxTotalSizeMb(2048);       // 历史文件总大小上限
 Vostok.Log.setConsoleEnabled(true);       // 是否同时输出控制台
+Vostok.Log.setRollInterval(VKLogRollInterval.DAILY); // NONE/HOURLY/DAILY
+Vostok.Log.setCompressRolledFiles(true);  // 滚动文件是否 gzip
+
+Vostok.Log.setQueueFullPolicy(VKLogQueueFullPolicy.BLOCK); // 队列满处理策略
+Vostok.Log.setQueueCapacity(65536);       // 异步队列容量
+Vostok.Log.setFlushIntervalMs(1000);      // 定时刷盘间隔
+Vostok.Log.setFlushBatchSize(512);        // 批量刷盘阈值
+Vostok.Log.setFsyncPolicy(VKLogFsyncPolicy.EVERY_FLUSH); // NEVER/EVERY_FLUSH/EVERY_WRITE
+Vostok.Log.setShutdownTimeoutMs(8000);    // 停机排空队列等待超时
+Vostok.Log.setFileRetryIntervalMs(3000);  // 文件失败后的重试间隔
 ```
 
 **滚动与文件命名**
 - 当前写入文件：`<filePrefix>.log`（如 `app.log`）
 - 滚动后文件：`<filePrefix>-yyyyMMdd-HHmmss-<seq>.log`
 - 触发条件：
-  - 日期变化（跨天）
+  - 时间周期变化（按 `setRollInterval`）
   - 当前文件大小超过 `setMaxFileSizeMb` 阈值
+- 启用压缩后滚动文件会变为：`<filePrefix>-yyyyMMdd-HHmmss-<seq>.log.gz`
+
+**队列满策略说明**
+- `DROP`：丢弃当前日志并累计到 `droppedLogs()`
+- `BLOCK`：阻塞调用线程等待入队，尽量不丢日志
+- `SYNC_FALLBACK`：当前线程同步写日志（不经异步队列）
 
 **刷新与关闭（可选）**
 ```java
@@ -213,7 +236,11 @@ Vostok.Log.shutdown(); // 主动关闭日志线程（通常用于进程退出前
 
 **说明**
 - Data/Web/File 内部日志也统一通过 `Vostok.Log` 输出。
-- 若异步队列已满，日志会丢弃；可通过 `Vostok.Log.droppedLogs()` 查看累计丢弃数。
+- 文件系统不可写时会自动降级到 `stderr`，并按 `setFileRetryIntervalMs` 自动重试恢复。
+- 可通过以下指标观察日志健康状态：
+  - `Vostok.Log.droppedLogs()`
+  - `Vostok.Log.fallbackWrites()`
+  - `Vostok.Log.fileWriteErrors()`
 
 **Data 模块**
 
