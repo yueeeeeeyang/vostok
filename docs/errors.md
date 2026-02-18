@@ -33,6 +33,16 @@
 | FK-530 | UNSUPPORTED | 不支持的能力 |
 | FK-540 | ZIP_BOMB_RISK | 解压风险（zip bomb 限制触发） |
 
+## Config 错误码（VKConfigErrorCode）
+| Code | 枚举 | 含义 |
+| --- | --- | --- |
+| CK-400 | INVALID_ARGUMENT | 参数非法 |
+| CK-420 | VALIDATION_ERROR | 配置校验失败 |
+| CK-402 | CONFIG_ERROR | 配置错误 |
+| CK-404 | KEY_NOT_FOUND | 配置项不存在 |
+| CK-500 | IO_ERROR | 配置 IO 错误 |
+| CK-510 | PARSE_ERROR | 配置解析错误 |
+
 ## 异常类型（yueyang.vostok.data.exception）
 - `VKException`：所有运行时异常的基类，包含 `VKErrorCode`
 - `VKArgumentException`：参数非法（`INVALID_ARGUMENT`）
@@ -46,6 +56,9 @@
 
 ## File 异常类型（yueyang.vostok.file.exception）
 - `VKFileException`：File 模块运行时异常基类，包含 `VKFileErrorCode`
+
+## Config 异常类型（yueyang.vostok.config.exception）
+- `VKConfigException`：Config 模块运行时异常基类，包含 `VKConfigErrorCode`
 
 ## 异常获取与统一处理
 ```java

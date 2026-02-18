@@ -1,6 +1,7 @@
 package yueyang.vostok;
 
 import yueyang.vostok.data.VostokData;
+import yueyang.vostok.config.VostokConfig;
 import yueyang.vostok.file.VostokFile;
 import yueyang.vostok.log.VostokLog;
 import yueyang.vostok.web.VostokWeb;
@@ -33,6 +34,14 @@ public final class Vostok {
      */
     public static final class File extends VostokFile {
         private File() {
+        }
+    }
+
+    /**
+     * Config entry.
+     */
+    public static final class Config extends VostokConfig {
+        private Config() {
         }
     }
 

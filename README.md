@@ -2,12 +2,13 @@
 
 ---
 
-Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合四个模块能力：
+Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合五个模块能力：
 
 - `Vostok.Data`：基于 JDBC 的数据访问（CRUD、事务、查询、多数据源、连接池）
 - `Vostok.Web`：基于 NIO Reactor 的 Web 服务器（路由、中间件、静态资源、自动 CRUD API）
 - `Vostok.File`：统一文件访问（本地文本存储默认实现，可扩展 Store）
 - `Vostok.Log`：异步日志（滚动、队列策略、降级、指标）
+- `Vostok.Config`：统一配置访问（自动扫描 `.properties/.yml/.yaml`、按文件名命名空间读取、支持手动追加任意路径文件）
 
 项目构建方式为 Maven：`/Users/yueyang/Develop/code/codex/Vostok/pom.xml`。
 
@@ -22,6 +23,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Web` 在调用 `start()` 前必须先 `init(...)` 并注册路由。
 - `Vostok.File` 在文件操作前必须先 `init(...)`。
 - `Vostok.Log` 可显式 `init(...)`，也支持首次写日志时懒加载。
+- `Vostok.Config` 支持 `init(...)` 显式初始化；未 `init(...)` 时首次读取会懒加载默认配置。
 
 ---
 
@@ -29,7 +31,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 
 > 入口类：`/Users/yueyang/Develop/code/codex/Vostok/src/main/java/yueyang/vostok/Vostok.java`
 >
-> 下面所有接口均通过 `Vostok.Data / Vostok.Web / Vostok.File / Vostok.Log` 调用。
+> 下面所有接口均通过 `Vostok.Data / Vostok.Web / Vostok.File / Vostok.Log / Vostok.Config` 调用。
 
 ## 3.1 Data 接口定义
 
@@ -1753,4 +1755,165 @@ VKLogConfig cfg = new VKLogConfig()
     .compressRolledFiles(false)
     // 文件写失败后的重试间隔毫秒。默认 3000。
     .fileRetryIntervalMs(3000);
+```
+
+# 6. Config 模块（新增）
+
+## 6.1 Config 接口定义
+
+```java
+public interface Vostok.Config {
+    // 初始化（幂等，重复 init 忽略）
+    public static void init();
+    public static void init(VKConfigOptions options);
+
+    // 强制重建（覆盖当前 options 并立刻重载）
+    public static void reinit(VKConfigOptions options);
+
+    // 运行状态
+    public static boolean started();
+    public static String lastWatchError();
+
+    // 重载与关闭
+    public static void reload();
+    public static void close();
+
+    // 运行时修改 options（已加载时会即时重载）
+    public static void configure(Consumer<VKConfigOptions> customizer);
+
+    // 解析扩展
+    public static void registerParser(VKConfigParser parser);
+
+    // 校验扩展（启动/重载阶段 fail-fast）
+    public static void registerValidator(VKConfigValidator validator);
+    public static void clearValidators();
+
+    // 外部配置文件
+    public static void addFile(String path);
+    public static void addFiles(String... paths);
+    public static void clearManualFiles();
+
+    // 运行时覆盖（最高优先级）
+    public static void putOverride(String key, String value);
+    public static void removeOverride(String key);
+    public static void clearOverrides();
+
+    // 读取
+    public static String get(String key);
+    public static String required(String key);
+    public static boolean has(String key);
+    public static Set<String> keys();
+
+    public static String getString(String key, String defaultValue);
+    public static int getInt(String key, int defaultValue);
+    public static long getLong(String key, long defaultValue);
+    public static double getDouble(String key, double defaultValue);
+    public static boolean getBool(String key, boolean defaultValue);
+    public static List<String> getList(String key);
+}
+```
+
+## 6.2 命名空间与优先级（固化）
+
+- 文件命名空间：配置文件名（去扩展名）作为第一层 key。
+- 示例：`a.properties` 内容 `enabled=true`，读取 key 为 `a.enabled`。
+- 自动扫描范围：
+  - `user.dir` 下所有 `*.properties/*.yml/*.yaml`
+  - `classpath` 下目录与 `jar` 中所有 `*.properties/*.yml/*.yaml`
+- 固化优先级（后者覆盖前者）：
+  1. 默认文件（自动扫描）
+  2. 外部文件（`addFile/addFiles`）
+  3. 环境变量（`loadEnv=true`）
+  4. JVM `-D`（`loadSystemProperties=true`）
+  5. 运行时覆盖（`putOverride`）
+
+## 6.3 配置校验（fail-fast）
+
+- 在 `init/reinit/reload` 阶段执行全部校验器。
+- 任意校验失败都会抛 `VKConfigException(VALIDATION_ERROR)`，并中止本次加载。
+- 热更新场景下若校验失败，会保留旧快照并记录 `lastWatchError()`。
+
+示例：
+
+```java
+import yueyang.vostok.config.validate.VKConfigValidators;
+
+Vostok.Config.registerValidator(VKConfigValidators.required("app.host", "app.port"));
+Vostok.Config.registerValidator(VKConfigValidators.intRange("app.port", 1, 65535));
+Vostok.Config.registerValidator(VKConfigValidators.pattern("app.host", "^[a-zA-Z0-9.-]+$"));
+Vostok.Config.registerValidator(VKConfigValidators.cross(
+    "tls-port",
+    v -> !"true".equals(v.get("app.tls.enabled")) || v.getInt("app.port", 0) == 443,
+    "when tls enabled, app.port must be 443"
+));
+```
+
+## 6.4 热更新（可靠回滚）
+
+- 开启方式：`VKConfigOptions.watchEnabled(true)`。
+- 文件变更触发 debounce 后自动重载。
+- 重载失败（解析失败/校验失败）时：
+  - 不替换当前快照（继续使用旧配置）
+  - `lastWatchError()` 返回错误信息
+
+## 6.5 Config 使用 demo
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.config.VKConfigOptions;
+import yueyang.vostok.config.validate.VKConfigValidators;
+
+public class ConfigDemo {
+    public static void main(String[] args) {
+        Vostok.Config.registerValidator(VKConfigValidators.required("a.enabled"));
+
+        Vostok.Config.init(new VKConfigOptions()
+                .scanClasspath(true)
+                .scanUserDir(true)
+                .loadEnv(true)
+                .loadSystemProperties(true)
+                .watchEnabled(true)
+                .watchDebounceMs(200));
+
+        boolean enabled = Vostok.Config.getBool("a.enabled", false);
+
+        Vostok.Config.addFile("/opt/app/conf/a.yaml");
+        Vostok.Config.putOverride("a.enabled", "true");
+
+        System.out.println("enabled=" + enabled + ", watchErr=" + Vostok.Config.lastWatchError());
+    }
+}
+```
+
+## 6.6 VKConfigOptions 全量配置项
+
+```java
+import yueyang.vostok.config.VKConfigOptions;
+
+VKConfigOptions options = new VKConfigOptions()
+    // 自动扫描 classpath（目录 + jar）中的配置文件，默认 true。
+    .scanClasspath(true)
+    // 自动扫描 user.dir 中的配置文件，默认 true。
+    .scanUserDir(true)
+    // 冲突策略：同 namespace 来自不同来源时是否报错，默认 false。
+    .strictNamespaceConflict(false)
+    // 追加扫描目录。
+    .addScanDir(java.nio.file.Path.of("/opt/my-app/config"))
+
+    // 是否启用环境变量层（优先级高于文件层），默认 true。
+    .loadEnv(true)
+    // 是否启用 JVM -D 层（优先级高于环境变量），默认 true。
+    .loadSystemProperties(true)
+
+    // 热更新：是否启用文件监听，默认 false。
+    .watchEnabled(true)
+    // 热更新防抖毫秒，默认 300ms。
+    .watchDebounceMs(300)
+
+    // 可选：覆盖 classpath 文本（用于测试或特殊运行时）。
+    .classpath(System.getProperty("java.class.path"))
+    // 可选：自定义环境变量提供器。
+    .envProvider(System::getenv)
+    // 可选：自定义系统属性提供器。
+    .systemPropertiesProvider(System::getProperties);
 ```
