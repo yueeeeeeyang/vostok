@@ -5,7 +5,7 @@
 
     <groupId>yueyang</groupId>
     <artifactId>vostok</artifactId>
-    <version>1.4.4</version>
+    <version>1.4.5</version>
     <packaging>jar</packaging>
 
     <name>Vostok</name>
@@ -41,6 +41,12 @@
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
             <version>${h2.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>42.7.7</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

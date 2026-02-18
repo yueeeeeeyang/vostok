@@ -182,13 +182,8 @@ public class JdbcExecutor {
     public Object executeInsertReturnKey(String sql, Object[] params) throws SQLException {
         if (!isMonitoringEnabled()) {
             ConnectionHolder holder = getConnection();
-            try (PreparedStatement ps = holder.conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
-                applyQueryTimeout(ps);
-                bindParams(ps, params);
-                ps.executeUpdate();
-                try (ResultSet rs = ps.getGeneratedKeys()) {
-                    return rs.next() ? rs.getObject(1) : null;
-                }
+            try {
+                return executeInsertReturnKeyInternal(holder.conn, sql, params);
             } finally {
                 holder.closeIfNeeded();
             }
@@ -199,18 +194,10 @@ public class JdbcExecutor {
         boolean success = false;
         Throwable error = null;
         ConnectionHolder holder = getConnection();
-        try (PreparedStatement ps = holder.conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
-            applyQueryTimeout(ps);
-            bindParams(ps, params);
-            ps.executeUpdate();
-            try (ResultSet rs = ps.getGeneratedKeys()) {
-                if (rs.next()) {
-                    success = true;
-                    return rs.getObject(1);
-                }
-                success = true;
-                return null;
-            }
+        try {
+            Object key = executeInsertReturnKeyInternal(holder.conn, sql, params);
+            success = true;
+            return key;
         } catch (SQLException e) {
             error = e;
             throw e;
@@ -220,6 +207,61 @@ public class JdbcExecutor {
             sqlMetrics.record(sql, params, cost);
             after(sql, params, cost, success, error);
             holder.closeIfNeeded();
+        }
+    }
+
+    private Object executeInsertReturnKeyInternal(Connection conn, String sql, Object[] params) throws SQLException {
+        if (preferSessionIdentity(conn)) {
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                applyQueryTimeout(ps);
+                bindParams(ps, params);
+                ps.executeUpdate();
+            }
+            Object id = queryLastInsertId(conn);
+            if (id != null) {
+                return id;
+            }
+        }
+        try (PreparedStatement ps = conn.prepareStatement(sql, PreparedStatement.RETURN_GENERATED_KEYS)) {
+            applyQueryTimeout(ps);
+            bindParams(ps, params);
+            ps.executeUpdate();
+            try (ResultSet rs = ps.getGeneratedKeys()) {
+                return rs.next() ? rs.getObject(1) : null;
+            }
+        }
+    }
+
+    private boolean preferSessionIdentity(Connection conn) {
+        try {
+            String url = conn.getMetaData() == null ? null : conn.getMetaData().getURL();
+            if (url == null) {
+                return false;
+            }
+            String lower = url.toLowerCase();
+            return lower.startsWith("jdbc:mysql:") || lower.startsWith("jdbc:h2:");
+        } catch (SQLException e) {
+            return false;
+        }
+    }
+
+    private Object queryLastInsertId(Connection conn) {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT LAST_INSERT_ID()")) {
+            if (rs.next()) {
+                return rs.getObject(1);
+            }
+            return null;
+        } catch (SQLException ignore) {
+            try (Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT SCOPE_IDENTITY()")) {
+                if (rs.next()) {
+                    return rs.getObject(1);
+                }
+            } catch (SQLException ignore2) {
+                // fall through to generated keys path
+            }
+            return null;
         }
     }
 

@@ -24,6 +24,7 @@ public class VKConnectionPool {
     private final ScheduledExecutorService housekeeper;
     private final ConcurrentHashMap<Connection, ConnectionDefaults> defaults = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Connection, ConnectionState> states = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Connection, Thread> borrowedOwners = new ConcurrentHashMap<>();
     private final ThreadLocal<PooledEntry> localCache = new ThreadLocal<>();
     private final ConcurrentHashMap<Thread, PooledEntry> localCacheMap = new ConcurrentHashMap<>();
     private final Semaphore permits;
@@ -88,7 +89,7 @@ public class VKConnectionPool {
                         continue;
                     }
                     try {
-                        return validate(entry.conn);
+                        return markBorrowed(validate(entry.conn));
                     } catch (SQLException e) {
                         permits.release();
                         throw e;
@@ -104,7 +105,7 @@ public class VKConnectionPool {
                     continue;
                 }
                 try {
-                    return validate(entry.conn);
+                        return markBorrowed(validate(entry.conn));
                 } catch (SQLException e) {
                     permits.release();
                     throw e;
@@ -115,7 +116,7 @@ public class VKConnectionPool {
                 Connection created = createConnection();
                 if (created != null) {
                     try {
-                        return validate(created);
+                        return markBorrowed(validate(created));
                     } catch (SQLException e) {
                         permits.release();
                         throw e;
@@ -123,22 +124,6 @@ public class VKConnectionPool {
                 }
                 permits.release();
                 throw new SQLException("Failed to create connection");
-            }
-
-            if (localCacheEnabled) {
-                PooledEntry stolen = stealLocalCache();
-                if (stolen != null) {
-                    if (isIdleExpired(stolen)) {
-                        closeSilently(stolen.conn);
-                        continue;
-                    }
-                    try {
-                        return validate(stolen.conn);
-                    } catch (SQLException e) {
-                        permits.release();
-                        throw e;
-                    }
-                }
             }
 
             permits.release();
@@ -158,10 +143,12 @@ public class VKConnectionPool {
             return;
         }
         if (closed) {
+            borrowedOwners.remove(conn);
             closeSilently(conn);
             permits.release();
             return;
         }
+        borrowedOwners.remove(conn);
         detectLeak(checkoutAt, checkoutStack);
 
         restoreDefaults(conn);
@@ -217,6 +204,14 @@ public class VKConnectionPool {
                 return created;
             }
             throw new SQLException("Failed to create connection");
+        }
+        return conn;
+    }
+
+    private Connection markBorrowed(Connection conn) throws SQLException {
+        Thread prev = borrowedOwners.putIfAbsent(conn, Thread.currentThread());
+        if (prev != null && prev != Thread.currentThread()) {
+            throw new SQLException("Connection borrowed concurrently: " + conn);
         }
         return conn;
     }
@@ -469,22 +464,6 @@ public class VKConnectionPool {
         if (state != null) {
             state.isolationDirty = true;
         }
-    }
-
-    private PooledEntry stealLocalCache() {
-        for (var entry : localCacheMap.entrySet()) {
-            Thread owner = entry.getKey();
-            PooledEntry cached = entry.getValue();
-            if (cached == null) {
-                localCacheMap.remove(owner);
-                continue;
-            }
-            if (localCacheMap.remove(owner, cached)) {
-                localIdleCount.decrementAndGet();
-                return cached;
-            }
-        }
-        return null;
     }
 
     private static class PooledEntry {
