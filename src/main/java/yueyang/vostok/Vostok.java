@@ -1,6 +1,7 @@
 package yueyang.vostok;
 
 import yueyang.vostok.data.VostokData;
+import yueyang.vostok.cache.VostokCache;
 import yueyang.vostok.config.VostokConfig;
 import yueyang.vostok.event.VostokEvent;
 import yueyang.vostok.file.VostokFile;
@@ -20,6 +21,14 @@ public final class Vostok {
      */
     public static final class Data extends VostokData {
         private Data() {
+        }
+    }
+
+    /**
+     * Cache entry (redis/memory and extensible providers).
+     */
+    public static final class Cache extends VostokCache {
+        private Cache() {
         }
     }
 

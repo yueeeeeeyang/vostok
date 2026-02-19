@@ -2,7 +2,7 @@
 
 ---
 
-Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合七个模块能力：
+Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合八个模块能力：
 
 - `Vostok.Data`：基于 JDBC 的数据访问（CRUD、事务、查询、多数据源、连接池）
 - `Vostok.Web`：基于 NIO Reactor 的 Web 服务器（路由、中间件、静态资源、自动 CRUD API）
@@ -11,6 +11,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Config`：统一配置访问（自动扫描 `.properties/.yml/.yaml`、按文件名命名空间读取、支持手动追加任意路径文件）
 - `Vostok.Security`：安全检测工具集（SQL 注入、XSS、命令注入、路径穿越、响应脱敏、文件魔数与脚本上传检测）
 - `Vostok.Event`：进程内事件总线（统一 `publish(...)`，监听器支持同步/异步）
+- `Vostok.Cache`：统一缓存访问（支持 Redis 或内存 Provider、内置连接池、可扩展编解码器）
 
 项目构建方式为 Maven：`/Users/yueyang/Develop/code/codex/Vostok/pom.xml`。
 
@@ -28,6 +29,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Config` 支持 `init(...)` 显式初始化；未 `init(...)` 时首次读取会懒加载默认配置。
 - `Vostok.Security` 为主动调用型模块，不会自动接入 `Data/Web` 执行链路，需要在业务代码中显式调用。
 - `Vostok.Event` 仅提供一个发布方法 `publish(...)`；同步/异步行为由监听器注册模式决定。
+- `Vostok.Cache` 不依赖 `Vostok.Config`，必须通过 `VKCacheConfig` 或显式 Loader 初始化。
 - `Vostok.Security` 的检测结果是风险判断，不替代参数化查询、鉴权、最小权限、WAF/主机安全等基础安全控制。
 - 对于 `Vostok.Security` 的响应脱敏与文件检测能力，建议与业务字段分级、上传大小限制、存储隔离与病毒扫描联合使用。
 
@@ -3356,3 +3358,166 @@ VKEventConfig cfg = new VKEventConfig()
   - 异步监听器异常统一记录日志，不回抛给发布方。
 - 背压与拒绝：
   - 当异步线程池饱和时，行为由 `rejectionPolicy` 决定，并在 `VKEventPublishResult.asyncRejected` 中体现。
+
+# 9. Cache 模块
+
+`Vostok.Cache` 为统一缓存门面，当前支持：
+
+- `MEMORY`：进程内缓存（用于本地开发、测试或轻量场景）
+- `REDIS`：通过 RESP 协议连接 Redis（单节点模式）
+
+设计原则：
+
+- 不依赖 `Vostok.Config`
+- 显式初始化（`init(...)`）
+- 连接池内置（`minIdle/maxActive/maxWaitMs/testOnBorrow`）
+- Provider 可扩展（后续可接入其他缓存中间件）
+
+## 9.1 接口定义
+
+```java
+public interface Vostok.Cache {
+    public static void init(VKCacheConfig config);
+    public static void init(VKCacheConfigLoader loader);
+    public static void initFromEnv(String prefix);
+    public static void initFromProperties(Path path, String prefix);
+    public static void reinit(VKCacheConfig config);
+    public static boolean started();
+    public static VKCacheConfig config();
+    public static void close();
+
+    public static void registerCache(String name, VKCacheConfig config);
+    public static void withCache(String name, Runnable action);
+    public static <T> T withCache(String name, Supplier<T> supplier);
+
+    public static void set(String key, Object value);
+    public static void set(String key, Object value, long ttlMs);
+    public static String get(String key);
+    public static <T> T get(String key, Class<T> type);
+    public static long delete(String... keys);
+    public static boolean exists(String key);
+    public static boolean expire(String key, long ttlMs);
+
+    public static long incr(String key);
+    public static long incrBy(String key, long delta);
+    public static long decr(String key);
+    public static long decrBy(String key, long delta);
+
+    public static <T> List<T> mget(Class<T> type, String... keys);
+    public static void mset(Map<String, ?> values);
+    public static void mset(Map<String, ?> values, long ttlMs);
+}
+```
+
+## 9.2 使用 Demo
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.cache.VKCacheConfig;
+import yueyang.vostok.cache.VKCacheProviderType;
+
+import java.nio.file.Path;
+import java.util.Map;
+
+public class CacheDemo {
+    public static void main(String[] args) {
+        // 1) 代码方式初始化（Redis）
+        Vostok.Cache.init(new VKCacheConfig()
+                .providerType(VKCacheProviderType.REDIS)
+                .endpoints("127.0.0.1:6379")
+                .keyPrefix("app:")
+                .codec("string")
+                .minIdle(1)
+                .maxActive(16)
+                .maxWaitMs(3000)
+                .testOnBorrow(true));
+
+        Vostok.Cache.set("k1", "v1");
+        String v1 = Vostok.Cache.get("k1");
+
+        Vostok.Cache.mset(Map.of("a", "A", "b", "B"));
+        var list = Vostok.Cache.mget(String.class, "a", "b", "x");
+
+        long n1 = Vostok.Cache.incr("counter");
+        long n2 = Vostok.Cache.incrBy("counter", 9);
+
+        Vostok.Cache.set("otp", "123456", 30_000);
+        boolean exists = Vostok.Cache.exists("otp");
+
+        // 2) 注册命名缓存实例
+        Vostok.Cache.registerCache("local", new VKCacheConfig()
+                .providerType(VKCacheProviderType.MEMORY)
+                .codec("json")
+                .keyPrefix("local:"));
+
+        Vostok.Cache.withCache("local", () -> {
+            Vostok.Cache.set("user:1", Map.of("name", "neo", "age", 20));
+        });
+
+        // 3) 可选：从 properties 初始化（不依赖 Vostok.Config）
+        Vostok.Cache.reinit(yueyang.vostok.cache.VKCacheConfigFactory
+                .fromProperties(Path.of("/opt/app/cache.properties"), "cache"));
+
+        Vostok.Cache.close();
+    }
+}
+```
+
+## 9.3 配置详解（VKCacheConfig）
+
+```java
+import yueyang.vostok.cache.VKCacheConfig;
+import yueyang.vostok.cache.VKCacheProviderType;
+
+VKCacheConfig cfg = new VKCacheConfig()
+    // Provider 类型：MEMORY / REDIS
+    .providerType(VKCacheProviderType.REDIS)
+    // 连接端点（Redis 示例）
+    .endpoints("127.0.0.1:6379")
+    .username(null)
+    .password(null)
+    .database(0)
+
+    // 网络超时
+    .connectTimeoutMs(2000)
+    .readTimeoutMs(2000)
+
+    // 连接池
+    .minIdle(1)
+    .maxActive(8)
+    .maxWaitMs(3000)
+    .testOnBorrow(true)
+    .testOnReturn(false)
+
+    // 重试
+    .retryEnabled(false)
+    .maxRetries(1)
+    .retryBackoffBaseMs(30)
+    .retryBackoffMaxMs(500)
+
+    // 行为
+    .defaultTtlMs(0)
+    .keyPrefix("app:")
+    .codec("json");
+```
+
+## 9.4 显式 Loader 方案（无 Config 模块依赖）
+
+支持从环境变量、properties、map 显式加载：
+
+```java
+import yueyang.vostok.cache.VKCacheConfigFactory;
+
+var fromEnv = VKCacheConfigFactory.fromEnv("cache");
+var fromMap = VKCacheConfigFactory.fromMap(Map.of("cache.provider", "memory"), "cache");
+var fromProperties = VKCacheConfigFactory.fromProperties(Path.of("./cache.properties"), "cache");
+```
+
+约定 key 示例（prefix=`cache`）：
+
+- `cache.provider=redis`
+- `cache.endpoints=127.0.0.1:6379,127.0.0.1:6380`
+- `cache.maxActive=16`
+- `cache.keyPrefix=app:`
+- `cache.codec=string`
+
