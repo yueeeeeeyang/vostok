@@ -1,8 +1,15 @@
 package yueyang.vostok.security;
 
 import yueyang.vostok.security.exception.VKSecurityException;
+import yueyang.vostok.security.crypto.VKAesCrypto;
+import yueyang.vostok.security.crypto.VKHashCrypto;
+import yueyang.vostok.security.crypto.VKRsaCrypto;
+import yueyang.vostok.security.crypto.VKRsaKeyPair;
 import yueyang.vostok.security.file.VKFileSecurityScanner;
 import yueyang.vostok.security.file.VKFileType;
+import yueyang.vostok.security.keystore.LocalFileKeyStore;
+import yueyang.vostok.security.keystore.VKKeyStore;
+import yueyang.vostok.security.keystore.VKKeyStoreConfig;
 import yueyang.vostok.security.path.VKPathTraversalScanner;
 import yueyang.vostok.security.response.VKResponseSecurityScanner;
 import yueyang.vostok.security.rule.VKSecurityRule;
@@ -16,11 +23,14 @@ import java.util.concurrent.CopyOnWriteArrayList;
 
 public class VostokSecurity {
     private static final Object LOCK = new Object();
+    private static final Object KEY_STORE_LOCK = new Object();
     private static final List<VKSecurityRule> CUSTOM_RULES = new CopyOnWriteArrayList<>();
 
     private static volatile boolean initialized;
     private static volatile VKSecurityConfig config = new VKSecurityConfig();
     private static volatile VKSqlSecurityScanner scanner;
+    private static volatile VKKeyStoreConfig keyStoreConfig = new VKKeyStoreConfig();
+    private static volatile VKKeyStore keyStore;
 
     protected VostokSecurity() {
     }
@@ -151,6 +161,93 @@ public class VostokSecurity {
         return VKFileSecurityScanner.checkExecutableScriptUpload(fileName, content);
     }
 
+    public static String generateAesKey() {
+        return VKAesCrypto.generateAesKeyBase64();
+    }
+
+    public static String encrypt(String plainText, String secret) {
+        return VKAesCrypto.encrypt(plainText, secret);
+    }
+
+    public static String decrypt(String cipherText, String secret) {
+        return VKAesCrypto.decrypt(cipherText, secret);
+    }
+
+    public static VKRsaKeyPair generateRsaKeyPair() {
+        return VKRsaCrypto.generateRsaKeyPair();
+    }
+
+    public static String encryptByPublicKey(String plainText, String publicKeyPem) {
+        return VKRsaCrypto.encryptByPublicKey(plainText, publicKeyPem);
+    }
+
+    public static String decryptByPrivateKey(String cipherText, String privateKeyPem) {
+        return VKRsaCrypto.decryptByPrivateKey(cipherText, privateKeyPem);
+    }
+
+    public static String sign(String text, String privateKeyPem) {
+        return VKRsaCrypto.sign(text, privateKeyPem);
+    }
+
+    public static boolean verify(String text, String signature, String publicKeyPem) {
+        return VKRsaCrypto.verify(text, signature, publicKeyPem);
+    }
+
+    public static String sha256(String text) {
+        return VKHashCrypto.sha256Base64(text);
+    }
+
+    public static String sha256Hex(String text) {
+        return VKHashCrypto.sha256Hex(text);
+    }
+
+    public static String hmacSha256(String text, String secret) {
+        return VKHashCrypto.hmacSha256Base64(text, secret);
+    }
+
+    public static void initKeyStore(VKKeyStoreConfig newConfig) {
+        synchronized (KEY_STORE_LOCK) {
+            keyStoreConfig = newConfig == null ? new VKKeyStoreConfig() : newConfig.copy();
+            keyStore = new LocalFileKeyStore(keyStoreConfig);
+        }
+    }
+
+    public static String getOrCreateAesKey(String keyId) {
+        return currentKeyStore().getOrCreateAesKey(keyId);
+    }
+
+    public static VKRsaKeyPair getOrCreateRsaKeyPair(String keyId) {
+        return currentKeyStore().getOrCreateRsaKeyPair(keyId);
+    }
+
+    public static void rotateAesKey(String keyId) {
+        currentKeyStore().rotateAesKey(keyId);
+    }
+
+    public static void rotateRsaKeyPair(String keyId) {
+        currentKeyStore().rotateRsaKeyPair(keyId);
+    }
+
+    public static String encryptWithKeyId(String plainText, String keyId) {
+        String key = getOrCreateAesKey(keyId);
+        String cipher = encrypt(plainText, key);
+        return "vk1:aes:" + keyId + ":" + cipher;
+    }
+
+    public static String decryptWithKeyId(String cipherPayload) {
+        if (cipherPayload == null || cipherPayload.isBlank()) {
+            throw new VKSecurityException("Cipher payload is blank");
+        }
+        String[] parts = cipherPayload.split(":", 4);
+        if (parts.length != 4 || !"vk1".equals(parts[0]) || !"aes".equals(parts[1])) {
+            throw new VKSecurityException("Cipher payload format invalid");
+        }
+        String keyId = parts[2];
+        String cipher = parts[3];
+        String key = getOrCreateAesKey(keyId);
+        return decrypt(cipher, key);
+    }
+
     private static void assertSafe(String message, VKSecurityCheckResult result) {
         if (!result.isSafe()) {
             throw new VKSecurityException(message + ": " + String.join("; ", result.getReasons()));
@@ -169,6 +266,20 @@ public class VostokSecurity {
                 initialized = true;
             }
             return scanner;
+        }
+    }
+
+    private static VKKeyStore currentKeyStore() {
+        VKKeyStore s = keyStore;
+        if (s != null) {
+            return s;
+        }
+        synchronized (KEY_STORE_LOCK) {
+            if (keyStore == null) {
+                keyStoreConfig = keyStoreConfig == null ? new VKKeyStoreConfig() : keyStoreConfig.copy();
+                keyStore = new LocalFileKeyStore(keyStoreConfig);
+            }
+            return keyStore;
         }
     }
 }

@@ -2673,6 +2673,7 @@ VKConfigOptions options = new VKConfigOptions()
 - 响应敏感信息检测与脱敏
 - 文件魔数识别与白名单校验
 - 可执行脚本上传检测（扩展名 + 魔数 + 内容特征）
+- 常用加解密接口（AES、RSA、签名验签、SHA-256、HMAC-SHA256）
 
 ## 7.0 说明与注意事项
 
@@ -2858,6 +2859,154 @@ public interface Vostok.Security {
      * - 返回值：VKSecurityCheckResult，包含风险等级与命中规则。
      */
     public static VKSecurityCheckResult checkExecutableScriptUpload(String fileName, byte[] content);
+
+    /**
+     * 生成 AES 对称密钥（Base64 编码，默认 256 位）。
+     *
+     * - 返回值：String，Base64 格式密钥。
+     */
+    public static String generateAesKey();
+
+    /**
+     * 使用 AES-GCM 便捷加密文本。
+     *
+     * - plainText：明文，类型为 String。
+     * - secret：密钥或口令，类型为 String（支持 Base64 密钥；否则按口令派生）。
+     * - 返回值：String，Base64 密文（内含随机 IV）。
+     */
+    public static String encrypt(String plainText, String secret);
+
+    /**
+     * 使用 AES-GCM 便捷解密文本。
+     *
+     * - cipherText：Base64 密文，类型为 String（由 encrypt 生成）。
+     * - secret：密钥或口令，类型为 String。
+     * - 返回值：String，明文。
+     */
+    public static String decrypt(String cipherText, String secret);
+
+    /**
+     * 生成 RSA 密钥对（PEM 格式，默认 2048 位）。
+     *
+     * - 返回值：VKRsaKeyPair，包含 publicKeyPem/privateKeyPem。
+     */
+    public static VKRsaKeyPair generateRsaKeyPair();
+
+    /**
+     * 使用 RSA 公钥加密（OAEP SHA-256）。
+     *
+     * - plainText：明文，类型为 String。
+     * - publicKeyPem：公钥 PEM，类型为 String。
+     * - 返回值：String，Base64 密文。
+     */
+    public static String encryptByPublicKey(String plainText, String publicKeyPem);
+
+    /**
+     * 使用 RSA 私钥解密（OAEP SHA-256）。
+     *
+     * - cipherText：Base64 密文，类型为 String。
+     * - privateKeyPem：私钥 PEM，类型为 String。
+     * - 返回值：String，明文。
+     */
+    public static String decryptByPrivateKey(String cipherText, String privateKeyPem);
+
+    /**
+     * 使用 RSA 私钥签名（SHA256withRSA）。
+     *
+     * - text：待签名文本，类型为 String。
+     * - privateKeyPem：私钥 PEM，类型为 String。
+     * - 返回值：String，Base64 签名值。
+     */
+    public static String sign(String text, String privateKeyPem);
+
+    /**
+     * 使用 RSA 公钥验签（SHA256withRSA）。
+     *
+     * - text：原文，类型为 String。
+     * - signature：Base64 签名值，类型为 String。
+     * - publicKeyPem：公钥 PEM，类型为 String。
+     * - 返回值：boolean，true 表示验签通过。
+     */
+    public static boolean verify(String text, String signature, String publicKeyPem);
+
+    /**
+     * 计算 SHA-256 摘要（Base64 编码）。
+     *
+     * - text：原文，类型为 String。
+     * - 返回值：String，Base64 摘要。
+     */
+    public static String sha256(String text);
+
+    /**
+     * 计算 SHA-256 摘要（十六进制编码）。
+     *
+     * - text：原文，类型为 String。
+     * - 返回值：String，Hex 摘要。
+     */
+    public static String sha256Hex(String text);
+
+    /**
+     * 计算 HMAC-SHA256（Base64 编码）。
+     *
+     * - text：原文，类型为 String。
+     * - secret：HMAC 密钥，类型为 String。
+     * - 返回值：String，Base64 签名。
+     */
+    public static String hmacSha256(String text, String secret);
+
+    /**
+     * 初始化密钥存储（用于持久化 AES/RSA 密钥）。
+     *
+     * - config：密钥存储配置，类型为 VKKeyStoreConfig（baseDir/masterKey/autoCreate）。
+     */
+    public static void initKeyStore(VKKeyStoreConfig config);
+
+    /**
+     * 按 keyId 获取或创建 AES 密钥（持久化）。
+     *
+     * - keyId：密钥标识，类型为 String（建议仅使用字母/数字/._-）。
+     * - 返回值：String，Base64 格式 AES 密钥。
+     */
+    public static String getOrCreateAesKey(String keyId);
+
+    /**
+     * 按 keyId 获取或创建 RSA 密钥对（持久化）。
+     *
+     * - keyId：密钥标识，类型为 String。
+     * - 返回值：VKRsaKeyPair，包含公钥/私钥 PEM。
+     */
+    public static VKRsaKeyPair getOrCreateRsaKeyPair(String keyId);
+
+    /**
+     * 轮换指定 keyId 的 AES 密钥。
+     *
+     * - keyId：密钥标识，类型为 String。
+     */
+    public static void rotateAesKey(String keyId);
+
+    /**
+     * 轮换指定 keyId 的 RSA 密钥对。
+     *
+     * - keyId：密钥标识，类型为 String。
+     */
+    public static void rotateRsaKeyPair(String keyId);
+
+    /**
+     * 使用 keyId 对应的 AES 密钥加密，并返回带版本/算法/keyId 的密文载荷。
+     *
+     * - plainText：明文，类型为 String。
+     * - keyId：密钥标识，类型为 String。
+     * - 返回值：String，格式为 vk1:aes:{keyId}:{base64Cipher}。
+     */
+    public static String encryptWithKeyId(String plainText, String keyId);
+
+    /**
+     * 从载荷中解析 keyId 并完成解密。
+     *
+     * - cipherPayload：密文载荷，类型为 String，格式 vk1:aes:{keyId}:{base64Cipher}。
+     * - 返回值：String，明文。
+     */
+    public static String decryptWithKeyId(String cipherPayload);
 }
 ```
 
@@ -2867,7 +3016,9 @@ public interface Vostok.Security {
 import yueyang.vostok.Vostok;
 import yueyang.vostok.security.VKSecurityConfig;
 import yueyang.vostok.security.VKSecurityRiskLevel;
+import yueyang.vostok.security.crypto.VKRsaKeyPair;
 import yueyang.vostok.security.file.VKFileType;
+import yueyang.vostok.security.keystore.VKKeyStoreConfig;
 
 public class SecurityApiDemo {
     public static void main(String[] args) {
@@ -2895,6 +3046,30 @@ public class SecurityApiDemo {
         VKFileType type = Vostok.Security.detectFileType(png);
         var magic = Vostok.Security.checkFileMagic(png, VKFileType.PNG, VKFileType.JPEG);
         var upload = Vostok.Security.checkExecutableScriptUpload("run.sh", "#!/bin/bash".getBytes());
+
+        String aesKey = Vostok.Security.generateAesKey();
+        String aesCipher = Vostok.Security.encrypt("hello-aes", aesKey);
+        String aesPlain = Vostok.Security.decrypt(aesCipher, aesKey);
+
+        VKRsaKeyPair rsa = Vostok.Security.generateRsaKeyPair();
+        String rsaCipher = Vostok.Security.encryptByPublicKey("hello-rsa", rsa.getPublicKeyPem());
+        String rsaPlain = Vostok.Security.decryptByPrivateKey(rsaCipher, rsa.getPrivateKeyPem());
+        String sign = Vostok.Security.sign("payload", rsa.getPrivateKeyPem());
+        boolean ok = Vostok.Security.verify("payload", sign, rsa.getPublicKeyPem());
+
+        String shaBase64 = Vostok.Security.sha256("abc");
+        String shaHex = Vostok.Security.sha256Hex("abc");
+        String hmac = Vostok.Security.hmacSha256("payload", "secret");
+
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir("/tmp/vostok-keystore")
+                .masterKey("change-this-master-key"));
+        String dataCipher = Vostok.Security.encryptWithKeyId("order-1001", "biz-order");
+        String dataPlain = Vostok.Security.decryptWithKeyId(dataCipher);
+
+        String persistedAes = Vostok.Security.getOrCreateAesKey("biz-order");
+        VKRsaKeyPair persistedRsa = Vostok.Security.getOrCreateRsaKeyPair("biz-sign");
+        Vostok.Security.rotateAesKey("biz-order");
     }
 }
 ```
@@ -2939,3 +3114,19 @@ VKSecurityConfig cfg = new VKSecurityConfig()
 - `detectFileType(...)`：按魔数识别常见文件类型。
 - `checkFileMagic(...)`：按白名单校验文件魔数类型。
 - `checkExecutableScriptUpload(...)`：识别脚本扩展名、可执行魔数和可执行脚本内容特征。
+- `encrypt(...) / decrypt(...)`：AES-GCM 便捷加解密接口（支持 Base64 密钥或口令）。
+- `generateRsaKeyPair(...)`：生成 PEM 格式 RSA 密钥对。
+- `encryptByPublicKey(...) / decryptByPrivateKey(...)`：RSA OAEP 便捷加解密接口。
+- `sign(...) / verify(...)`：RSA 签名验签接口（SHA256withRSA）。
+- `sha256(...) / sha256Hex(...) / hmacSha256(...)`：常用摘要与消息认证接口。
+- `initKeyStore(...)`：初始化密钥持久化存储（本地文件实现）。
+- `getOrCreateAesKey(...) / getOrCreateRsaKeyPair(...)`：按 keyId 获取或自动生成持久化密钥。
+- `encryptWithKeyId(...) / decryptWithKeyId(...)`：按 keyId 加解密，密文携带 keyId，重启后可解密。
+- `rotateAesKey(...) / rotateRsaKeyPair(...)`：按 keyId 执行密钥轮换。
+
+## 7.5 KeyStore 使用注意事项
+
+- `masterKey` 必须妥善管理（建议从环境变量或外部密钥服务注入），不要硬编码到仓库。
+- 更换 `masterKey` 后将无法解密历史密钥文件中的内容，除非先执行迁移。
+- `baseDir` 建议配置为受限目录，并确保只有服务进程用户可读写。
+- `rotateAesKey/rotateRsaKeyPair` 只影响新数据加密，历史数据如需兼容需在业务侧做分版本解密策略。

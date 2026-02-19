@@ -4,13 +4,16 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import yueyang.vostok.security.VKSecurityConfig;
 import yueyang.vostok.security.VKSecurityRiskLevel;
+import yueyang.vostok.security.crypto.VKRsaKeyPair;
 import yueyang.vostok.security.exception.VKSecurityException;
 import yueyang.vostok.security.file.VKFileType;
+import yueyang.vostok.security.keystore.VKKeyStoreConfig;
 import yueyang.vostok.security.rule.VKSecurityContext;
 import yueyang.vostok.security.rule.VKSecurityFinding;
 import yueyang.vostok.security.rule.VKSecurityRule;
 
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -156,5 +159,157 @@ public class VostokSecurityTest {
         var ok = Vostok.Security.checkExecutableScriptUpload("photo.png",
                 new byte[]{(byte) 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'});
         assertTrue(ok.isSafe());
+    }
+
+    @Test
+    void testAesEncryptDecrypt() {
+        String key = Vostok.Security.generateAesKey();
+        String cipher = Vostok.Security.encrypt("hello-aes", key);
+        String plain = Vostok.Security.decrypt(cipher, key);
+        assertEquals("hello-aes", plain);
+    }
+
+    @Test
+    void testAesEncryptDecryptByPassphrase() {
+        String cipher = Vostok.Security.encrypt("hello-passphrase", "demo-secret");
+        String plain = Vostok.Security.decrypt(cipher, "demo-secret");
+        assertEquals("hello-passphrase", plain);
+    }
+
+    @Test
+    void testAesDecryptWithWrongSecretThrows() {
+        String cipher = Vostok.Security.encrypt("hello", "secret-a");
+        assertThrows(VKSecurityException.class, () -> Vostok.Security.decrypt(cipher, "secret-b"));
+    }
+
+    @Test
+    void testRsaEncryptDecrypt() {
+        VKRsaKeyPair pair = Vostok.Security.generateRsaKeyPair();
+        String cipher = Vostok.Security.encryptByPublicKey("hello-rsa", pair.getPublicKeyPem());
+        String plain = Vostok.Security.decryptByPrivateKey(cipher, pair.getPrivateKeyPem());
+        assertEquals("hello-rsa", plain);
+    }
+
+    @Test
+    void testRsaSignVerify() {
+        VKRsaKeyPair pair = Vostok.Security.generateRsaKeyPair();
+        String data = "{\"id\":1,\"name\":\"tom\"}";
+        String sign = Vostok.Security.sign(data, pair.getPrivateKeyPem());
+        assertTrue(Vostok.Security.verify(data, sign, pair.getPublicKeyPem()));
+        assertFalse(Vostok.Security.verify(data + "-tampered", sign, pair.getPublicKeyPem()));
+    }
+
+    @Test
+    void testHashAndHmac() {
+        assertEquals("ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0=", Vostok.Security.sha256("abc"));
+        assertEquals("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", Vostok.Security.sha256Hex("abc"));
+
+        String hmac1 = Vostok.Security.hmacSha256("hello", "key");
+        String hmac2 = Vostok.Security.hmacSha256("hello", "key");
+        String hmac3 = Vostok.Security.hmacSha256("hello2", "key");
+        assertEquals(hmac1, hmac2);
+        assertNotEquals(hmac1, hmac3);
+    }
+
+    @Test
+    void testKeyStoreGetOrCreateAesKeyPersistence() throws Exception {
+        var dir = Files.createTempDirectory("vostok-keystore-aes");
+        VKKeyStoreConfig cfg = new VKKeyStoreConfig()
+                .baseDir(dir.toString())
+                .masterKey("master-123");
+        Vostok.Security.initKeyStore(cfg);
+
+        String k1 = Vostok.Security.getOrCreateAesKey("order-data");
+        String k2 = Vostok.Security.getOrCreateAesKey("order-data");
+        assertEquals(k1, k2);
+
+        Vostok.Security.close();
+        Vostok.Security.initKeyStore(cfg);
+        String k3 = Vostok.Security.getOrCreateAesKey("order-data");
+        assertEquals(k1, k3);
+    }
+
+    @Test
+    void testKeyStoreGetOrCreateRsaKeyPairPersistence() throws Exception {
+        var dir = Files.createTempDirectory("vostok-keystore-rsa");
+        VKKeyStoreConfig cfg = new VKKeyStoreConfig()
+                .baseDir(dir.toString())
+                .masterKey("master-rsa");
+        Vostok.Security.initKeyStore(cfg);
+
+        VKRsaKeyPair p1 = Vostok.Security.getOrCreateRsaKeyPair("order-rsa");
+        VKRsaKeyPair p2 = Vostok.Security.getOrCreateRsaKeyPair("order-rsa");
+        assertEquals(p1.getPublicKeyPem(), p2.getPublicKeyPem());
+        assertEquals(p1.getPrivateKeyPem(), p2.getPrivateKeyPem());
+    }
+
+    @Test
+    void testEncryptDecryptWithKeyIdAcrossRestart() throws Exception {
+        var dir = Files.createTempDirectory("vostok-keystore-restart");
+        VKKeyStoreConfig cfg = new VKKeyStoreConfig()
+                .baseDir(dir.toString())
+                .masterKey("master-restart");
+        Vostok.Security.initKeyStore(cfg);
+
+        String payload = Vostok.Security.encryptWithKeyId("hello-persist", "biz-aes");
+        String plain1 = Vostok.Security.decryptWithKeyId(payload);
+        assertEquals("hello-persist", plain1);
+
+        Vostok.Security.close();
+        Vostok.Security.initKeyStore(cfg);
+        String plain2 = Vostok.Security.decryptWithKeyId(payload);
+        assertEquals("hello-persist", plain2);
+    }
+
+    @Test
+    void testDecryptWithWrongMasterKeyFails() throws Exception {
+        var dir = Files.createTempDirectory("vostok-keystore-master");
+        VKKeyStoreConfig cfg1 = new VKKeyStoreConfig()
+                .baseDir(dir.toString())
+                .masterKey("master-ok");
+        Vostok.Security.initKeyStore(cfg1);
+        String payload = Vostok.Security.encryptWithKeyId("hello-master", "master-key");
+
+        VKKeyStoreConfig cfg2 = new VKKeyStoreConfig()
+                .baseDir(dir.toString())
+                .masterKey("master-wrong");
+        Vostok.Security.initKeyStore(cfg2);
+
+        assertThrows(VKSecurityException.class, () -> Vostok.Security.decryptWithKeyId(payload));
+    }
+
+    @Test
+    void testRotateAesKey() throws Exception {
+        var dir = Files.createTempDirectory("vostok-keystore-rotate");
+        VKKeyStoreConfig cfg = new VKKeyStoreConfig()
+                .baseDir(dir.toString())
+                .masterKey("master-rotate");
+        Vostok.Security.initKeyStore(cfg);
+
+        String oldKey = Vostok.Security.getOrCreateAesKey("rotate-aes");
+        Vostok.Security.rotateAesKey("rotate-aes");
+        String newKey = Vostok.Security.getOrCreateAesKey("rotate-aes");
+        assertNotEquals(oldKey, newKey);
+    }
+
+    @Test
+    void testRotateRsaKeyPair() throws Exception {
+        var dir = Files.createTempDirectory("vostok-keystore-rotate-rsa");
+        VKKeyStoreConfig cfg = new VKKeyStoreConfig()
+                .baseDir(dir.toString())
+                .masterKey("master-rotate-rsa");
+        Vostok.Security.initKeyStore(cfg);
+
+        VKRsaKeyPair oldPair = Vostok.Security.getOrCreateRsaKeyPair("rotate-rsa");
+        Vostok.Security.rotateRsaKeyPair("rotate-rsa");
+        VKRsaKeyPair newPair = Vostok.Security.getOrCreateRsaKeyPair("rotate-rsa");
+
+        assertNotEquals(oldPair.getPublicKeyPem(), newPair.getPublicKeyPem());
+        assertNotEquals(oldPair.getPrivateKeyPem(), newPair.getPrivateKeyPem());
+    }
+
+    @Test
+    void testDecryptWithKeyIdPayloadFormatValidation() {
+        assertThrows(VKSecurityException.class, () -> Vostok.Security.decryptWithKeyId("bad-payload"));
     }
 }
