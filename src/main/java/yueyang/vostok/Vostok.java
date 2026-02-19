@@ -2,6 +2,7 @@ package yueyang.vostok;
 
 import yueyang.vostok.data.VostokData;
 import yueyang.vostok.config.VostokConfig;
+import yueyang.vostok.event.VostokEvent;
 import yueyang.vostok.file.VostokFile;
 import yueyang.vostok.log.VostokLog;
 import yueyang.vostok.security.VostokSecurity;
@@ -59,6 +60,14 @@ public final class Vostok {
      */
     public static final class Security extends VostokSecurity {
         private Security() {
+        }
+    }
+
+    /**
+     * Event entry.
+     */
+    public static final class Event extends VostokEvent {
+        private Event() {
         }
     }
 }

@@ -2,7 +2,7 @@
 
 ---
 
-Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合六个模块能力：
+Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合七个模块能力：
 
 - `Vostok.Data`：基于 JDBC 的数据访问（CRUD、事务、查询、多数据源、连接池）
 - `Vostok.Web`：基于 NIO Reactor 的 Web 服务器（路由、中间件、静态资源、自动 CRUD API）
@@ -10,6 +10,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Log`：异步日志（滚动、队列策略、降级、指标）
 - `Vostok.Config`：统一配置访问（自动扫描 `.properties/.yml/.yaml`、按文件名命名空间读取、支持手动追加任意路径文件）
 - `Vostok.Security`：安全检测工具集（SQL 注入、XSS、命令注入、路径穿越、响应脱敏、文件魔数与脚本上传检测）
+- `Vostok.Event`：进程内事件总线（统一 `publish(...)`，监听器支持同步/异步）
 
 项目构建方式为 Maven：`/Users/yueyang/Develop/code/codex/Vostok/pom.xml`。
 
@@ -26,6 +27,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Log` 可显式 `init(...)`，也支持首次写日志时懒加载。
 - `Vostok.Config` 支持 `init(...)` 显式初始化；未 `init(...)` 时首次读取会懒加载默认配置。
 - `Vostok.Security` 为主动调用型模块，不会自动接入 `Data/Web` 执行链路，需要在业务代码中显式调用。
+- `Vostok.Event` 仅提供一个发布方法 `publish(...)`；同步/异步行为由监听器注册模式决定。
 - `Vostok.Security` 的检测结果是风险判断，不替代参数化查询、鉴权、最小权限、WAF/主机安全等基础安全控制。
 - 对于 `Vostok.Security` 的响应脱敏与文件检测能力，建议与业务字段分级、上传大小限制、存储隔离与病毒扫描联合使用。
 
@@ -3130,3 +3132,227 @@ VKSecurityConfig cfg = new VKSecurityConfig()
 - 更换 `masterKey` 后将无法解密历史密钥文件中的内容，除非先执行迁移。
 - `baseDir` 建议配置为受限目录，并确保只有服务进程用户可读写。
 - `rotateAesKey/rotateRsaKeyPair` 只影响新数据加密，历史数据如需兼容需在业务侧做分版本解密策略。
+
+---
+
+# 8. Event 模块
+
+`Vostok.Event` 为进程内事件总线，支持：
+
+- 同步监听器（`SYNC`）：在 `publish(...)` 当前线程执行。
+- 异步监听器（`ASYNC`）：在异步线程池执行。
+- 统一发布接口：仅 `publish(...)` 一个方法，由监听器模式决定执行方式。
+
+## 8.1 接口定义
+
+```java
+public interface Vostok.Event {
+    /**
+     * 使用默认配置初始化 Event 模块（幂等）。
+     */
+    public static void init();
+
+    /**
+     * 使用指定配置初始化 Event 模块（幂等）。
+     *
+     * - config：事件模块配置，类型为 VKEventConfig；传 null 时使用默认配置。
+     */
+    public static void init(VKEventConfig config);
+
+    /**
+     * 使用新配置重建 Event 模块（会重建异步线程池，监听器注册表保留）。
+     *
+     * - config：新配置，类型为 VKEventConfig；传 null 时使用默认配置。
+     */
+    public static void reinit(VKEventConfig config);
+
+    /**
+     * 判断 Event 模块是否已启动。
+     *
+     * - 返回值：boolean，true 表示已启动。
+     */
+    public static boolean started();
+
+    /**
+     * 获取当前生效配置快照。
+     *
+     * - 返回值：VKEventConfig。
+     */
+    public static VKEventConfig config();
+
+    /**
+     * 关闭 Event 模块（释放线程池并清空监听器）。
+     */
+    public static void close();
+
+    /**
+     * 注册同步监听器（默认 SYNC）。
+     *
+     * - eventType：事件类型，类型为 Class<T>，不能为空。
+     * - listener：监听器，类型为 VKEventListener<T>，不能为空。
+     * - 返回值：VKEventSubscription，可用于 off(...) 取消订阅。
+     */
+    public static <T> VKEventSubscription on(Class<T> eventType, VKEventListener<T> listener);
+
+    /**
+     * 注册监听器并显式指定模式（SYNC / ASYNC）。
+     *
+     * - eventType：事件类型，类型为 Class<T>，不能为空。
+     * - mode：监听模式，类型为 VKListenerMode；null 时按 SYNC 处理。
+     * - listener：监听器，类型为 VKEventListener<T>，不能为空。
+     * - 返回值：VKEventSubscription，可用于 off(...) 取消订阅。
+     */
+    public static <T> VKEventSubscription on(Class<T> eventType, VKListenerMode mode, VKEventListener<T> listener);
+
+    /**
+     * 取消指定订阅。
+     *
+     * - subscription：订阅对象，类型为 VKEventSubscription；null 时忽略。
+     */
+    public static void off(VKEventSubscription subscription);
+
+    /**
+     * 取消某事件类型的全部监听器。
+     *
+     * - eventType：事件类型，类型为 Class<?>；null 时忽略。
+     */
+    public static void offAll(Class<?> eventType);
+
+    /**
+     * 发布事件（唯一发布方法）。
+     *
+     * - event：事件对象，类型为 Object，不能为空。
+     * - 返回值：VKEventPublishResult，包含命中监听器数、同步执行结果、异步提交结果与耗时。
+     *
+     * 执行规则：
+     * 1) 命中事件类型监听器（支持父类型监听，如 BaseEvent 可接收其子类事件）。
+     * 2) 先执行 SYNC 监听器（当前线程，按注册顺序）。
+     * 3) 再提交 ASYNC 监听器（线程池异步执行）。
+     */
+    public static VKEventPublishResult publish(Object event);
+}
+```
+
+## 8.2 使用 Demo
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.event.*;
+
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+
+class BaseEvent {}
+class UserCreatedEvent extends BaseEvent {
+    private final Long userId;
+    private final String username;
+    UserCreatedEvent(Long userId, String username) {
+        this.userId = userId;
+        this.username = username;
+    }
+    public Long getUserId() { return userId; }
+    public String getUsername() { return username; }
+}
+
+public class EventApiDemo {
+    public static void main(String[] args) throws Exception {
+        Vostok.Event.init(new VKEventConfig()
+                .enabled(true)
+                .asyncCoreThreads(2)
+                .asyncMaxThreads(8)
+                .asyncQueueCapacity(2000)
+                .asyncKeepAliveMs(60_000)
+                .rejectionPolicy(VKEventRejectionPolicy.CALLER_RUNS)
+                .listenerErrorStrategy(VKEventListenerErrorStrategy.CONTINUE)
+                .shutdownWaitMs(3000));
+
+        // 1) 默认注册为同步监听器（SYNC）
+        VKEventSubscription auditSub = Vostok.Event.on(UserCreatedEvent.class, e -> {
+            System.out.println("[sync-audit] userId=" + e.getUserId());
+        });
+
+        // 2) 指定异步监听器（ASYNC）
+        CountDownLatch asyncDone = new CountDownLatch(1);
+        VKEventSubscription welcomeSub = Vostok.Event.on(UserCreatedEvent.class, VKListenerMode.ASYNC, e -> {
+            System.out.println("[async-mail] welcome " + e.getUsername());
+            asyncDone.countDown();
+        });
+
+        // 3) 注册父类型监听器（可接收子类事件）
+        Vostok.Event.on(BaseEvent.class, e -> {
+            System.out.println("[sync-base] event=" + e.getClass().getSimpleName());
+        });
+
+        // 4) 统一发布（只有一个 publish 方法）
+        VKEventPublishResult result = Vostok.Event.publish(new UserCreatedEvent(1001L, "neo"));
+        System.out.println("matched=" + result.getMatchedListeners()
+                + ", syncExecuted=" + result.getSyncExecuted()
+                + ", syncFailed=" + result.getSyncFailed()
+                + ", asyncSubmitted=" + result.getAsyncSubmitted()
+                + ", asyncRejected=" + result.getAsyncRejected()
+                + ", costMs=" + result.getCostMs());
+
+        asyncDone.await(2, TimeUnit.SECONDS);
+
+        // 5) 取消某个监听器
+        Vostok.Event.off(welcomeSub);
+        Vostok.Event.publish(new UserCreatedEvent(1002L, "trinity"));
+
+        // 6) 取消某事件类型全部监听器
+        Vostok.Event.offAll(UserCreatedEvent.class);
+        Vostok.Event.publish(new UserCreatedEvent(1003L, "morpheus"));
+
+        // 7) 运行中重载配置（reinit）
+        Vostok.Event.reinit(new VKEventConfig()
+                .asyncCoreThreads(4)
+                .asyncMaxThreads(16)
+                .asyncQueueCapacity(5000));
+
+        // 8) 关闭
+        Vostok.Event.close();
+    }
+}
+```
+
+## 8.3 配置详解（VKEventConfig）
+
+```java
+import yueyang.vostok.event.VKEventConfig;
+import yueyang.vostok.event.VKEventListenerErrorStrategy;
+import yueyang.vostok.event.VKEventRejectionPolicy;
+
+VKEventConfig cfg = new VKEventConfig()
+    // 是否启用事件分发。默认 true；false 时 publish(...) 会直接返回空结果。
+    .enabled(true)
+    // 异步线程池核心线程数。默认 max(1, CPU/2)。
+    .asyncCoreThreads(2)
+    // 异步线程池最大线程数。默认 max(core, CPU*2)。
+    .asyncMaxThreads(8)
+    // 异步任务队列容量。默认 4096。
+    .asyncQueueCapacity(4096)
+    // 非核心线程空闲回收时间（毫秒）。默认 60000。
+    .asyncKeepAliveMs(60_000)
+    // 队列满时拒绝策略：CALLER_RUNS / ABORT / DISCARD。默认 CALLER_RUNS。
+    .rejectionPolicy(VKEventRejectionPolicy.CALLER_RUNS)
+    // 监听器异常策略：CONTINUE / FAIL_FAST。默认 CONTINUE。
+    .listenerErrorStrategy(VKEventListenerErrorStrategy.CONTINUE)
+    // 关闭时等待异步线程池终止的毫秒数。默认 3000。
+    .shutdownWaitMs(3000);
+```
+
+## 8.4 行为说明
+
+- `publish(...)` 是唯一发布入口：
+  - 同步监听器：当前线程执行，适合审计、轻量内存状态更新等需要“同请求可见”的逻辑。
+  - 异步监听器：线程池执行，适合通知、非关键耗时任务等逻辑。
+- 事件匹配支持父类型：
+  - 对 `BaseEvent` 注册监听后，发布 `UserCreatedEvent extends BaseEvent` 会被命中。
+- 顺序保证：
+  - 同一次发布中的同步监听器按注册顺序执行。
+  - 异步监听器提交到线程池后不保证完成顺序。
+- 异常处理：
+  - `CONTINUE`：单个同步监听器失败不影响后续同步监听器。
+  - `FAIL_FAST`：同步监听器失败立即抛异常并中断后续同步监听器。
+  - 异步监听器异常统一记录日志，不回抛给发布方。
+- 背压与拒绝：
+  - 当异步线程池饱和时，行为由 `rejectionPolicy` 决定，并在 `VKEventPublishResult.asyncRejected` 中体现。
