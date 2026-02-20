@@ -2,7 +2,7 @@
 
 ---
 
-Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合八个模块能力：
+Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合九个模块能力：
 
 - `Vostok.Data`：基于 JDBC 的数据访问（CRUD、事务、查询、多数据源、连接池）
 - `Vostok.Web`：基于 NIO Reactor 的 Web 服务器（路由、中间件、静态资源、自动 CRUD API）
@@ -12,6 +12,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Security`：安全检测工具集（SQL 注入、XSS、命令注入、路径穿越、响应脱敏、文件魔数与脚本上传检测）
 - `Vostok.Event`：进程内事件总线（统一 `publish(...)`，监听器支持同步/异步）
 - `Vostok.Cache`：统一缓存访问（支持 Redis 或内存 Provider、内置连接池、可扩展编解码器）
+- `Vostok.Http`：统一 HTTP Client（命名 Client、鉴权、重试、超时、JSON/表单/文件上传）
 
 项目构建方式为 Maven：`/Users/yueyang/Develop/code/codex/Vostok/pom.xml`。
 
@@ -30,6 +31,8 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Security` 为主动调用型模块，不会自动接入 `Data/Web` 执行链路，需要在业务代码中显式调用。
 - `Vostok.Event` 仅提供一个发布方法 `publish(...)`；同步/异步行为由监听器注册模式决定。
 - `Vostok.Cache` 不依赖 `Vostok.Config`，必须通过 `VKCacheConfig` 或显式 Loader 初始化。
+- `Vostok.Http` 建议显式 `init(...)` 后再使用；如调用相对路径，必须先注册带 `baseUrl` 的命名 Client。
+- `Vostok.Http` 默认会对非 `2xx` 响应抛出异常（可通过 `failOnNon2xx(false)` 关闭）。
 - `Vostok.Security` 的检测结果是风险判断，不替代参数化查询、鉴权、最小权限、WAF/主机安全等基础安全控制。
 - 对于 `Vostok.Security` 的响应脱敏与文件检测能力，建议与业务字段分级、上传大小限制、存储隔离与病毒扫描联合使用。
 
@@ -3832,6 +3835,15 @@ var fromProperties = VKCacheConfigFactory.fromProperties(Path.of("./cache.proper
 # 10. Http 模块
 
 `Vostok.Http` 提供面向第三方 API 的统一调用能力，支持命名 Client、鉴权、重试、超时、表单/文件上传、JSON 序列化与指标。
+
+## 10.0 说明与注意事项
+
+- `Vostok.Http` 是客户端调用模块，不是 Web Server；服务端能力请使用 `Vostok.Web`。
+- 建议在应用启动时显式 `Vostok.Http.init(...)`，避免按默认配置懒初始化。
+- 当使用相对路径（如 `/users/{id}`）时，必须通过 `.client(\"name\")` 指定已注册且包含 `baseUrl` 的命名 Client。
+- 默认 `failOnNon2xx=true`，非 `2xx` 会抛出 `VKHttpException(HTTP_STATUS)`；如需手动处理响应可在请求级关闭。
+- 重试默认只覆盖幂等方法（`GET/HEAD/OPTIONS/PUT/DELETE`）；若对 `POST` 重试，请配合业务幂等键。
+- `VKJson` 适合常见对象映射，复杂泛型响应建议业务侧自行解析/转换。
 
 ## 10.1 接口定义
 
