@@ -15,4 +15,14 @@ public @interface VKColumn {
      * 数据库列名。
      */
     String name();
+
+    /**
+     * 是否对该字段进行加密存储。
+     */
+    boolean encrypted() default false;
+
+    /**
+     * 字段加密使用的 keyId；为空时走 VKDataConfig.defaultEncryptionKeyId。
+     */
+    String keyId() default "";
 }

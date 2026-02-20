@@ -10,6 +10,9 @@ import yueyang.vostok.data.meta.EntityMeta;
 import yueyang.vostok.data.meta.FieldMeta;
 import yueyang.vostok.data.meta.MetaRegistry;
 import yueyang.vostok.data.query.VKAggregate;
+import yueyang.vostok.data.query.VKCondition;
+import yueyang.vostok.data.query.VKConditionGroup;
+import yueyang.vostok.data.query.VKOperator;
 import yueyang.vostok.data.query.VKQuery;
 import yueyang.vostok.data.sql.SqlAndParams;
 import yueyang.vostok.data.sql.SqlBuilder;
@@ -35,7 +38,7 @@ public final class VostokCrudOps {
         VKAssert.notNull(entity, "Entity is null");
         EntityMeta meta = MetaRegistry.get(entity.getClass());
         SqlTemplate tpl = VostokInternal.currentTemplateCache().get(meta, SqlTemplateType.INSERT);
-        SqlAndParams sp = new SqlAndParams(tpl.getSql(), tpl.bindEntity(entity));
+        SqlAndParams sp = new SqlAndParams(tpl.getSql(), tpl.bindEntity(entity, VostokInternal.currentConfig()));
 
         if (meta.getIdField().isAuto()) {
             Object key = VostokInternal.executeInsert(sp);
@@ -73,7 +76,7 @@ public final class VostokCrudOps {
         List<Object[]> paramsList = new ArrayList<>();
         for (Object entity : entities) {
             VKAssert.isTrue(entity.getClass() == entityClass, "Mixed entity classes are not allowed");
-            paramsList.add(tpl.bindEntity(entity));
+            paramsList.add(tpl.bindEntity(entity, VostokInternal.currentConfig()));
         }
 
         List<VKBatchItemResult> items = new ArrayList<>();
@@ -117,7 +120,7 @@ public final class VostokCrudOps {
         VKAssert.notNull(entity, "Entity is null");
         EntityMeta meta = MetaRegistry.get(entity.getClass());
         SqlTemplate tpl = VostokInternal.currentTemplateCache().get(meta, SqlTemplateType.UPDATE);
-        return VostokInternal.executeUpdate(new SqlAndParams(tpl.getSql(), tpl.bindEntity(entity)));
+        return VostokInternal.executeUpdate(new SqlAndParams(tpl.getSql(), tpl.bindEntity(entity, VostokInternal.currentConfig())));
     }
 
     public static int batchUpdate(List<?> entities) {
@@ -145,7 +148,7 @@ public final class VostokCrudOps {
         List<Object[]> paramsList = new ArrayList<>();
         for (Object entity : entities) {
             VKAssert.isTrue(entity.getClass() == entityClass, "Mixed entity classes are not allowed");
-            paramsList.add(tpl.bindEntity(entity));
+            paramsList.add(tpl.bindEntity(entity, VostokInternal.currentConfig()));
         }
 
         List<VKBatchItemResult> items = new ArrayList<>();
@@ -235,6 +238,7 @@ public final class VostokCrudOps {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         EntityMeta meta = MetaRegistry.get(entityClass);
+        validateEncryptedQuery(meta, query);
         SqlAndParams sp = SqlBuilder.buildSelect(meta, query, VostokInternal.currentDialect());
         return VostokInternal.executeQueryList(meta, sp);
     }
@@ -246,6 +250,7 @@ public final class VostokCrudOps {
         VKAssert.isTrue(fields.length > 0, "Fields is empty");
 
         EntityMeta meta = MetaRegistry.get(entityClass);
+        validateEncryptedQuery(meta, query);
         List<FieldMeta> projection = new ArrayList<>();
         for (String field : fields) {
             FieldMeta fm = meta.getFieldByName(field);
@@ -267,6 +272,7 @@ public final class VostokCrudOps {
         VKAssert.notNull(query, "Query is null");
         query.selectAggregates(aggregates);
         EntityMeta meta = MetaRegistry.get(entityClass);
+        validateEncryptedQuery(meta, query);
         SqlAndParams sp = SqlBuilder.buildSelect(meta, query, VostokInternal.currentDialect());
         try {
             return VostokInternal.currentExecutor().queryRows(sp.getSql(), sp.getParams());
@@ -279,6 +285,7 @@ public final class VostokCrudOps {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         EntityMeta meta = MetaRegistry.get(entityClass);
+        validateEncryptedQuery(meta, query);
         SqlAndParams sp = SqlBuilder.buildCount(meta, query, VostokInternal.currentDialect());
         try {
             Object value = VostokInternal.currentExecutor().queryScalar(sp.getSql(), sp.getParams());
@@ -291,6 +298,57 @@ public final class VostokCrudOps {
                 throw VKExceptionTranslator.translate(sp.getSql(), (SQLException) e);
             }
             throw new VKException(VKErrorCode.SQL_ERROR, "SQL count failed: " + sp.getSql(), e);
+        }
+    }
+
+    private static void validateEncryptedQuery(EntityMeta meta, VKQuery query) {
+        if (query == null) {
+            return;
+        }
+        validateConditionGroups(meta, query.getGroups(), "where");
+        validateConditionGroups(meta, query.getHaving(), "having");
+        for (var order : query.getOrders()) {
+            FieldMeta field = meta.getFieldByName(order.getField());
+            if (field != null && field.isEncrypted()) {
+                throw new VKException(VKErrorCode.INVALID_ARGUMENT, "Encrypted field does not support orderBy: " + order.getField());
+            }
+        }
+        for (String groupByField : query.getGroupBy()) {
+            FieldMeta field = meta.getFieldByName(groupByField);
+            if (field != null && field.isEncrypted()) {
+                throw new VKException(VKErrorCode.INVALID_ARGUMENT, "Encrypted field does not support groupBy: " + groupByField);
+            }
+        }
+        for (VKAggregate aggregate : query.getAggregates()) {
+            String fieldName = aggregate.getField();
+            if (fieldName == null || fieldName.isBlank()) {
+                continue;
+            }
+            FieldMeta field = meta.getFieldByName(fieldName);
+            if (field != null && field.isEncrypted()) {
+                throw new VKException(VKErrorCode.INVALID_ARGUMENT, "Encrypted field does not support aggregate: " + fieldName);
+            }
+        }
+    }
+
+    private static void validateConditionGroups(EntityMeta meta, List<VKConditionGroup> groups, String stage) {
+        for (VKConditionGroup group : groups) {
+            for (VKCondition condition : group.getConditions()) {
+                String fieldName = condition.getField();
+                if (fieldName == null || fieldName.isBlank()) {
+                    continue;
+                }
+                FieldMeta field = meta.getFieldByName(fieldName);
+                if (field == null || !field.isEncrypted()) {
+                    continue;
+                }
+                VKOperator op = condition.getOp();
+                boolean allowed = op == VKOperator.IS_NULL || op == VKOperator.IS_NOT_NULL;
+                if (!allowed) {
+                    throw new VKException(VKErrorCode.INVALID_ARGUMENT,
+                            "Encrypted field only supports IS_NULL/IS_NOT_NULL in " + stage + ": " + fieldName);
+                }
+            }
         }
     }
 }

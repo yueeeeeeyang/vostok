@@ -32,12 +32,19 @@ public final class MetaLoader {
             VKId id = field.getAnnotation(VKId.class);
             VKColumn column = field.getAnnotation(VKColumn.class);
             String columnName = column != null ? column.name() : field.getName();
+            boolean encrypted = column != null && column.encrypted();
+            String keyId = column != null ? column.keyId() : "";
             yueyang.vostok.util.VKNameValidator.validate(columnName, "Column name");
 
             boolean isId = id != null;
             boolean auto = id != null && id.auto();
+            if (encrypted && field.getType() != String.class) {
+                throw new yueyang.vostok.data.exception.VKMetaException(
+                        "Encrypted field must be String type: " + clazz.getName() + "." + field.getName()
+                );
+            }
 
-            FieldMeta meta = new FieldMeta(field, columnName, isId, auto);
+            FieldMeta meta = new FieldMeta(field, columnName, isId, auto, encrypted, keyId);
             fields.add(meta);
 
             if (isId) {

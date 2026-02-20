@@ -557,6 +557,72 @@ Vostok.Log.init(new VKLogConfig()
 // 后续 Data 内部日志将统一进入 app.log（及滚动文件）
 ```
 
+### 2.2.2 字段加密（VKColumn.encrypted）
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.common.annotation.VKEntity;
+import yueyang.vostok.data.VKDataConfig;
+import yueyang.vostok.data.annotation.VKColumn;
+import yueyang.vostok.data.annotation.VKId;
+import yueyang.vostok.data.dialect.VKDialectType;
+import yueyang.vostok.security.keystore.VKKeyStoreConfig;
+
+@VKEntity(table = "t_user_secret")
+class SecureUser {
+    @VKId
+    private Long id;
+
+    // 启用字段加密，写入时加密、读取时解密
+    @VKColumn(name = "secret_name", encrypted = true, keyId = "enc-user")
+    private String secretName;
+
+    private Integer age;
+}
+
+public class EncryptionDemo {
+    public static void main(String[] args) {
+        // 1) 初始化密钥存储
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir("./.vostok/keystore")
+                .masterKey("replace-with-your-master-key"));
+
+        // 2) 开启 Data 字段加密能力
+        VKDataConfig cfg = new VKDataConfig()
+                .url("jdbc:h2:mem:vostok;MODE=MySQL;DB_CLOSE_DELAY=-1")
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.MYSQL)
+                .autoCreateTable(true)
+                .fieldEncryptionEnabled(true)
+                .defaultEncryptionKeyId("enc-default")
+                .allowPlaintextRead(false);
+
+        Vostok.Data.init(cfg, "com.example.entity");
+
+        SecureUser u = new SecureUser();
+        // DB 实际存储为 vk1:aes:keyId:... 格式密文
+        u.secretName = "alice";
+        u.age = 20;
+        Vostok.Data.insert(u);
+
+        // 读取时自动解密为明文
+        SecureUser one = Vostok.Data.findById(SecureUser.class, u.id);
+    }
+}
+```
+
+- `@VKColumn(encrypted = true)` 仅支持 `String` 字段；非 String 会在元数据加载阶段抛异常。
+- `keyId` 优先级：字段 `keyId` > `VKDataConfig.defaultEncryptionKeyId`。
+- `allowPlaintextRead`：
+- `false`：遇到非密文格式值直接抛错（推荐，防止脏数据混入）。
+- `true`：允许兼容历史明文数据，按明文返回。
+- 受限查询能力（加密字段）：
+- `where`/`having` 仅允许 `IS_NULL`、`IS_NOT_NULL`。
+- 禁止 `LIKE/IN/BETWEEN/范围比较` 等条件。
+- 禁止 `orderBy/groupBy/aggregate` 使用加密字段。
+
 ## 2.3 配置详解（VKDataConfig）
 
 ```java
@@ -636,7 +702,13 @@ VKDataConfig cfg = new VKDataConfig()
     // 事务超时毫秒。默认 0（不限制）；>0 时超时会触发回滚。
     .txTimeoutMs(0)
     // 非事务 SQL 超时毫秒。默认 0（不限制）；>0 会设置 Statement timeout。
-    .queryTimeoutMs(0);
+    .queryTimeoutMs(0)
+    // 是否启用字段加密（仅 @VKColumn(encrypted=true) 字段生效）。默认 false。
+    .fieldEncryptionEnabled(false)
+    // 默认字段加密 keyId。默认 data-default；当字段未指定 keyId 时使用。
+    .defaultEncryptionKeyId("data-default")
+    // 读取时是否允许明文兼容。默认 false；true 时非密文值按明文返回。
+    .allowPlaintextRead(false);
 ```
 
 ## 2.4 Data 模块 Options 配置项说明
@@ -3654,4 +3726,3 @@ var fromProperties = VKCacheConfigFactory.fromProperties(Path.of("./cache.proper
 - `SCAN` 当前返回单次扫描批次（`count` 限制），如需全量遍历请循环调用。
 - BloomFilter 由业务注入，默认 `noOp`（始终放行）。
 - `RETURN_NULL` / `SKIP_WRITE` 降级策略仅在命中池限流时生效。
-

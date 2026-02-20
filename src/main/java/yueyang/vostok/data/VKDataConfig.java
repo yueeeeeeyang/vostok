@@ -80,6 +80,12 @@ public class VKDataConfig {
     private long txTimeoutMs = 0;
     /** 非事务 SQL 超时（毫秒，<=0 不限制） */
     private long queryTimeoutMs = 0;
+    /** 是否开启字段加密 */
+    private boolean fieldEncryptionEnabled = false;
+    /** 字段加密默认 keyId */
+    private String defaultEncryptionKeyId = "data-default";
+    /** 是否允许读取未加密明文（用于迁移期兼容） */
+    private boolean allowPlaintextRead = false;
 
     
     public String getUrl() {
@@ -472,6 +478,33 @@ public class VKDataConfig {
     
     public VKDataConfig queryTimeoutMs(long queryTimeoutMs) {
         this.queryTimeoutMs = queryTimeoutMs;
+        return this;
+    }
+
+    public boolean isFieldEncryptionEnabled() {
+        return fieldEncryptionEnabled;
+    }
+
+    public VKDataConfig fieldEncryptionEnabled(boolean fieldEncryptionEnabled) {
+        this.fieldEncryptionEnabled = fieldEncryptionEnabled;
+        return this;
+    }
+
+    public String getDefaultEncryptionKeyId() {
+        return defaultEncryptionKeyId;
+    }
+
+    public VKDataConfig defaultEncryptionKeyId(String defaultEncryptionKeyId) {
+        this.defaultEncryptionKeyId = defaultEncryptionKeyId;
+        return this;
+    }
+
+    public boolean isAllowPlaintextRead() {
+        return allowPlaintextRead;
+    }
+
+    public VKDataConfig allowPlaintextRead(boolean allowPlaintextRead) {
+        this.allowPlaintextRead = allowPlaintextRead;
         return this;
     }
 }

@@ -5,6 +5,7 @@ import yueyang.vostok.data.meta.FieldMeta;
 import yueyang.vostok.data.plugin.VKInterceptor;
 import yueyang.vostok.data.plugin.VKInterceptorRegistry;
 import yueyang.vostok.data.pool.VKDataSource;
+import yueyang.vostok.data.core.VKFieldCrypto;
 import yueyang.vostok.data.tx.VKTransactionManager;
 import yueyang.vostok.data.type.VKTypeMapper;
 
@@ -567,6 +568,7 @@ public class JdbcExecutor {
             for (int i = 0; i < projection.size(); i++) {
                 FieldMeta field = projection.get(i);
                 Object value = rs.getObject(indexes[i]);
+                value = VKFieldCrypto.decryptRead(field, value, dataSource.getConfig());
                 Object mapped = VKTypeMapper.fromJdbc(value, field.getField().getType());
                 field.setValue(obj, mapped);
             }

@@ -105,7 +105,7 @@ public final class VKDdlValidator {
         List<String> pk = new ArrayList<>();
         for (FieldMeta field : meta.getFields()) {
             String col = field.getColumnName();
-            String colType = resolveSqlType(field.getField().getType(), dialectType, field.isAuto());
+            String colType = resolveSqlType(field, dialectType);
             StringBuilder def = new StringBuilder(col).append(" ").append(colType);
             if (field.isAuto()) {
                 String auto = autoIncrementSuffix(dialectType, field.getField().getType());
@@ -128,7 +128,9 @@ public final class VKDdlValidator {
         return "CREATE TABLE " + tableName + " (" + String.join(", ", columns) + ")";
     }
 
-    private static String resolveSqlType(Class<?> type, VKDialectType dialectType, boolean auto) {
+    private static String resolveSqlType(FieldMeta field, VKDialectType dialectType) {
+        Class<?> type = field.getField().getType();
+        boolean auto = field.isAuto();
         if (auto) {
             if (dialectType == VKDialectType.POSTGRESQL) {
                 if (type == long.class || type == Long.class) {
@@ -138,6 +140,9 @@ public final class VKDdlValidator {
             }
         }
         if (type == String.class) {
+            if (field.isEncrypted()) {
+                return "VARCHAR(1024)";
+            }
             return "VARCHAR(255)";
         }
         if (type == int.class || type == Integer.class) {

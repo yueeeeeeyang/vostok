@@ -49,6 +49,9 @@ final class VostokInternal {
         VKAssert.isTrue(cfg.getRetryBackoffMaxMs() >= 0, "retryBackoffMaxMs must be >= 0");
         VKAssert.isTrue(cfg.getTxTimeoutMs() >= 0, "txTimeoutMs must be >= 0");
         VKAssert.isTrue(cfg.getQueryTimeoutMs() >= 0, "queryTimeoutMs must be >= 0");
+        if (cfg.isFieldEncryptionEnabled()) {
+            VKAssert.notBlank(cfg.getDefaultEncryptionKeyId(), "defaultEncryptionKeyId is blank");
+        }
     }
 
     static void ensureInit() {

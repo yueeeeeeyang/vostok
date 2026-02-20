@@ -21,8 +21,10 @@ import yueyang.vostok.data.jdbc.VKSqlLogger;
 import yueyang.vostok.data.meta.MetaLoader;
 import yueyang.vostok.data.meta.MetaRegistry;
 import yueyang.vostok.data.plugin.VKInterceptor;
+import yueyang.vostok.security.keystore.VKKeyStoreConfig;
 import yueyang.vostokbad.BadColumnEntity;
 import yueyang.vostokbad.BadEntity;
+import yueyang.vostokbad.BadEncryptedTypeEntity;
 import yueyang.vostok.data.query.VKAggregate;
 import yueyang.vostok.data.query.VKCondition;
 import yueyang.vostok.data.query.VKOrder;
@@ -35,6 +37,7 @@ import yueyang.vostok.data.ds.VKDataSourceHolder;
 import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.nio.file.Files;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -93,6 +96,11 @@ public class VostokIntegrationTest {
              var stmt = conn.createStatement()) {
             stmt.execute("DELETE FROM t_user");
             stmt.execute("DELETE FROM t_task");
+            try {
+                stmt.execute("DELETE FROM t_user_secret");
+            } catch (Exception ignore) {
+                // ignored
+            }
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -961,6 +969,164 @@ public class VostokIntegrationTest {
     }
 
     @Test
+    @Order(91)
+    void testFieldEncryptionRoundTrip() throws Exception {
+        try {
+            Vostok.Data.close();
+            Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                    .baseDir(Files.createTempDirectory("vostok-ks-roundtrip").toString())
+                    .masterKey("vostok-test-master-key-roundtrip-001"));
+
+            VKDataConfig cfg = new VKDataConfig()
+                    .url(JDBC_URL)
+                    .username("sa")
+                    .password("")
+                    .driver("org.h2.Driver")
+                    .dialect(VKDialectType.MYSQL)
+                    .validationQuery("SELECT 1")
+                    .autoCreateTable(true)
+                    .fieldEncryptionEnabled(true)
+                    .defaultEncryptionKeyId("enc-k1");
+            Vostok.Data.init(cfg, "yueyang.vostok");
+
+            EncryptedUserEntity user = new EncryptedUserEntity();
+            user.setSecretName("alice");
+            user.setAge(18);
+            assertEquals(1, Vostok.Data.insert(user));
+            assertNotNull(user.getId());
+
+            EncryptedUserEntity loaded = Vostok.Data.findById(EncryptedUserEntity.class, user.getId());
+            assertNotNull(loaded);
+            assertEquals("alice", loaded.getSecretName());
+            assertEquals(18, loaded.getAge());
+
+            try (var conn = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+                 var ps = conn.prepareStatement("SELECT secret_name FROM t_user_secret WHERE id = ?")) {
+                ps.setLong(1, user.getId());
+                try (var rs = ps.executeQuery()) {
+                    assertTrue(rs.next());
+                    String dbValue = rs.getString(1);
+                    assertNotEquals("alice", dbValue);
+                    assertTrue(dbValue.startsWith("vk1:aes:enc-k1:"));
+                }
+            }
+        } finally {
+            restoreDefaultDataConfig();
+        }
+    }
+
+    @Test
+    @Order(92)
+    void testFieldEncryptionPlaintextCompatibility() throws Exception {
+        try {
+            Vostok.Data.close();
+            Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                    .baseDir(Files.createTempDirectory("vostok-ks-plain").toString())
+                    .masterKey("vostok-test-master-key-plain-001"));
+
+            VKDataConfig cfg = new VKDataConfig()
+                    .url(JDBC_URL)
+                    .username("sa")
+                    .password("")
+                    .driver("org.h2.Driver")
+                    .dialect(VKDialectType.MYSQL)
+                    .validationQuery("SELECT 1")
+                    .autoCreateTable(true)
+                    .fieldEncryptionEnabled(true)
+                    .defaultEncryptionKeyId("enc-k1")
+                    .allowPlaintextRead(false);
+            Vostok.Data.init(cfg, "yueyang.vostok");
+
+            try (var conn = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+                 var stmt = conn.createStatement()) {
+                stmt.execute("INSERT INTO t_user_secret(secret_name, age) VALUES ('legacy-plaintext', 20)");
+            }
+
+            VKException ex = assertThrows(VKException.class,
+                    () -> Vostok.Data.findAll(EncryptedUserEntity.class));
+            assertNotNull(ex.getMessage());
+
+            Vostok.Data.close();
+            cfg.allowPlaintextRead(true);
+            Vostok.Data.init(cfg, "yueyang.vostok");
+
+            List<EncryptedUserEntity> list = Vostok.Data.findAll(EncryptedUserEntity.class);
+            assertEquals(1, list.size());
+            assertEquals("legacy-plaintext", list.get(0).getSecretName());
+        } finally {
+            restoreDefaultDataConfig();
+        }
+    }
+
+    @Test
+    @Order(93)
+    void testFieldEncryptionQueryRestrictions() throws Exception {
+        try {
+            Vostok.Data.close();
+            Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                    .baseDir(Files.createTempDirectory("vostok-ks-query").toString())
+                    .masterKey("vostok-test-master-key-query-001"));
+
+            VKDataConfig cfg = new VKDataConfig()
+                    .url(JDBC_URL)
+                    .username("sa")
+                    .password("")
+                    .driver("org.h2.Driver")
+                    .dialect(VKDialectType.MYSQL)
+                    .validationQuery("SELECT 1")
+                    .autoCreateTable(true)
+                    .fieldEncryptionEnabled(true)
+                    .defaultEncryptionKeyId("enc-k1");
+            Vostok.Data.init(cfg, "yueyang.vostok");
+
+            EncryptedUserEntity user = new EncryptedUserEntity();
+            user.setSecretName("bob");
+            user.setAge(22);
+            Vostok.Data.insert(user);
+
+            VKQuery like = VKQuery.create().where(VKCondition.of("secretName", VKOperator.LIKE, "%bo%"));
+            assertThrows(VKException.class, () -> Vostok.Data.query(EncryptedUserEntity.class, like));
+
+            VKQuery order = VKQuery.create().orderBy(VKOrder.desc("secretName"));
+            assertThrows(VKException.class, () -> Vostok.Data.query(EncryptedUserEntity.class, order));
+
+            VKQuery agg = VKQuery.create();
+            assertThrows(VKException.class, () -> Vostok.Data.aggregate(EncryptedUserEntity.class, agg,
+                    VKAggregate.max("secretName", "mx")));
+
+            VKQuery isNull = VKQuery.create().where(VKCondition.of("secretName", VKOperator.IS_NOT_NULL));
+            assertEquals(1, Vostok.Data.query(EncryptedUserEntity.class, isNull).size());
+        } finally {
+            restoreDefaultDataConfig();
+        }
+    }
+
+    @Test
+    @Order(94)
+    void testEncryptedFieldTypeValidation() {
+        VKException ex = assertThrows(VKException.class, () -> MetaLoader.load(BadEncryptedTypeEntity.class));
+        assertTrue(ex.getMessage().contains("must be String type"));
+    }
+
+    @Test
+    @Order(95)
+    void testEncryptionConfigValidation() {
+        Vostok.Data.close();
+        VKDataConfig bad = new VKDataConfig()
+                .url(JDBC_URL)
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.MYSQL)
+                .validationQuery("SELECT 1")
+                .fieldEncryptionEnabled(true)
+                .defaultEncryptionKeyId(" ");
+        VKException ex = assertThrows(VKException.class, () -> Vostok.Data.init(bad, "yueyang.vostok"));
+        assertTrue(ex.getMessage().contains("defaultEncryptionKeyId"));
+        restoreDefaultDataConfig();
+    }
+
+    @Test
     @Order(89)
     void testCustomScanner() {
         Vostok.Data.close();
@@ -993,6 +1159,28 @@ public class VostokIntegrationTest {
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
         Vostok.Data.init(cfg2, "yueyang.vostok");
+        Vostok.Data.registerRawSql("COUNT(1)", "SLEEP(1200)", "SLEEP(600)", "SLEEP(10)");
+        Vostok.Data.registerSubquery(
+                "SELECT 1 FROM t_user u2 WHERE u2.id = t_user.id AND u2.age >= ?",
+                "SELECT id FROM t_user WHERE age >= ?"
+        );
+    }
+
+    private static void restoreDefaultDataConfig() {
+        Vostok.Data.close();
+        VKDataConfig cfg = new VKDataConfig()
+                .url(JDBC_URL)
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.MYSQL)
+                .minIdle(1)
+                .maxActive(5)
+                .maxWaitMs(10000)
+                .batchSize(2)
+                .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
+                .validationQuery("SELECT 1");
+        Vostok.Data.init(cfg, "yueyang.vostok");
         Vostok.Data.registerRawSql("COUNT(1)", "SLEEP(1200)", "SLEEP(600)", "SLEEP(10)");
         Vostok.Data.registerSubquery(
                 "SELECT 1 FROM t_user u2 WHERE u2.id = t_user.id AND u2.age >= ?",

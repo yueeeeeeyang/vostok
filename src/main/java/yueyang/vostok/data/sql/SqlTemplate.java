@@ -1,5 +1,7 @@
 package yueyang.vostok.data.sql;
 
+import yueyang.vostok.data.VKDataConfig;
+import yueyang.vostok.data.core.VKFieldCrypto;
 import yueyang.vostok.data.meta.FieldMeta;
 import yueyang.vostok.util.VKAssert;
 
@@ -25,14 +27,15 @@ public class SqlTemplate {
         return sql;
     }
 
-    public Object[] bindEntity(Object entity) {
+    public Object[] bindEntity(Object entity, VKDataConfig config) {
         VKAssert.notNull(entity, "Entity is null");
         if (idOnly) {
             throw new IllegalStateException("Template is id-only");
         }
         List<Object> params = new ArrayList<>();
         for (FieldMeta field : fields) {
-            params.add(field.getValue(entity));
+            Object raw = field.getValue(entity);
+            params.add(VKFieldCrypto.encryptWrite(field, raw, config));
         }
         if (appendId && idField != null) {
             params.add(idField.getValue(entity));

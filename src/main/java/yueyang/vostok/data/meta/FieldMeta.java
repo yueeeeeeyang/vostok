@@ -9,14 +9,18 @@ public class FieldMeta {
     private final String columnName;
     private final boolean id;
     private final boolean auto;
+    private final boolean encrypted;
+    private final String encryptionKeyId;
     private final MethodHandle getter;
     private final MethodHandle setter;
 
-    public FieldMeta(Field field, String columnName, boolean id, boolean auto) {
+    public FieldMeta(Field field, String columnName, boolean id, boolean auto, boolean encrypted, String encryptionKeyId) {
         this.field = field;
         this.columnName = columnName;
         this.id = id;
         this.auto = auto;
+        this.encrypted = encrypted;
+        this.encryptionKeyId = encryptionKeyId;
         this.field.setAccessible(true);
         MethodHandles.Lookup lookup = MethodHandles.lookup();
         MethodHandle g;
@@ -49,6 +53,14 @@ public class FieldMeta {
 
     public boolean isAuto() {
         return auto;
+    }
+
+    public boolean isEncrypted() {
+        return encrypted;
+    }
+
+    public String getEncryptionKeyId() {
+        return encryptionKeyId;
     }
 
     public Object getValue(Object obj) {
