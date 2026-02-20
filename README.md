@@ -3959,6 +3959,31 @@ CompletableFuture<MyResp> future = Vostok.Http.get("/jobs/{id}")
 MyResp resp = future.join();
 ```
 
+### 10.2.6 HTTPS 证书配置（代码内）
+
+```java
+Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
+        .baseUrl("https://api.example.com")
+        // 校验服务端证书（单向 TLS）
+        .trustStore("/path/to/truststore.p12", "changeit", "PKCS12")
+        // 可选：客户端证书（双向 TLS / mTLS）
+        .keyStore("/path/to/client-keystore.p12", "changeit", "changeit", "PKCS12"));
+
+String body = Vostok.Http.get("/v1/ping")
+        .client("secure-api")
+        .execute()
+        .bodyText();
+```
+
+如需完全自定义 TLS（协议、TrustManager、KeyManager），可直接注入：
+
+```java
+SSLContext ssl = buildYourSslContext();
+Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
+        .baseUrl("https://api.example.com")
+        .sslContext(ssl));
+```
+
 ## 10.3 配置详解
 
 ### 10.3.1 VKHttpConfig（全局）
@@ -3986,6 +4011,9 @@ MyResp resp = future.join();
 - `maxResponseBodyBytes`：覆盖全局响应上限
 - `defaultHeaders/userAgent`：Client 级请求头
 - `auth`：Client 级鉴权策略
+- `trustStore(path, password, type)`：Client 级信任库（服务端证书校验）
+- `keyStore(path, storePassword, keyPassword, type)`：Client 级密钥库（mTLS 客户端证书）
+- `sslContext(SSLContext)`：直接注入自定义 TLS 上下文（优先级高于 trustStore/keyStore）
 
 ## 10.4 错误模型
 
@@ -4017,3 +4045,4 @@ MyResp resp = future.join();
 - 当前默认 JSON 能力使用 `VKJson`，复杂泛型反序列化建议业务侧自行转换。
 - 重试默认仅覆盖幂等方法；如需对 `POST` 重试，请结合业务幂等键控制。
 - 非 2xx 默认抛异常，可在请求级调用 `.failOnNon2xx(false)` 改为手动处理响应。
+- HTTPS 可通过 `VKHttpClientConfig` 代码内配置 `trustStore/keyStore`，无需 JVM 全局 `-Djavax.net.ssl.*` 参数。

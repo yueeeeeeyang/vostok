@@ -2,6 +2,7 @@ package yueyang.vostok.http;
 
 import yueyang.vostok.http.auth.VKHttpAuth;
 
+import javax.net.ssl.SSLContext;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
@@ -21,6 +22,14 @@ public class VKHttpClientConfig {
     private Set<String> retryMethods = new LinkedHashSet<>();
     private Map<String, String> defaultHeaders = new LinkedHashMap<>();
     private VKHttpAuth auth;
+    private SSLContext sslContext;
+    private String trustStorePath;
+    private String trustStorePassword;
+    private String trustStoreType = "PKCS12";
+    private String keyStorePath;
+    private String keyStorePassword;
+    private String keyStoreKeyPassword;
+    private String keyStoreType = "PKCS12";
 
     public VKHttpClientConfig copy() {
         VKHttpClientConfig c = new VKHttpClientConfig();
@@ -37,6 +46,14 @@ public class VKHttpClientConfig {
         c.retryMethods = new LinkedHashSet<>(this.retryMethods);
         c.defaultHeaders = new LinkedHashMap<>(this.defaultHeaders);
         c.auth = this.auth;
+        c.sslContext = this.sslContext;
+        c.trustStorePath = this.trustStorePath;
+        c.trustStorePassword = this.trustStorePassword;
+        c.trustStoreType = this.trustStoreType;
+        c.keyStorePath = this.keyStorePath;
+        c.keyStorePassword = this.keyStorePassword;
+        c.keyStoreKeyPassword = this.keyStoreKeyPassword;
+        c.keyStoreType = this.keyStoreType;
         return c;
     }
 
@@ -186,6 +203,66 @@ public class VKHttpClientConfig {
 
     public VKHttpClientConfig auth(VKHttpAuth auth) {
         this.auth = auth;
+        return this;
+    }
+
+    public SSLContext getSslContext() {
+        return sslContext;
+    }
+
+    public VKHttpClientConfig sslContext(SSLContext sslContext) {
+        this.sslContext = sslContext;
+        return this;
+    }
+
+    public String getTrustStorePath() {
+        return trustStorePath;
+    }
+
+    public String getTrustStorePassword() {
+        return trustStorePassword;
+    }
+
+    public String getTrustStoreType() {
+        return trustStoreType;
+    }
+
+    public VKHttpClientConfig trustStore(String path, String password) {
+        return trustStore(path, password, "PKCS12");
+    }
+
+    public VKHttpClientConfig trustStore(String path, String password, String type) {
+        this.trustStorePath = path;
+        this.trustStorePassword = password;
+        this.trustStoreType = (type == null || type.isBlank()) ? "PKCS12" : type.trim();
+        return this;
+    }
+
+    public String getKeyStorePath() {
+        return keyStorePath;
+    }
+
+    public String getKeyStorePassword() {
+        return keyStorePassword;
+    }
+
+    public String getKeyStoreKeyPassword() {
+        return keyStoreKeyPassword;
+    }
+
+    public String getKeyStoreType() {
+        return keyStoreType;
+    }
+
+    public VKHttpClientConfig keyStore(String path, String storePassword) {
+        return keyStore(path, storePassword, storePassword, "PKCS12");
+    }
+
+    public VKHttpClientConfig keyStore(String path, String storePassword, String keyPassword, String type) {
+        this.keyStorePath = path;
+        this.keyStorePassword = storePassword;
+        this.keyStoreKeyPassword = keyPassword;
+        this.keyStoreType = (type == null || type.isBlank()) ? "PKCS12" : type.trim();
         return this;
     }
 

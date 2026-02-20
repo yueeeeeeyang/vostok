@@ -17,6 +17,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -29,6 +31,11 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
+import java.io.InputStream;
+import java.security.KeyStore;
 
 public final class VKHttpRuntime {
     private static final Object LOCK = new Object();
@@ -326,10 +333,15 @@ public final class VKHttpRuntime {
             targetUrl = appendQuery(joinBaseAndPath(baseUrl, withPath), query);
         }
 
-        HttpClient client = HttpClient.newBuilder()
+        HttpClient.Builder clientBuilder = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofMillis(Math.max(1, connectTimeoutMs)))
-                .followRedirects(followRedirects ? HttpClient.Redirect.NORMAL : HttpClient.Redirect.NEVER)
-                .build();
+                .followRedirects(followRedirects ? HttpClient.Redirect.NORMAL : HttpClient.Redirect.NEVER);
+
+        SSLContext sslContext = resolveSslContext(clientCfg);
+        if (sslContext != null) {
+            clientBuilder.sslContext(sslContext);
+        }
+        HttpClient finalClient = clientBuilder.build();
 
         HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
                 .uri(URI.create(targetUrl))
@@ -359,10 +371,75 @@ public final class VKHttpRuntime {
             }
         }
 
-        return new ResolvedRequest(clientName, method, targetUrl, client, reqBuilder.build(), maxRetries,
+        return new ResolvedRequest(clientName, method, targetUrl, finalClient, reqBuilder.build(), maxRetries,
                 new LinkedHashSet<>(retryStatuses), normalizeMethods(retryMethods), retryOnNetwork,
                 failOnNon2xx, maxResponseBodyBytes,
                 config.getRetryBackoffBaseMs(), config.getRetryBackoffMaxMs(), config.isRetryJitterEnabled());
+    }
+
+    private SSLContext resolveSslContext(VKHttpClientConfig clientCfg) {
+        if (clientCfg == null) {
+            return null;
+        }
+        if (clientCfg.getSslContext() != null) {
+            return clientCfg.getSslContext();
+        }
+        boolean hasTrust = clientCfg.getTrustStorePath() != null && !clientCfg.getTrustStorePath().isBlank();
+        boolean hasKey = clientCfg.getKeyStorePath() != null && !clientCfg.getKeyStorePath().isBlank();
+        if (!hasTrust && !hasKey) {
+            return null;
+        }
+        try {
+            KeyManagerFactory kmf = null;
+            if (hasKey) {
+                KeyStore keyStore = KeyStore.getInstance(clientCfg.getKeyStoreType());
+                Path keyPath = Path.of(clientCfg.getKeyStorePath());
+                if (!Files.exists(keyPath)) {
+                    throw new VKHttpException(VKHttpErrorCode.CONFIG_ERROR, "KeyStore file not found: " + keyPath);
+                }
+                try (InputStream in = Files.newInputStream(keyPath)) {
+                    char[] pwd = asChars(clientCfg.getKeyStorePassword());
+                    keyStore.load(in, pwd);
+                    kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+                    char[] keyPwd = asChars(
+                            clientCfg.getKeyStoreKeyPassword() == null
+                                    ? clientCfg.getKeyStorePassword()
+                                    : clientCfg.getKeyStoreKeyPassword()
+                    );
+                    kmf.init(keyStore, keyPwd);
+                }
+            }
+
+            TrustManagerFactory tmf = null;
+            if (hasTrust) {
+                KeyStore trustStore = KeyStore.getInstance(clientCfg.getTrustStoreType());
+                Path trustPath = Path.of(clientCfg.getTrustStorePath());
+                if (!Files.exists(trustPath)) {
+                    throw new VKHttpException(VKHttpErrorCode.CONFIG_ERROR, "TrustStore file not found: " + trustPath);
+                }
+                try (InputStream in = Files.newInputStream(trustPath)) {
+                    trustStore.load(in, asChars(clientCfg.getTrustStorePassword()));
+                    tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+                    tmf.init(trustStore);
+                }
+            }
+
+            SSLContext ssl = SSLContext.getInstance("TLS");
+            ssl.init(
+                    kmf == null ? null : kmf.getKeyManagers(),
+                    tmf == null ? null : tmf.getTrustManagers(),
+                    null
+            );
+            return ssl;
+        } catch (VKHttpException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new VKHttpException(VKHttpErrorCode.CONFIG_ERROR, "Failed to build SSLContext from client config", e);
+        }
+    }
+
+    private static char[] asChars(String value) {
+        return value == null ? new char[0] : value.toCharArray();
     }
 
     private void sleepBackoff(ResolvedRequest resolved, long retryIndex) {
