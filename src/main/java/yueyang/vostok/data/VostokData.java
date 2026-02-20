@@ -5,10 +5,14 @@ import yueyang.vostok.data.config.VKTxIsolation;
 import yueyang.vostok.data.config.VKTxPropagation;
 import yueyang.vostok.data.core.VostokAdminOps;
 import yueyang.vostok.data.core.VostokBootstrap;
+import yueyang.vostok.data.core.VostokCryptoMigrateOps;
 import yueyang.vostok.data.core.VostokContext;
 import yueyang.vostok.data.core.VostokCrudOps;
 import yueyang.vostok.data.core.VostokTxOps;
 import yueyang.vostok.data.jdbc.VKBatchDetailResult;
+import yueyang.vostok.data.migrate.VKCryptoMigrateOptions;
+import yueyang.vostok.data.migrate.VKCryptoMigratePlan;
+import yueyang.vostok.data.migrate.VKCryptoMigrateResult;
 import yueyang.vostok.data.pool.VKPoolMetrics;
 import yueyang.vostok.data.plugin.VKInterceptor;
 import yueyang.vostok.data.query.VKAggregate;
@@ -218,6 +222,24 @@ public class VostokData {
 
     public static long count(Class<?> entityClass, VKQuery query) {
         return VostokCrudOps.count(entityClass, query);
+    }
+
+    // 字段迁移
+
+    public static VKCryptoMigrateResult encryptColumn(VKCryptoMigrateOptions options) {
+        return VostokCryptoMigrateOps.encryptColumn(options);
+    }
+
+    public static VKCryptoMigrateResult decryptColumn(VKCryptoMigrateOptions options) {
+        return VostokCryptoMigrateOps.decryptColumn(options);
+    }
+
+    public static VKCryptoMigratePlan previewEncrypt(VKCryptoMigrateOptions options) {
+        return VostokCryptoMigrateOps.previewEncrypt(options);
+    }
+
+    public static VKCryptoMigratePlan previewDecrypt(VKCryptoMigrateOptions options) {
+        return VostokCryptoMigrateOps.previewDecrypt(options);
     }
 
     // 监控 / 诊断

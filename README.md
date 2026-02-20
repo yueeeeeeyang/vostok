@@ -401,6 +401,38 @@ public interface Vostok.Data {
     public static long count(Class<?> entityClass, VKQuery query);
 
     /**
+     * 预览字段加密迁移计划。
+     *
+     * - options：迁移参数，类型为 VKCryptoMigrateOptions。
+     * - 返回值：VKCryptoMigratePlan（估算行数、批次参数、说明）。
+     */
+    public static VKCryptoMigratePlan previewEncrypt(VKCryptoMigrateOptions options);
+
+    /**
+     * 执行字段加密迁移（明文 -> 密文）。
+     *
+     * - options：迁移参数，类型为 VKCryptoMigrateOptions（encryptKeyId 必填）。
+     * - 返回值：VKCryptoMigrateResult（扫描/更新/跳过/失败统计）。
+     */
+    public static VKCryptoMigrateResult encryptColumn(VKCryptoMigrateOptions options);
+
+    /**
+     * 预览字段解密迁移计划。
+     *
+     * - options：迁移参数，类型为 VKCryptoMigrateOptions。
+     * - 返回值：VKCryptoMigratePlan。
+     */
+    public static VKCryptoMigratePlan previewDecrypt(VKCryptoMigrateOptions options);
+
+    /**
+     * 执行字段解密迁移（密文 -> 明文）。
+     *
+     * - options：迁移参数，类型为 VKCryptoMigrateOptions。
+     * - 返回值：VKCryptoMigrateResult。
+     */
+    public static VKCryptoMigrateResult decryptColumn(VKCryptoMigrateOptions options);
+
+    /**
      * 获取连接池指标快照。
      *
      * - 返回值：List<VKPoolMetrics>（每个数据源一份指标）。
@@ -429,6 +461,7 @@ import yueyang.vostok.data.annotation.VKId;
 import yueyang.vostok.data.config.VKTxIsolation;
 import yueyang.vostok.data.config.VKTxPropagation;
 import yueyang.vostok.data.dialect.VKDialectType;
+import yueyang.vostok.data.migrate.VKCryptoMigrateOptions;
 import yueyang.vostok.data.plugin.VKInterceptor;
 import yueyang.vostok.data.query.*;
 
@@ -530,6 +563,25 @@ public class DataApiDemo {
         List<Object[]> agg = Vostok.Data.aggregate(User.class, VKQuery.create(), VKAggregate.countAll("cnt"));
         long count = Vostok.Data.count(User.class, q);
 
+        // crypto migrate（列迁移：明文 <-> 密文）
+        Vostok.Data.registerRawSql("tag = ?");
+        VKCryptoMigrateOptions m = new VKCryptoMigrateOptions()
+                .table("t_user")
+                .idColumn("id")
+                .targetColumn("user_name")
+                .whereSql("tag = ?")
+                .whereParams("A")
+                .batchSize(200)
+                .encryptKeyId("biz-user");
+        var plan = Vostok.Data.previewEncrypt(m);
+        var enc = Vostok.Data.encryptColumn(m);
+        var dec = Vostok.Data.decryptColumn(new VKCryptoMigrateOptions()
+                .table("t_user")
+                .idColumn("id")
+                .targetColumn("user_name")
+                .batchSize(200)
+                .allowPlaintextRead(true));
+
         // metrics / report
         var metrics = Vostok.Data.poolMetrics();
         String report = Vostok.Data.report();
@@ -623,6 +675,45 @@ public class EncryptionDemo {
 - 禁止 `LIKE/IN/BETWEEN/范围比较` 等条件。
 - 禁止 `orderBy/groupBy/aggregate` 使用加密字段。
 
+### 2.2.3 字段迁移（明文 <-> 密文）
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.data.migrate.VKCryptoMigrateOptions;
+
+// where 条件必须入 raw 白名单
+Vostok.Data.registerRawSql("tag = ?");
+
+VKCryptoMigrateOptions encryptOpt = new VKCryptoMigrateOptions()
+        .table("t_order")
+        .idColumn("id")
+        .targetColumn("buyer_name")
+        .whereSql("tag = ?")
+        .whereParams("A")
+        .batchSize(500)
+        .encryptKeyId("biz-order");
+
+var plan = Vostok.Data.previewEncrypt(encryptOpt);
+var enc = Vostok.Data.encryptColumn(encryptOpt);
+
+var decPlan = Vostok.Data.previewDecrypt(new VKCryptoMigrateOptions()
+        .table("t_order")
+        .idColumn("id")
+        .targetColumn("buyer_name"));
+
+var dec = Vostok.Data.decryptColumn(new VKCryptoMigrateOptions()
+        .table("t_order")
+        .idColumn("id")
+        .targetColumn("buyer_name")
+        .allowPlaintextRead(true)
+        .skipOnError(true));
+```
+
+- `previewEncrypt/previewDecrypt` 返回估算行数和执行参数，不会更新数据库。
+- `encryptColumn` 仅处理明文行；已是密文格式（`vk1:aes:`）会跳过。
+- `decryptColumn` 仅处理密文行；遇明文时按 `allowPlaintextRead` 决定抛错或跳过。
+- `whereSql` 必须先注册到 `Vostok.Data.registerRawSql(...)` 白名单。
+
 ## 2.3 配置详解（VKDataConfig）
 
 ```java
@@ -713,12 +804,23 @@ VKDataConfig cfg = new VKDataConfig()
 
 ## 2.4 Data 模块 Options 配置项说明
 
-当前版本 Data 模块无独立 `*Options` 类，配置参数统一收敛在 `VKDataConfig`。
+### 2.4.1 VKCryptoMigrateOptions
 
-- `Data Options 类扫描范围`：`yueyang.vostok.data` 包下所有类。
-- `当前匹配结果`：无 `*Options` 命名类。
-- `等效配置入口`：`VKDataConfig`（见上方 `2.3 配置详解`）。
-- `维护约定`：后续若新增 Data 专属 `*Options` 类，将在本节按相同格式补充字段含义、默认值、取值约束、适用接口。
+用于字段加解密迁移接口：`previewEncrypt`、`encryptColumn`、`previewDecrypt`、`decryptColumn`。
+
+- `dataSourceName`：可选；指定数据源名，不填则使用当前数据源。
+- `table`：必填；目标表名（支持 `schema.table`）。
+- `idColumn`：必填；分页游标列，建议主键。
+- `targetColumn`：必填；待迁移列（当前实现按字符串列处理）。
+- `whereSql`：可选；附加筛选表达式，必须先通过 `Vostok.Data.registerRawSql(...)` 注册白名单。
+- `whereParams`：可选；`whereSql` 占位符参数。
+- `batchSize`：默认 `500`；每批处理行数，必须 `> 0`。
+- `maxRows`：默认 `0`（不限制）；限制本次最多扫描行数。
+- `dryRun`：默认 `false`；`true` 时只做扫描与转换评估，不执行更新。
+- `skipOnError`：默认 `false`；`true` 时单行失败后继续后续行。
+- `useTransactionPerBatch`：默认 `true`；每批独立事务。
+- `encryptKeyId`：加密迁移必填；调用 `encryptColumn` 时使用。
+- `allowPlaintextRead`：解密迁移默认 `false`；`true` 时遇到明文值直接跳过。
 
 ---
 

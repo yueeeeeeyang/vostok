@@ -20,6 +20,9 @@ import yueyang.vostok.data.exception.VKStateException;
 import yueyang.vostok.data.jdbc.VKSqlLogger;
 import yueyang.vostok.data.meta.MetaLoader;
 import yueyang.vostok.data.meta.MetaRegistry;
+import yueyang.vostok.data.migrate.VKCryptoMigrateOptions;
+import yueyang.vostok.data.migrate.VKCryptoMigratePlan;
+import yueyang.vostok.data.migrate.VKCryptoMigrateResult;
 import yueyang.vostok.data.plugin.VKInterceptor;
 import yueyang.vostok.security.keystore.VKKeyStoreConfig;
 import yueyang.vostokbad.BadColumnEntity;
@@ -85,6 +88,7 @@ public class VostokIntegrationTest {
              var stmt = conn.createStatement()) {
             stmt.execute("CREATE TABLE t_user (id BIGINT AUTO_INCREMENT PRIMARY KEY, user_name VARCHAR(64) NOT NULL, age INT)");
             stmt.execute("CREATE TABLE t_task (id BIGINT AUTO_INCREMENT PRIMARY KEY, start_date DATE, finish_time TIMESTAMP, amount DECIMAL(18,2), status VARCHAR(20))");
+            stmt.execute("CREATE TABLE t_crypto_migrate (id BIGINT AUTO_INCREMENT PRIMARY KEY, secret_val VARCHAR(1024), tag VARCHAR(32))");
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -96,6 +100,7 @@ public class VostokIntegrationTest {
              var stmt = conn.createStatement()) {
             stmt.execute("DELETE FROM t_user");
             stmt.execute("DELETE FROM t_task");
+            stmt.execute("DELETE FROM t_crypto_migrate");
             try {
                 stmt.execute("DELETE FROM t_user_secret");
             } catch (Exception ignore) {
@@ -1124,6 +1129,149 @@ public class VostokIntegrationTest {
         VKException ex = assertThrows(VKException.class, () -> Vostok.Data.init(bad, "yueyang.vostok"));
         assertTrue(ex.getMessage().contains("defaultEncryptionKeyId"));
         restoreDefaultDataConfig();
+    }
+
+    @Test
+    @Order(96)
+    void testCryptoMigrateEncryptDecrypt() throws Exception {
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(Files.createTempDirectory("vostok-ks-migrate").toString())
+                .masterKey("vostok-test-master-key-migrate-001"));
+
+        try (var conn = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+             var stmt = conn.createStatement()) {
+            stmt.execute("INSERT INTO t_crypto_migrate(secret_val, tag) VALUES ('p-1','A')");
+            stmt.execute("INSERT INTO t_crypto_migrate(secret_val, tag) VALUES ('p-2','A')");
+            stmt.execute("INSERT INTO t_crypto_migrate(secret_val, tag) VALUES ('p-3','B')");
+        }
+
+        VKCryptoMigrateOptions encrypt = new VKCryptoMigrateOptions()
+                .table("t_crypto_migrate")
+                .idColumn("id")
+                .targetColumn("secret_val")
+                .batchSize(2)
+                .encryptKeyId("m-key");
+        VKCryptoMigrateResult r1 = Vostok.Data.encryptColumn(encrypt);
+        assertEquals(3, r1.getScannedRows());
+        assertEquals(3, r1.getUpdatedRows());
+        assertEquals(0, r1.getFailedRows());
+
+        try (var conn = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+             var rs = conn.createStatement().executeQuery("SELECT secret_val FROM t_crypto_migrate ORDER BY id")) {
+            int count = 0;
+            while (rs.next()) {
+                String value = rs.getString(1);
+                assertTrue(value.startsWith("vk1:aes:m-key:"));
+                count++;
+            }
+            assertEquals(3, count);
+        }
+
+        VKCryptoMigrateResult r2 = Vostok.Data.encryptColumn(encrypt);
+        assertEquals(0, r2.getUpdatedRows());
+        assertEquals(3, r2.getSkippedRows());
+
+        VKCryptoMigrateResult r3 = Vostok.Data.decryptColumn(new VKCryptoMigrateOptions()
+                .table("t_crypto_migrate")
+                .idColumn("id")
+                .targetColumn("secret_val")
+                .batchSize(2)
+                .allowPlaintextRead(false));
+        assertEquals(3, r3.getUpdatedRows());
+        assertEquals(0, r3.getFailedRows());
+
+        try (var conn = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+             var rs = conn.createStatement().executeQuery("SELECT secret_val FROM t_crypto_migrate ORDER BY id")) {
+            assertTrue(rs.next());
+            assertEquals("p-1", rs.getString(1));
+            assertTrue(rs.next());
+            assertEquals("p-2", rs.getString(1));
+            assertTrue(rs.next());
+            assertEquals("p-3", rs.getString(1));
+        }
+    }
+
+    @Test
+    @Order(97)
+    void testCryptoMigrateWhitelistPreviewAndDryRun() throws Exception {
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(Files.createTempDirectory("vostok-ks-migrate-plan").toString())
+                .masterKey("vostok-test-master-key-migrate-plan"));
+
+        try (var conn = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+             var stmt = conn.createStatement()) {
+            stmt.execute("INSERT INTO t_crypto_migrate(secret_val, tag) VALUES ('w-1','A')");
+            stmt.execute("INSERT INTO t_crypto_migrate(secret_val, tag) VALUES ('w-2','B')");
+            stmt.execute("INSERT INTO t_crypto_migrate(secret_val, tag) VALUES ('w-3','A')");
+        }
+
+        VKCryptoMigrateOptions badWhere = new VKCryptoMigrateOptions()
+                .table("t_crypto_migrate")
+                .idColumn("id")
+                .targetColumn("secret_val")
+                .whereSql("tag = ?")
+                .whereParams("A")
+                .encryptKeyId("m-key");
+        assertThrows(VKException.class, () -> Vostok.Data.previewEncrypt(badWhere));
+
+        Vostok.Data.registerRawSql("tag = ?");
+        VKCryptoMigratePlan plan = Vostok.Data.previewEncrypt(badWhere);
+        assertEquals("ENCRYPT", plan.getMode());
+        assertEquals(2, plan.getEstimatedRows());
+
+        VKCryptoMigrateResult dryRun = Vostok.Data.encryptColumn(new VKCryptoMigrateOptions()
+                .table("t_crypto_migrate")
+                .idColumn("id")
+                .targetColumn("secret_val")
+                .whereSql("tag = ?")
+                .whereParams("A")
+                .encryptKeyId("m-key")
+                .dryRun(true));
+        assertEquals(2, dryRun.getScannedRows());
+        assertEquals(0, dryRun.getFailedRows());
+        assertEquals(2, dryRun.getUpdatedRows());
+
+        try (var conn = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+             var rs = conn.createStatement().executeQuery("SELECT secret_val FROM t_crypto_migrate WHERE tag='A' ORDER BY id")) {
+            while (rs.next()) {
+                assertFalse(rs.getString(1).startsWith("vk1:aes:"));
+            }
+        }
+    }
+
+    @Test
+    @Order(98)
+    void testCryptoMigrateDecryptPlaintextHandling() throws Exception {
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(Files.createTempDirectory("vostok-ks-migrate-plain").toString())
+                .masterKey("vostok-test-master-key-migrate-plain"));
+
+        String cipher = Vostok.Security.encryptWithKeyId("c-1", "m-key");
+        try (var conn = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
+             var stmt = conn.createStatement()) {
+            stmt.execute("INSERT INTO t_crypto_migrate(secret_val, tag) VALUES ('p-raw','A')");
+            try (var ps = conn.prepareStatement("INSERT INTO t_crypto_migrate(secret_val, tag) VALUES (?, 'A')")) {
+                ps.setString(1, cipher);
+                ps.executeUpdate();
+            }
+        }
+
+        VKException ex = assertThrows(VKException.class, () -> Vostok.Data.decryptColumn(new VKCryptoMigrateOptions()
+                .table("t_crypto_migrate")
+                .idColumn("id")
+                .targetColumn("secret_val")
+                .allowPlaintextRead(false)));
+        assertNotNull(ex.getMessage());
+
+        VKCryptoMigrateResult ok = Vostok.Data.decryptColumn(new VKCryptoMigrateOptions()
+                .table("t_crypto_migrate")
+                .idColumn("id")
+                .targetColumn("secret_val")
+                .allowPlaintextRead(true)
+                .skipOnError(true));
+        assertEquals(1, ok.getUpdatedRows());
+        assertEquals(1, ok.getSkippedRows());
+        assertEquals(0, ok.getFailedRows());
     }
 
     @Test
