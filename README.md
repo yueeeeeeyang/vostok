@@ -3989,15 +3989,23 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 ### 10.3.1 VKHttpConfig（全局）
 
 - `connectTimeoutMs`：连接超时（默认 `3000`）
-- `requestTimeoutMs`：请求超时（默认 `10000`）
+- `totalTimeoutMs`：总超时（默认 `10000`）
+- `requestTimeoutMs`：兼容别名，等价于 `totalTimeoutMs(...)`
+- `readTimeoutMs`：读取响应超时（默认 `0`，表示不单独限制）
 - `maxRetries`：默认重试次数（默认 `1`）
 - `retryBackoffBaseMs/retryBackoffMaxMs/retryJitterEnabled`：退避策略
+- `maxRetryDelayMs`：单次重试等待上限
 - `retryOnNetworkError`：网络异常是否重试（默认 `true`）
+- `retryOnTimeout`：超时异常是否重试（默认 `true`）
+- `respectRetryAfter`：是否优先遵循响应头 `Retry-After`（默认 `true`）
 - `retryOnStatuses`：可重试状态码（默认 `429/502/503/504`）
 - `retryMethods`：允许重试的方法（默认 `GET/HEAD/OPTIONS/PUT/DELETE`）
+- `requireIdempotencyKeyForUnsafeRetry`：对非幂等方法重试时是否要求幂等键（默认 `true`）
+- `idempotencyKeyHeader`：幂等键请求头名（默认 `Idempotency-Key`）
 - `failOnNon2xx`：是否将非 2xx 视为异常（默认 `true`）
 - `followRedirects`：是否跟随重定向（默认 `true`）
 - `maxResponseBodyBytes`：响应体大小上限（默认 `8MB`）
+- `clientReuseIdleEvictMs`：复用 `HttpClient` 的空闲淘汰时间
 - `logEnabled`：是否输出调用日志
 - `metricsEnabled`：是否启用指标采集
 - `userAgent/defaultHeaders`：全局请求头
@@ -4005,9 +4013,13 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 ### 10.3.2 VKHttpClientConfig（命名 Client）
 
 - `baseUrl`：基础地址（调用相对路径时必填）
-- `connectTimeoutMs/requestTimeoutMs`：覆盖全局超时
+- `connectTimeoutMs/totalTimeoutMs/readTimeoutMs`：覆盖全局超时
+- `requestTimeoutMs(...)`：兼容别名，等价于 `totalTimeoutMs(...)`
 - `maxRetries/retryOnStatuses/retryMethods`：覆盖全局重试
-- `retryOnNetworkError/failOnNon2xx/followRedirects`：覆盖全局行为
+- `retryOnNetworkError/retryOnTimeout/respectRetryAfter`：覆盖全局重试行为
+- `requireIdempotencyKeyForUnsafeRetry/idempotencyKeyHeader`：覆盖幂等重试约束
+- `maxRetryDelayMs`：覆盖重试等待上限
+- `failOnNon2xx/followRedirects`：覆盖全局行为
 - `maxResponseBodyBytes`：覆盖全局响应上限
 - `defaultHeaders/userAgent`：Client 级请求头
 - `auth`：Client 级鉴权策略
@@ -4022,7 +4034,10 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 - `INVALID_ARGUMENT`：非法参数
 - `CONFIG_ERROR`：配置错误（如相对路径未配置 `baseUrl`）
 - `NETWORK_ERROR`：网络 I/O 错误
-- `TIMEOUT`：请求超时
+- `CONNECT_TIMEOUT`：连接超时
+- `READ_TIMEOUT`：读超时
+- `TOTAL_TIMEOUT`：总超时
+- `TIMEOUT`：兼容保留超时类型
 - `HTTP_STATUS`：非 2xx（在 `failOnNon2xx=true` 时）
 - `RESPONSE_TOO_LARGE`：响应体超限
 - `SERIALIZATION_ERROR`：JSON 序列化/反序列化失败
@@ -4043,6 +4058,7 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 
 - `Vostok.Http` 是 HTTP Client，不是 Web Server。
 - 当前默认 JSON 能力使用 `VKJson`，复杂泛型反序列化建议业务侧自行转换。
-- 重试默认仅覆盖幂等方法；如需对 `POST` 重试，请结合业务幂等键控制。
+- 重试默认仅覆盖幂等方法；如需对 `POST/PATCH` 重试，建议显式设置 `retryMethods(...)` 并提供 `Idempotency-Key`。
 - 非 2xx 默认抛异常，可在请求级调用 `.failOnNon2xx(false)` 改为手动处理响应。
 - HTTPS 可通过 `VKHttpClientConfig` 代码内配置 `trustStore/keyStore`，无需 JVM 全局 `-Djavax.net.ssl.*` 参数。
+- 命名 Client 会复用底层 `HttpClient`；配置变更（`registerClient/reinit/close`）会触发复用缓存刷新。

@@ -7,12 +7,18 @@ import java.util.Set;
 
 public class VKHttpConfig {
     private long connectTimeoutMs = 3000;
-    private long requestTimeoutMs = 10_000;
+    private long totalTimeoutMs = 10_000;
+    private long readTimeoutMs = 0;
     private int maxRetries = 1;
     private long retryBackoffBaseMs = 100;
     private long retryBackoffMaxMs = 1000;
+    private long maxRetryDelayMs = 30_000;
     private boolean retryJitterEnabled = true;
     private boolean retryOnNetworkError = true;
+    private boolean retryOnTimeout = true;
+    private boolean respectRetryAfter = true;
+    private boolean requireIdempotencyKeyForUnsafeRetry = true;
+    private String idempotencyKeyHeader = "Idempotency-Key";
     private Set<Integer> retryOnStatuses = new LinkedHashSet<>(Set.of(429, 502, 503, 504));
     private Set<String> retryMethods = new LinkedHashSet<>(Set.of("GET", "HEAD", "OPTIONS", "PUT", "DELETE"));
     private boolean failOnNon2xx = true;
@@ -20,18 +26,25 @@ public class VKHttpConfig {
     private boolean logEnabled = true;
     private boolean metricsEnabled = true;
     private long maxResponseBodyBytes = 8L * 1024 * 1024;
+    private long clientReuseIdleEvictMs = 10 * 60 * 1000L;
     private String userAgent = "VostokHttp/1.0";
     private Map<String, String> defaultHeaders = new LinkedHashMap<>();
 
     public VKHttpConfig copy() {
         VKHttpConfig c = new VKHttpConfig();
         c.connectTimeoutMs = this.connectTimeoutMs;
-        c.requestTimeoutMs = this.requestTimeoutMs;
+        c.totalTimeoutMs = this.totalTimeoutMs;
+        c.readTimeoutMs = this.readTimeoutMs;
         c.maxRetries = this.maxRetries;
         c.retryBackoffBaseMs = this.retryBackoffBaseMs;
         c.retryBackoffMaxMs = this.retryBackoffMaxMs;
+        c.maxRetryDelayMs = this.maxRetryDelayMs;
         c.retryJitterEnabled = this.retryJitterEnabled;
         c.retryOnNetworkError = this.retryOnNetworkError;
+        c.retryOnTimeout = this.retryOnTimeout;
+        c.respectRetryAfter = this.respectRetryAfter;
+        c.requireIdempotencyKeyForUnsafeRetry = this.requireIdempotencyKeyForUnsafeRetry;
+        c.idempotencyKeyHeader = this.idempotencyKeyHeader;
         c.retryOnStatuses = new LinkedHashSet<>(this.retryOnStatuses);
         c.retryMethods = new LinkedHashSet<>(this.retryMethods);
         c.failOnNon2xx = this.failOnNon2xx;
@@ -39,6 +52,7 @@ public class VKHttpConfig {
         c.logEnabled = this.logEnabled;
         c.metricsEnabled = this.metricsEnabled;
         c.maxResponseBodyBytes = this.maxResponseBodyBytes;
+        c.clientReuseIdleEvictMs = this.clientReuseIdleEvictMs;
         c.userAgent = this.userAgent;
         c.defaultHeaders = new LinkedHashMap<>(this.defaultHeaders);
         return c;
@@ -53,12 +67,29 @@ public class VKHttpConfig {
         return this;
     }
 
+    public long getTotalTimeoutMs() {
+        return totalTimeoutMs;
+    }
+
+    public VKHttpConfig totalTimeoutMs(long totalTimeoutMs) {
+        this.totalTimeoutMs = Math.max(1, totalTimeoutMs);
+        return this;
+    }
+
     public long getRequestTimeoutMs() {
-        return requestTimeoutMs;
+        return totalTimeoutMs;
     }
 
     public VKHttpConfig requestTimeoutMs(long requestTimeoutMs) {
-        this.requestTimeoutMs = Math.max(1, requestTimeoutMs);
+        return totalTimeoutMs(requestTimeoutMs);
+    }
+
+    public long getReadTimeoutMs() {
+        return readTimeoutMs;
+    }
+
+    public VKHttpConfig readTimeoutMs(long readTimeoutMs) {
+        this.readTimeoutMs = Math.max(0, readTimeoutMs);
         return this;
     }
 
@@ -89,6 +120,15 @@ public class VKHttpConfig {
         return this;
     }
 
+    public long getMaxRetryDelayMs() {
+        return maxRetryDelayMs;
+    }
+
+    public VKHttpConfig maxRetryDelayMs(long maxRetryDelayMs) {
+        this.maxRetryDelayMs = Math.max(1, maxRetryDelayMs);
+        return this;
+    }
+
     public boolean isRetryJitterEnabled() {
         return retryJitterEnabled;
     }
@@ -104,6 +144,44 @@ public class VKHttpConfig {
 
     public VKHttpConfig retryOnNetworkError(boolean retryOnNetworkError) {
         this.retryOnNetworkError = retryOnNetworkError;
+        return this;
+    }
+
+    public boolean isRetryOnTimeout() {
+        return retryOnTimeout;
+    }
+
+    public VKHttpConfig retryOnTimeout(boolean retryOnTimeout) {
+        this.retryOnTimeout = retryOnTimeout;
+        return this;
+    }
+
+    public boolean isRespectRetryAfter() {
+        return respectRetryAfter;
+    }
+
+    public VKHttpConfig respectRetryAfter(boolean respectRetryAfter) {
+        this.respectRetryAfter = respectRetryAfter;
+        return this;
+    }
+
+    public boolean isRequireIdempotencyKeyForUnsafeRetry() {
+        return requireIdempotencyKeyForUnsafeRetry;
+    }
+
+    public VKHttpConfig requireIdempotencyKeyForUnsafeRetry(boolean requireIdempotencyKeyForUnsafeRetry) {
+        this.requireIdempotencyKeyForUnsafeRetry = requireIdempotencyKeyForUnsafeRetry;
+        return this;
+    }
+
+    public String getIdempotencyKeyHeader() {
+        return idempotencyKeyHeader;
+    }
+
+    public VKHttpConfig idempotencyKeyHeader(String idempotencyKeyHeader) {
+        if (idempotencyKeyHeader != null && !idempotencyKeyHeader.isBlank()) {
+            this.idempotencyKeyHeader = idempotencyKeyHeader.trim();
+        }
         return this;
     }
 
@@ -192,6 +270,15 @@ public class VKHttpConfig {
 
     public VKHttpConfig maxResponseBodyBytes(long maxResponseBodyBytes) {
         this.maxResponseBodyBytes = Math.max(1024, maxResponseBodyBytes);
+        return this;
+    }
+
+    public long getClientReuseIdleEvictMs() {
+        return clientReuseIdleEvictMs;
+    }
+
+    public VKHttpConfig clientReuseIdleEvictMs(long clientReuseIdleEvictMs) {
+        this.clientReuseIdleEvictMs = Math.max(1000, clientReuseIdleEvictMs);
         return this;
     }
 

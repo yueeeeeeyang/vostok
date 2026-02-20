@@ -18,11 +18,13 @@ public final class VKHttpRequest {
     private final Map<String, String> headers;
     private final byte[] body;
     private final String contentType;
-    private final long timeoutMs;
+    private final long totalTimeoutMs;
+    private final Long readTimeoutMs;
     private final Integer maxRetries;
     private final Set<Integer> retryOnStatuses;
     private final Set<String> retryMethods;
     private final Boolean retryOnNetworkError;
+    private final Boolean retryOnTimeout;
     private final Boolean failOnNon2xx;
     private final Long maxResponseBodyBytes;
     private final VKHttpAuth auth;
@@ -35,11 +37,13 @@ public final class VKHttpRequest {
                   Map<String, String> headers,
                   byte[] body,
                   String contentType,
-                  long timeoutMs,
+                  long totalTimeoutMs,
+                  Long readTimeoutMs,
                   Integer maxRetries,
                   Set<Integer> retryOnStatuses,
                   Set<String> retryMethods,
                   Boolean retryOnNetworkError,
+                  Boolean retryOnTimeout,
                   Boolean failOnNon2xx,
                   Long maxResponseBodyBytes,
                   VKHttpAuth auth) {
@@ -51,11 +55,13 @@ public final class VKHttpRequest {
         this.headers = headers == null ? Map.of() : new LinkedHashMap<>(headers);
         this.body = body == null ? new byte[0] : body.clone();
         this.contentType = contentType;
-        this.timeoutMs = timeoutMs;
+        this.totalTimeoutMs = totalTimeoutMs;
+        this.readTimeoutMs = readTimeoutMs;
         this.maxRetries = maxRetries;
         this.retryOnStatuses = retryOnStatuses == null ? Set.of() : new LinkedHashSet<>(retryOnStatuses);
         this.retryMethods = retryMethods == null ? Set.of() : new LinkedHashSet<>(retryMethods);
         this.retryOnNetworkError = retryOnNetworkError;
+        this.retryOnTimeout = retryOnTimeout;
         this.failOnNon2xx = failOnNon2xx;
         this.maxResponseBodyBytes = maxResponseBodyBytes;
         this.auth = auth;
@@ -93,8 +99,16 @@ public final class VKHttpRequest {
         return contentType;
     }
 
+    public long getTotalTimeoutMs() {
+        return totalTimeoutMs;
+    }
+
     public long getTimeoutMs() {
-        return timeoutMs;
+        return totalTimeoutMs;
+    }
+
+    public Long getReadTimeoutMs() {
+        return readTimeoutMs;
     }
 
     public Integer getMaxRetries() {
@@ -111,6 +125,10 @@ public final class VKHttpRequest {
 
     public Boolean getRetryOnNetworkError() {
         return retryOnNetworkError;
+    }
+
+    public Boolean getRetryOnTimeout() {
+        return retryOnTimeout;
     }
 
     public Boolean getFailOnNon2xx() {

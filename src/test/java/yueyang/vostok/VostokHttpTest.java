@@ -15,6 +15,7 @@ import yueyang.vostok.http.exception.VKHttpErrorCode;
 import yueyang.vostok.http.exception.VKHttpException;
 
 import java.io.IOException;
+import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -31,6 +32,8 @@ public class VostokHttpTest {
     private HttpServer server;
     private String baseUrl;
     private final AtomicInteger retryCounter = new AtomicInteger();
+    private final AtomicInteger retryAfterCounter = new AtomicInteger();
+    private final AtomicInteger retryUnsafeCounter = new AtomicInteger();
 
     @BeforeEach
     void setUp() throws Exception {
@@ -39,6 +42,8 @@ public class VostokHttpTest {
 
         server.createContext("/echo", this::handleEcho);
         server.createContext("/retry", this::handleRetry);
+        server.createContext("/retry-after", this::handleRetryAfter);
+        server.createContext("/retry-unsafe", this::handleRetryUnsafe);
         server.createContext("/timeout", this::handleTimeout);
         server.createContext("/status404", this::handleStatus404);
         server.createContext("/form", this::handleForm);
@@ -50,10 +55,12 @@ public class VostokHttpTest {
         Vostok.Http.close();
         Vostok.Http.init(new VKHttpConfig()
                 .connectTimeoutMs(500)
-                .requestTimeoutMs(1200)
+                .totalTimeoutMs(1200)
+                .readTimeoutMs(0)
                 .maxRetries(1)
                 .retryBackoffBaseMs(20)
                 .retryBackoffMaxMs(80)
+                .maxRetryDelayMs(1500)
                 .retryJitterEnabled(false)
                 .logEnabled(false));
 
@@ -127,6 +134,43 @@ public class VostokHttpTest {
     }
 
     @Test
+    void testRetryAfterHeader() {
+        long start = System.currentTimeMillis();
+        RetryResp resp = Vostok.Http.get("/retry-after")
+                .client("demo")
+                .retry(1)
+                .executeJson(RetryResp.class);
+        long cost = System.currentTimeMillis() - start;
+
+        assertTrue(resp.ok);
+        assertEquals(2, resp.attempt);
+        assertTrue(cost >= 900, "retry-after delay should be respected, cost=" + cost);
+    }
+
+    @Test
+    void testUnsafeRetryRequiresIdempotencyKey() {
+        VKHttpException ex = assertThrows(VKHttpException.class,
+                () -> Vostok.Http.post("/retry-unsafe")
+                        .client("demo")
+                        .retry(1)
+                        .retryMethods("POST")
+                        .bodyText("x")
+                        .execute());
+        assertEquals(VKHttpErrorCode.HTTP_STATUS, ex.getCode());
+
+        retryUnsafeCounter.set(0);
+        RetryResp resp = Vostok.Http.post("/retry-unsafe")
+                .client("demo")
+                .retry(1)
+                .retryMethods("POST")
+                .header("Idempotency-Key", "id-1")
+                .bodyText("x")
+                .executeJson(RetryResp.class);
+        assertTrue(resp.ok);
+        assertEquals(2, resp.attempt);
+    }
+
+    @Test
     void testFailOnNon2xxToggle() {
         VKHttpException ex = assertThrows(VKHttpException.class,
                 () -> Vostok.Http.get("/status404").client("demo").execute());
@@ -141,14 +185,40 @@ public class VostokHttpTest {
     }
 
     @Test
-    void testTimeout() {
+    void testTotalTimeout() {
         VKHttpException ex = assertThrows(VKHttpException.class,
                 () -> Vostok.Http.get("/timeout")
                         .client("demo")
-                        .timeoutMs(80)
+                        .totalTimeoutMs(80)
                         .retry(0)
                         .execute());
-        assertEquals(VKHttpErrorCode.TIMEOUT, ex.getCode());
+        assertEquals(VKHttpErrorCode.TOTAL_TIMEOUT, ex.getCode());
+    }
+
+    @Test
+    void testReadTimeout() {
+        VKHttpException ex = assertThrows(VKHttpException.class,
+                () -> Vostok.Http.get("/timeout")
+                        .client("demo")
+                        .totalTimeoutMs(2000)
+                        .readTimeoutMs(80)
+                        .retry(0)
+                        .execute());
+        assertEquals(VKHttpErrorCode.READ_TIMEOUT, ex.getCode());
+    }
+
+    @Test
+    void testHttpClientReuse() throws Exception {
+        Vostok.Http.get("/echo").client("demo").execute();
+        Vostok.Http.get("/echo").client("demo").execute();
+
+        Object runtime = Class.forName("yueyang.vostok.http.core.VKHttpRuntime")
+                .getMethod("getInstance")
+                .invoke(null);
+        Method m = runtime.getClass().getDeclaredMethod("clientBuildCountForTests");
+        m.setAccessible(true);
+        long builds = (Long) m.invoke(runtime);
+        assertEquals(1L, builds);
     }
 
     @Test
@@ -214,6 +284,25 @@ public class VostokHttpTest {
         int n = retryCounter.incrementAndGet();
         if (n < 3) {
             writeText(exchange, 503, "retry");
+            return;
+        }
+        writeJson(exchange, 200, Map.of("ok", true, "attempt", n));
+    }
+
+    private void handleRetryAfter(HttpExchange exchange) throws IOException {
+        int n = retryAfterCounter.incrementAndGet();
+        if (n < 2) {
+            exchange.getResponseHeaders().set("Retry-After", "1");
+            writeText(exchange, 429, "too many");
+            return;
+        }
+        writeJson(exchange, 200, Map.of("ok", true, "attempt", n));
+    }
+
+    private void handleRetryUnsafe(HttpExchange exchange) throws IOException {
+        int n = retryUnsafeCounter.incrementAndGet();
+        if (n < 2) {
+            writeText(exchange, 503, "retry unsafe");
             return;
         }
         writeJson(exchange, 200, Map.of("ok", true, "attempt", n));

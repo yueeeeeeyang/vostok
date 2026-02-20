@@ -29,11 +29,13 @@ public final class VKHttpRequestBuilder {
 
     private byte[] body;
     private String contentType;
-    private long timeoutMs = -1;
+    private long totalTimeoutMs = -1;
+    private Long readTimeoutMs;
     private Integer maxRetries;
     private final Set<Integer> retryOnStatuses = new LinkedHashSet<>();
     private final Set<String> retryMethods = new LinkedHashSet<>();
     private Boolean retryOnNetworkError;
+    private Boolean retryOnTimeout;
     private Boolean failOnNon2xx;
     private Long maxResponseBodyBytes;
     private VKHttpAuth auth;
@@ -231,7 +233,16 @@ public final class VKHttpRequestBuilder {
     }
 
     public VKHttpRequestBuilder timeoutMs(long timeoutMs) {
-        this.timeoutMs = timeoutMs;
+        return totalTimeoutMs(timeoutMs);
+    }
+
+    public VKHttpRequestBuilder totalTimeoutMs(long totalTimeoutMs) {
+        this.totalTimeoutMs = totalTimeoutMs;
+        return this;
+    }
+
+    public VKHttpRequestBuilder readTimeoutMs(long readTimeoutMs) {
+        this.readTimeoutMs = readTimeoutMs;
         return this;
     }
 
@@ -266,6 +277,11 @@ public final class VKHttpRequestBuilder {
 
     public VKHttpRequestBuilder retryOnNetworkError(boolean retryOnNetworkError) {
         this.retryOnNetworkError = retryOnNetworkError;
+        return this;
+    }
+
+    public VKHttpRequestBuilder retryOnTimeout(boolean retryOnTimeout) {
+        this.retryOnTimeout = retryOnTimeout;
         return this;
     }
 
@@ -305,11 +321,13 @@ public final class VKHttpRequestBuilder {
                 headers,
                 outBody,
                 outContentType,
-                timeoutMs,
+                totalTimeoutMs,
+                readTimeoutMs,
                 maxRetries,
                 retryOnStatuses,
                 retryMethods,
                 retryOnNetworkError,
+                retryOnTimeout,
                 failOnNon2xx,
                 maxResponseBodyBytes,
                 auth

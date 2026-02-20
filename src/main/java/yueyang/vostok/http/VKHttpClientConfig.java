@@ -11,10 +11,16 @@ import java.util.Set;
 public class VKHttpClientConfig {
     private String baseUrl;
     private long connectTimeoutMs = -1;
-    private long requestTimeoutMs = -1;
+    private long totalTimeoutMs = -1;
+    private long readTimeoutMs = -1;
     private int maxRetries = -1;
     private long maxResponseBodyBytes = -1;
+    private long maxRetryDelayMs = -1;
     private Boolean retryOnNetworkError;
+    private Boolean retryOnTimeout;
+    private Boolean respectRetryAfter;
+    private Boolean requireIdempotencyKeyForUnsafeRetry;
+    private String idempotencyKeyHeader;
     private Boolean failOnNon2xx;
     private Boolean followRedirects;
     private String userAgent;
@@ -35,10 +41,16 @@ public class VKHttpClientConfig {
         VKHttpClientConfig c = new VKHttpClientConfig();
         c.baseUrl = this.baseUrl;
         c.connectTimeoutMs = this.connectTimeoutMs;
-        c.requestTimeoutMs = this.requestTimeoutMs;
+        c.totalTimeoutMs = this.totalTimeoutMs;
+        c.readTimeoutMs = this.readTimeoutMs;
         c.maxRetries = this.maxRetries;
         c.maxResponseBodyBytes = this.maxResponseBodyBytes;
+        c.maxRetryDelayMs = this.maxRetryDelayMs;
         c.retryOnNetworkError = this.retryOnNetworkError;
+        c.retryOnTimeout = this.retryOnTimeout;
+        c.respectRetryAfter = this.respectRetryAfter;
+        c.requireIdempotencyKeyForUnsafeRetry = this.requireIdempotencyKeyForUnsafeRetry;
+        c.idempotencyKeyHeader = this.idempotencyKeyHeader;
         c.failOnNon2xx = this.failOnNon2xx;
         c.followRedirects = this.followRedirects;
         c.userAgent = this.userAgent;
@@ -75,12 +87,29 @@ public class VKHttpClientConfig {
         return this;
     }
 
+    public long getTotalTimeoutMs() {
+        return totalTimeoutMs;
+    }
+
+    public VKHttpClientConfig totalTimeoutMs(long totalTimeoutMs) {
+        this.totalTimeoutMs = totalTimeoutMs <= 0 ? -1 : totalTimeoutMs;
+        return this;
+    }
+
     public long getRequestTimeoutMs() {
-        return requestTimeoutMs;
+        return totalTimeoutMs;
     }
 
     public VKHttpClientConfig requestTimeoutMs(long requestTimeoutMs) {
-        this.requestTimeoutMs = requestTimeoutMs <= 0 ? -1 : requestTimeoutMs;
+        return totalTimeoutMs(requestTimeoutMs);
+    }
+
+    public long getReadTimeoutMs() {
+        return readTimeoutMs;
+    }
+
+    public VKHttpClientConfig readTimeoutMs(long readTimeoutMs) {
+        this.readTimeoutMs = readTimeoutMs <= 0 ? -1 : readTimeoutMs;
         return this;
     }
 
@@ -102,12 +131,57 @@ public class VKHttpClientConfig {
         return this;
     }
 
+    public long getMaxRetryDelayMs() {
+        return maxRetryDelayMs;
+    }
+
+    public VKHttpClientConfig maxRetryDelayMs(long maxRetryDelayMs) {
+        this.maxRetryDelayMs = maxRetryDelayMs <= 0 ? -1 : maxRetryDelayMs;
+        return this;
+    }
+
     public Boolean getRetryOnNetworkError() {
         return retryOnNetworkError;
     }
 
     public VKHttpClientConfig retryOnNetworkError(Boolean retryOnNetworkError) {
         this.retryOnNetworkError = retryOnNetworkError;
+        return this;
+    }
+
+    public Boolean getRetryOnTimeout() {
+        return retryOnTimeout;
+    }
+
+    public VKHttpClientConfig retryOnTimeout(Boolean retryOnTimeout) {
+        this.retryOnTimeout = retryOnTimeout;
+        return this;
+    }
+
+    public Boolean getRespectRetryAfter() {
+        return respectRetryAfter;
+    }
+
+    public VKHttpClientConfig respectRetryAfter(Boolean respectRetryAfter) {
+        this.respectRetryAfter = respectRetryAfter;
+        return this;
+    }
+
+    public Boolean getRequireIdempotencyKeyForUnsafeRetry() {
+        return requireIdempotencyKeyForUnsafeRetry;
+    }
+
+    public VKHttpClientConfig requireIdempotencyKeyForUnsafeRetry(Boolean requireIdempotencyKeyForUnsafeRetry) {
+        this.requireIdempotencyKeyForUnsafeRetry = requireIdempotencyKeyForUnsafeRetry;
+        return this;
+    }
+
+    public String getIdempotencyKeyHeader() {
+        return idempotencyKeyHeader;
+    }
+
+    public VKHttpClientConfig idempotencyKeyHeader(String idempotencyKeyHeader) {
+        this.idempotencyKeyHeader = idempotencyKeyHeader;
         return this;
     }
 
