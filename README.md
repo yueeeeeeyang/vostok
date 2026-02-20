@@ -3536,6 +3536,8 @@ VKEventConfig cfg = new VKEventConfig()
 - 背压与拒绝：
   - 当异步线程池饱和时，行为由 `rejectionPolicy` 决定，并在 `VKEventPublishResult.asyncRejected` 中体现。
 
+---
+
 # 9. Cache 模块
 
 `Vostok.Cache` 为统一缓存门面，目标是提供可生产落地的缓存基线能力，当前支持：
@@ -3832,6 +3834,8 @@ var fromProperties = VKCacheConfigFactory.fromProperties(Path.of("./cache.proper
 - BloomFilter 由业务注入，默认 `noOp`（始终放行）。
 - `RETURN_NULL` / `SKIP_WRITE` 降级策略仅在命中池限流时生效。
 
+---
+
 # 10. Http 模块
 
 `Vostok.Http` 提供面向第三方 API 的统一调用能力，支持命名 Client、鉴权、重试、超时、表单/文件上传、JSON 序列化与指标。
@@ -4006,6 +4010,13 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 - `followRedirects`：是否跟随重定向（默认 `true`）
 - `maxResponseBodyBytes`：响应体大小上限（默认 `8MB`）
 - `clientReuseIdleEvictMs`：复用 `HttpClient` 的空闲淘汰时间
+- `rateLimitQps/rateLimitBurst`：客户端限流（QPS + 突发桶容量，`QPS<=0` 关闭）
+- `circuitEnabled`：是否启用熔断器
+- `circuitWindowSize/circuitMinCalls/circuitFailureRateThreshold`：熔断统计窗口与阈值
+- `circuitOpenWaitMs/circuitHalfOpenMaxCalls`：熔断打开保持时间与半开探测请求数
+- `circuitRecordStatuses`：计入熔断失败统计的状态码（默认 `429,500,502,503,504`）
+- `bulkheadEnabled`：是否启用并发隔离
+- `bulkheadMaxConcurrent/bulkheadQueueSize/bulkheadAcquireTimeoutMs`：并发槽、排队长度、排队等待时间
 - `logEnabled`：是否输出调用日志
 - `metricsEnabled`：是否启用指标采集
 - `userAgent/defaultHeaders`：全局请求头
@@ -4020,6 +4031,9 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 - `requireIdempotencyKeyForUnsafeRetry/idempotencyKeyHeader`：覆盖幂等重试约束
 - `maxRetryDelayMs`：覆盖重试等待上限
 - `failOnNon2xx/followRedirects`：覆盖全局行为
+- `rateLimitQps/rateLimitBurst`：覆盖全局限流策略
+- `circuitEnabled/circuitWindowSize/circuitMinCalls/circuitFailureRateThreshold/circuitOpenWaitMs/circuitHalfOpenMaxCalls/circuitRecordStatuses`：覆盖全局熔断策略
+- `bulkheadEnabled/bulkheadMaxConcurrent/bulkheadQueueSize/bulkheadAcquireTimeoutMs`：覆盖全局并发隔离策略
 - `maxResponseBodyBytes`：覆盖全局响应上限
 - `defaultHeaders/userAgent`：Client 级请求头
 - `auth`：Client 级鉴权策略
@@ -4038,6 +4052,9 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 - `READ_TIMEOUT`：读超时
 - `TOTAL_TIMEOUT`：总超时
 - `TIMEOUT`：兼容保留超时类型
+- `RATE_LIMITED`：客户端限流拒绝
+- `BULKHEAD_REJECTED`：并发隔离拒绝
+- `CIRCUIT_OPEN`：熔断器打开拒绝
 - `HTTP_STATUS`：非 2xx（在 `failOnNon2xx=true` 时）
 - `RESPONSE_TOO_LARGE`：响应体超限
 - `SERIALIZATION_ERROR`：JSON 序列化/反序列化失败
@@ -4062,3 +4079,4 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 - 非 2xx 默认抛异常，可在请求级调用 `.failOnNon2xx(false)` 改为手动处理响应。
 - HTTPS 可通过 `VKHttpClientConfig` 代码内配置 `trustStore/keyStore`，无需 JVM 全局 `-Djavax.net.ssl.*` 参数。
 - 命名 Client 会复用底层 `HttpClient`；配置变更（`registerClient/reinit/close`）会触发复用缓存刷新。
+- 默认执行顺序为：`RateLimit -> CircuitBreaker -> Bulkhead -> Execute`。

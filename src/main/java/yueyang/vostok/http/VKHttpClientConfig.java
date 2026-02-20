@@ -23,6 +23,19 @@ public class VKHttpClientConfig {
     private String idempotencyKeyHeader;
     private Boolean failOnNon2xx;
     private Boolean followRedirects;
+    private Integer rateLimitQps;
+    private Integer rateLimitBurst;
+    private Boolean circuitEnabled;
+    private Integer circuitWindowSize;
+    private Integer circuitMinCalls;
+    private Integer circuitFailureRateThreshold;
+    private Long circuitOpenWaitMs;
+    private Integer circuitHalfOpenMaxCalls;
+    private Set<Integer> circuitRecordStatuses = new LinkedHashSet<>();
+    private Boolean bulkheadEnabled;
+    private Integer bulkheadMaxConcurrent;
+    private Integer bulkheadQueueSize;
+    private Long bulkheadAcquireTimeoutMs;
     private String userAgent;
     private Set<Integer> retryOnStatuses = new LinkedHashSet<>();
     private Set<String> retryMethods = new LinkedHashSet<>();
@@ -53,6 +66,19 @@ public class VKHttpClientConfig {
         c.idempotencyKeyHeader = this.idempotencyKeyHeader;
         c.failOnNon2xx = this.failOnNon2xx;
         c.followRedirects = this.followRedirects;
+        c.rateLimitQps = this.rateLimitQps;
+        c.rateLimitBurst = this.rateLimitBurst;
+        c.circuitEnabled = this.circuitEnabled;
+        c.circuitWindowSize = this.circuitWindowSize;
+        c.circuitMinCalls = this.circuitMinCalls;
+        c.circuitFailureRateThreshold = this.circuitFailureRateThreshold;
+        c.circuitOpenWaitMs = this.circuitOpenWaitMs;
+        c.circuitHalfOpenMaxCalls = this.circuitHalfOpenMaxCalls;
+        c.circuitRecordStatuses = new LinkedHashSet<>(this.circuitRecordStatuses);
+        c.bulkheadEnabled = this.bulkheadEnabled;
+        c.bulkheadMaxConcurrent = this.bulkheadMaxConcurrent;
+        c.bulkheadQueueSize = this.bulkheadQueueSize;
+        c.bulkheadAcquireTimeoutMs = this.bulkheadAcquireTimeoutMs;
         c.userAgent = this.userAgent;
         c.retryOnStatuses = new LinkedHashSet<>(this.retryOnStatuses);
         c.retryMethods = new LinkedHashSet<>(this.retryMethods);
@@ -200,6 +226,137 @@ public class VKHttpClientConfig {
 
     public VKHttpClientConfig followRedirects(Boolean followRedirects) {
         this.followRedirects = followRedirects;
+        return this;
+    }
+
+    public Integer getRateLimitQps() {
+        return rateLimitQps;
+    }
+
+    public VKHttpClientConfig rateLimitQps(Integer rateLimitQps) {
+        this.rateLimitQps = rateLimitQps;
+        return this;
+    }
+
+    public Integer getRateLimitBurst() {
+        return rateLimitBurst;
+    }
+
+    public VKHttpClientConfig rateLimitBurst(Integer rateLimitBurst) {
+        this.rateLimitBurst = rateLimitBurst;
+        return this;
+    }
+
+    public Boolean getCircuitEnabled() {
+        return circuitEnabled;
+    }
+
+    public VKHttpClientConfig circuitEnabled(Boolean circuitEnabled) {
+        this.circuitEnabled = circuitEnabled;
+        return this;
+    }
+
+    public Integer getCircuitWindowSize() {
+        return circuitWindowSize;
+    }
+
+    public VKHttpClientConfig circuitWindowSize(Integer circuitWindowSize) {
+        this.circuitWindowSize = circuitWindowSize;
+        return this;
+    }
+
+    public Integer getCircuitMinCalls() {
+        return circuitMinCalls;
+    }
+
+    public VKHttpClientConfig circuitMinCalls(Integer circuitMinCalls) {
+        this.circuitMinCalls = circuitMinCalls;
+        return this;
+    }
+
+    public Integer getCircuitFailureRateThreshold() {
+        return circuitFailureRateThreshold;
+    }
+
+    public VKHttpClientConfig circuitFailureRateThreshold(Integer circuitFailureRateThreshold) {
+        this.circuitFailureRateThreshold = circuitFailureRateThreshold;
+        return this;
+    }
+
+    public Long getCircuitOpenWaitMs() {
+        return circuitOpenWaitMs;
+    }
+
+    public VKHttpClientConfig circuitOpenWaitMs(Long circuitOpenWaitMs) {
+        this.circuitOpenWaitMs = circuitOpenWaitMs;
+        return this;
+    }
+
+    public Integer getCircuitHalfOpenMaxCalls() {
+        return circuitHalfOpenMaxCalls;
+    }
+
+    public VKHttpClientConfig circuitHalfOpenMaxCalls(Integer circuitHalfOpenMaxCalls) {
+        this.circuitHalfOpenMaxCalls = circuitHalfOpenMaxCalls;
+        return this;
+    }
+
+    public Set<Integer> getCircuitRecordStatuses() {
+        return Set.copyOf(circuitRecordStatuses);
+    }
+
+    public VKHttpClientConfig circuitRecordStatuses(Set<Integer> circuitRecordStatuses) {
+        this.circuitRecordStatuses = circuitRecordStatuses == null
+                ? new LinkedHashSet<>()
+                : new LinkedHashSet<>(circuitRecordStatuses);
+        return this;
+    }
+
+    public VKHttpClientConfig circuitRecordStatuses(Integer... circuitRecordStatuses) {
+        this.circuitRecordStatuses = new LinkedHashSet<>();
+        if (circuitRecordStatuses != null) {
+            for (Integer s : circuitRecordStatuses) {
+                if (s != null) {
+                    this.circuitRecordStatuses.add(s);
+                }
+            }
+        }
+        return this;
+    }
+
+    public Boolean getBulkheadEnabled() {
+        return bulkheadEnabled;
+    }
+
+    public VKHttpClientConfig bulkheadEnabled(Boolean bulkheadEnabled) {
+        this.bulkheadEnabled = bulkheadEnabled;
+        return this;
+    }
+
+    public Integer getBulkheadMaxConcurrent() {
+        return bulkheadMaxConcurrent;
+    }
+
+    public VKHttpClientConfig bulkheadMaxConcurrent(Integer bulkheadMaxConcurrent) {
+        this.bulkheadMaxConcurrent = bulkheadMaxConcurrent;
+        return this;
+    }
+
+    public Integer getBulkheadQueueSize() {
+        return bulkheadQueueSize;
+    }
+
+    public VKHttpClientConfig bulkheadQueueSize(Integer bulkheadQueueSize) {
+        this.bulkheadQueueSize = bulkheadQueueSize;
+        return this;
+    }
+
+    public Long getBulkheadAcquireTimeoutMs() {
+        return bulkheadAcquireTimeoutMs;
+    }
+
+    public VKHttpClientConfig bulkheadAcquireTimeoutMs(Long bulkheadAcquireTimeoutMs) {
+        this.bulkheadAcquireTimeoutMs = bulkheadAcquireTimeoutMs;
         return this;
     }
 

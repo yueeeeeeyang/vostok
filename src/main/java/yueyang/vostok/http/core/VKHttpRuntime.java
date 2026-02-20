@@ -28,6 +28,7 @@ import java.security.KeyStore;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -37,10 +38,12 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 public final class VKHttpRuntime {
@@ -55,6 +58,7 @@ public final class VKHttpRuntime {
     private final HttpMetrics metrics = new HttpMetrics();
 
     private final ConcurrentHashMap<String, ClientRuntimeEntry> clientRuntimeCache = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ResilienceRuntime> resilienceCache = new ConcurrentHashMap<>();
     private final AtomicLong executeSeq = new AtomicLong();
     private final AtomicLong clientBuilds = new AtomicLong();
 
@@ -179,7 +183,20 @@ public final class VKHttpRuntime {
         while (true) {
             attempts++;
             long retryIndex = attempts - 1L;
+            boolean bulkheadAcquired = false;
             try {
+                if (resolved.policy.rateLimitEnabled && resolved.resilience.rateLimiter != null
+                        && !resolved.resilience.rateLimiter.tryAcquire()) {
+                    throw new VKHttpException(VKHttpErrorCode.RATE_LIMITED, "Http rate limit exceeded");
+                }
+                if (resolved.policy.circuitEnabled && resolved.resilience.circuitBreaker != null) {
+                    resolved.resilience.circuitBreaker.beforeCall();
+                }
+                if (resolved.policy.bulkheadEnabled && resolved.resilience.bulkhead != null) {
+                    resolved.resilience.bulkhead.acquire();
+                    bulkheadAcquired = true;
+                }
+
                 HttpResponse<byte[]> raw = executeOnce(resolved);
                 byte[] body = raw.body() == null ? new byte[0] : raw.body();
                 if (body.length > resolved.policy.maxResponseBodyBytes) {
@@ -188,6 +205,13 @@ public final class VKHttpRuntime {
                 }
 
                 int status = raw.statusCode();
+                if (resolved.policy.circuitEnabled && resolved.resilience.circuitBreaker != null) {
+                    if (resolved.policy.circuitRecordStatuses.contains(status)) {
+                        resolved.resilience.circuitBreaker.onFailure();
+                    } else {
+                        resolved.resilience.circuitBreaker.onSuccess();
+                    }
+                }
                 if (shouldRetryByStatus(resolved, status, retryIndex)) {
                     if (config.isMetricsEnabled()) {
                         metrics.recordRetry();
@@ -210,6 +234,10 @@ public final class VKHttpRuntime {
                 }
                 return response;
             } catch (VKHttpException e) {
+                if (resolved.policy.circuitEnabled && resolved.resilience.circuitBreaker != null
+                        && shouldRecordCircuitFailure(e)) {
+                    resolved.resilience.circuitBreaker.onFailure();
+                }
                 if (shouldRetryByError(resolved, e, retryIndex)) {
                     if (config.isMetricsEnabled()) {
                         metrics.recordRetry();
@@ -223,6 +251,10 @@ public final class VKHttpRuntime {
                     metrics.recordFailure(e.getCode(), System.currentTimeMillis() - start);
                 }
                 throw e;
+            } finally {
+                if (bulkheadAcquired && resolved.resilience.bulkhead != null) {
+                    resolved.resilience.bulkhead.release();
+                }
             }
         }
     }
@@ -389,6 +421,14 @@ public final class VKHttpRuntime {
         }
     }
 
+    private static boolean shouldRecordCircuitFailure(VKHttpException e) {
+        VKHttpErrorCode code = e.getCode();
+        return code != VKHttpErrorCode.HTTP_STATUS
+                && code != VKHttpErrorCode.RATE_LIMITED
+                && code != VKHttpErrorCode.BULKHEAD_REJECTED
+                && code != VKHttpErrorCode.CIRCUIT_OPEN;
+    }
+
     private void logCall(ResolvedRequest resolved, int status, long costMs, long retryCount) {
         if (!config.isLogEnabled()) {
             return;
@@ -525,6 +565,28 @@ public final class VKHttpRuntime {
             }
         }
 
+        boolean rateLimitEnabled = resolveInt(null, clientCfg == null ? null : clientCfg.getRateLimitQps(), config.getRateLimitQps()) > 0;
+        int rateLimitQps = resolveInt(null, clientCfg == null ? null : clientCfg.getRateLimitQps(), config.getRateLimitQps());
+        int rateLimitBurst = resolveInt(null, clientCfg == null ? null : clientCfg.getRateLimitBurst(), config.getRateLimitBurst());
+        if (rateLimitBurst <= 0) {
+            rateLimitBurst = rateLimitQps;
+        }
+
+        boolean circuitEnabled = resolveBool(null, clientCfg == null ? null : clientCfg.getCircuitEnabled(), config.isCircuitEnabled());
+        int circuitWindowSize = resolveInt(null, clientCfg == null ? null : clientCfg.getCircuitWindowSize(), config.getCircuitWindowSize());
+        int circuitMinCalls = resolveInt(null, clientCfg == null ? null : clientCfg.getCircuitMinCalls(), config.getCircuitMinCalls());
+        int circuitFailureRateThreshold = resolveInt(null, clientCfg == null ? null : clientCfg.getCircuitFailureRateThreshold(), config.getCircuitFailureRateThreshold());
+        long circuitOpenWaitMs = resolveLong(null, clientCfg == null ? null : clientCfg.getCircuitOpenWaitMs(), config.getCircuitOpenWaitMs());
+        int circuitHalfOpenMaxCalls = resolveInt(null, clientCfg == null ? null : clientCfg.getCircuitHalfOpenMaxCalls(), config.getCircuitHalfOpenMaxCalls());
+        Set<Integer> circuitRecordStatuses = (clientCfg == null || clientCfg.getCircuitRecordStatuses().isEmpty())
+                ? config.getCircuitRecordStatuses()
+                : clientCfg.getCircuitRecordStatuses();
+
+        boolean bulkheadEnabled = resolveBool(null, clientCfg == null ? null : clientCfg.getBulkheadEnabled(), config.isBulkheadEnabled());
+        int bulkheadMaxConcurrent = resolveInt(null, clientCfg == null ? null : clientCfg.getBulkheadMaxConcurrent(), config.getBulkheadMaxConcurrent());
+        int bulkheadQueueSize = resolveInt(null, clientCfg == null ? null : clientCfg.getBulkheadQueueSize(), config.getBulkheadQueueSize());
+        long bulkheadAcquireTimeoutMs = resolveLong(null, clientCfg == null ? null : clientCfg.getBulkheadAcquireTimeoutMs(), config.getBulkheadAcquireTimeoutMs());
+
         ResolvedPolicy policy = new ResolvedPolicy(
                 maxRetries,
                 new LinkedHashSet<>(retryStatuses),
@@ -540,10 +602,25 @@ public final class VKHttpRuntime {
                 maxResponseBodyBytes,
                 readTimeoutMs,
                 requireIdempotency,
-                idempotencyKeyHeader
+                idempotencyKeyHeader,
+                rateLimitEnabled,
+                rateLimitQps,
+                rateLimitBurst,
+                circuitEnabled,
+                circuitWindowSize,
+                circuitMinCalls,
+                circuitFailureRateThreshold,
+                circuitOpenWaitMs,
+                circuitHalfOpenMaxCalls,
+                new LinkedHashSet<>(circuitRecordStatuses),
+                bulkheadEnabled,
+                bulkheadMaxConcurrent,
+                bulkheadQueueSize,
+                bulkheadAcquireTimeoutMs
         );
 
         runtime.lastUsedAt = System.currentTimeMillis();
+        ResilienceRuntime resilience = getOrCreateResilienceRuntime(runtimeKey, policy);
 
         return new ResolvedRequest(
                 selectedClientName,
@@ -551,6 +628,7 @@ public final class VKHttpRuntime {
                 targetUrl,
                 headers,
                 runtime,
+                resilience,
                 reqBuilder.build(),
                 policy
         );
@@ -585,6 +663,28 @@ public final class VKHttpRuntime {
             ClientRuntimeEntry created = new ClientRuntimeEntry(builder.build(), System.currentTimeMillis());
             clientRuntimeCache.put(runtimeKey, created);
             clientBuilds.incrementAndGet();
+            return created;
+        }
+    }
+
+    private ResilienceRuntime getOrCreateResilienceRuntime(String runtimeKey, ResolvedPolicy policy) {
+        String key = runtimeKey + "|rs:" + policy.resilienceKey();
+        ResilienceRuntime existing = resilienceCache.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        synchronized (LOCK) {
+            ResilienceRuntime again = resilienceCache.get(key);
+            if (again != null) {
+                return again;
+            }
+            ResilienceRuntime created = new ResilienceRuntime(
+                    policy.rateLimitEnabled ? new TokenBucketLimiter(policy.rateLimitQps, policy.rateLimitBurst) : null,
+                    policy.bulkheadEnabled ? new Bulkhead(policy.bulkheadMaxConcurrent, policy.bulkheadQueueSize, policy.bulkheadAcquireTimeoutMs) : null,
+                    policy.circuitEnabled ? new CircuitBreaker(policy.circuitWindowSize, policy.circuitMinCalls,
+                            policy.circuitFailureRateThreshold, policy.circuitOpenWaitMs, policy.circuitHalfOpenMaxCalls) : null
+            );
+            resilienceCache.put(key, created);
             return created;
         }
     }
@@ -685,6 +785,7 @@ public final class VKHttpRuntime {
 
     private void clearClientRuntimes() {
         clientRuntimeCache.clear();
+        resilienceCache.clear();
     }
 
     private void maybeEvictIdleRuntimes() {
@@ -797,12 +898,33 @@ public final class VKHttpRuntime {
         return globalValue;
     }
 
+    private static int resolveInt(Integer requestValue, Integer clientValue, int globalValue) {
+        if (requestValue != null) {
+            return requestValue;
+        }
+        if (clientValue != null) {
+            return clientValue;
+        }
+        return globalValue;
+    }
+
+    private static long resolveLong(Long requestValue, Long clientValue, long globalValue) {
+        if (requestValue != null) {
+            return requestValue;
+        }
+        if (clientValue != null) {
+            return clientValue;
+        }
+        return globalValue;
+    }
+
     private record ResolvedRequest(
             String clientName,
             String method,
             String url,
             Map<String, String> headers,
             ClientRuntimeEntry runtime,
+            ResilienceRuntime resilience,
             HttpRequest httpRequest,
             ResolvedPolicy policy
     ) {
@@ -823,8 +945,29 @@ public final class VKHttpRuntime {
             long maxResponseBodyBytes,
             long readTimeoutMs,
             boolean requireIdempotencyKeyForUnsafeRetry,
-            String idempotencyKeyHeader
+            String idempotencyKeyHeader,
+            boolean rateLimitEnabled,
+            int rateLimitQps,
+            int rateLimitBurst,
+            boolean circuitEnabled,
+            int circuitWindowSize,
+            int circuitMinCalls,
+            int circuitFailureRateThreshold,
+            long circuitOpenWaitMs,
+            int circuitHalfOpenMaxCalls,
+            Set<Integer> circuitRecordStatuses,
+            boolean bulkheadEnabled,
+            int bulkheadMaxConcurrent,
+            int bulkheadQueueSize,
+            long bulkheadAcquireTimeoutMs
     ) {
+        String resilienceKey() {
+            return rateLimitEnabled + ":" + rateLimitQps + ":" + rateLimitBurst + "|"
+                    + circuitEnabled + ":" + circuitWindowSize + ":" + circuitMinCalls + ":"
+                    + circuitFailureRateThreshold + ":" + circuitOpenWaitMs + ":" + circuitHalfOpenMaxCalls + ":"
+                    + circuitRecordStatuses.hashCode() + "|"
+                    + bulkheadEnabled + ":" + bulkheadMaxConcurrent + ":" + bulkheadQueueSize + ":" + bulkheadAcquireTimeoutMs;
+        }
     }
 
     private static final class ClientRuntimeEntry {
@@ -835,6 +978,208 @@ public final class VKHttpRuntime {
             this.client = client;
             this.lastUsedAt = lastUsedAt;
         }
+    }
+
+    private static final class ResilienceRuntime {
+        private final TokenBucketLimiter rateLimiter;
+        private final Bulkhead bulkhead;
+        private final CircuitBreaker circuitBreaker;
+
+        private ResilienceRuntime(TokenBucketLimiter rateLimiter, Bulkhead bulkhead, CircuitBreaker circuitBreaker) {
+            this.rateLimiter = rateLimiter;
+            this.bulkhead = bulkhead;
+            this.circuitBreaker = circuitBreaker;
+        }
+    }
+
+    private static final class TokenBucketLimiter {
+        private final int qps;
+        private final int burst;
+        private double tokens;
+        private long lastRefillNanos;
+
+        private TokenBucketLimiter(int qps, int burst) {
+            this.qps = Math.max(1, qps);
+            this.burst = Math.max(1, burst);
+            this.tokens = this.burst;
+            this.lastRefillNanos = System.nanoTime();
+        }
+
+        synchronized boolean tryAcquire() {
+            long now = System.nanoTime();
+            double elapsedSec = Math.max(0, now - lastRefillNanos) / 1_000_000_000.0;
+            if (elapsedSec > 0) {
+                tokens = Math.min(burst, tokens + elapsedSec * qps);
+                lastRefillNanos = now;
+            }
+            if (tokens >= 1.0d) {
+                tokens -= 1.0d;
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private static final class Bulkhead {
+        private final Semaphore permits;
+        private final Semaphore queuePermits;
+        private final long acquireTimeoutMs;
+
+        private Bulkhead(int maxConcurrent, int queueSize, long acquireTimeoutMs) {
+            this.permits = new Semaphore(Math.max(1, maxConcurrent));
+            this.queuePermits = queueSize > 0 ? new Semaphore(queueSize) : null;
+            this.acquireTimeoutMs = Math.max(0, acquireTimeoutMs);
+        }
+
+        void acquire() {
+            try {
+                if (queuePermits == null) {
+                    if (!permits.tryAcquire()) {
+                        throw new VKHttpException(VKHttpErrorCode.BULKHEAD_REJECTED, "Http bulkhead full");
+                    }
+                    return;
+                }
+                if (!queuePermits.tryAcquire()) {
+                    throw new VKHttpException(VKHttpErrorCode.BULKHEAD_REJECTED, "Http bulkhead queue full");
+                }
+                try {
+                    boolean ok = acquireTimeoutMs <= 0
+                            ? permits.tryAcquire()
+                            : permits.tryAcquire(acquireTimeoutMs, TimeUnit.MILLISECONDS);
+                    if (!ok) {
+                        throw new VKHttpException(VKHttpErrorCode.BULKHEAD_REJECTED, "Http bulkhead acquire timeout");
+                    }
+                } finally {
+                    queuePermits.release();
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new VKHttpException(VKHttpErrorCode.BULKHEAD_REJECTED, "Http bulkhead interrupted", e);
+            }
+        }
+
+        void release() {
+            permits.release();
+        }
+    }
+
+    private static final class CircuitBreaker {
+        private final int windowSize;
+        private final int minCalls;
+        private final int failureRateThreshold;
+        private final long openWaitMs;
+        private final int halfOpenMaxCalls;
+        private final Object lock = new Object();
+        private final ArrayDeque<Boolean> outcomes;
+
+        private final AtomicReference<CircuitState> state = new AtomicReference<>(CircuitState.CLOSED);
+        private volatile long openUntilMs;
+        private volatile int halfOpenAttempted;
+        private volatile int halfOpenFailures;
+
+        private CircuitBreaker(int windowSize, int minCalls, int failureRateThreshold, long openWaitMs, int halfOpenMaxCalls) {
+            this.windowSize = Math.max(1, windowSize);
+            this.minCalls = Math.max(1, minCalls);
+            this.failureRateThreshold = Math.min(100, Math.max(1, failureRateThreshold));
+            this.openWaitMs = Math.max(100, openWaitMs);
+            this.halfOpenMaxCalls = Math.max(1, halfOpenMaxCalls);
+            this.outcomes = new ArrayDeque<>(this.windowSize);
+        }
+
+        void beforeCall() {
+            CircuitState s = state.get();
+            long now = System.currentTimeMillis();
+            if (s == CircuitState.OPEN) {
+                if (now < openUntilMs) {
+                    throw new VKHttpException(VKHttpErrorCode.CIRCUIT_OPEN, "Http circuit is open");
+                }
+                synchronized (lock) {
+                    if (state.get() == CircuitState.OPEN && now >= openUntilMs) {
+                        state.set(CircuitState.HALF_OPEN);
+                        halfOpenAttempted = 0;
+                        halfOpenFailures = 0;
+                    }
+                }
+                s = state.get();
+            }
+            if (s == CircuitState.HALF_OPEN) {
+                synchronized (lock) {
+                    if (halfOpenAttempted >= halfOpenMaxCalls) {
+                        throw new VKHttpException(VKHttpErrorCode.CIRCUIT_OPEN, "Http circuit half-open quota exhausted");
+                    }
+                    halfOpenAttempted++;
+                }
+            }
+        }
+
+        void onSuccess() {
+            CircuitState s = state.get();
+            if (s == CircuitState.CLOSED) {
+                record(false);
+                return;
+            }
+            if (s == CircuitState.HALF_OPEN) {
+                synchronized (lock) {
+                    if (state.get() != CircuitState.HALF_OPEN) {
+                        return;
+                    }
+                    if (halfOpenFailures == 0 && halfOpenAttempted >= halfOpenMaxCalls) {
+                        state.set(CircuitState.CLOSED);
+                        outcomes.clear();
+                    }
+                }
+            }
+        }
+
+        void onFailure() {
+            CircuitState s = state.get();
+            if (s == CircuitState.CLOSED) {
+                record(true);
+                return;
+            }
+            if (s == CircuitState.HALF_OPEN) {
+                synchronized (lock) {
+                    if (state.get() != CircuitState.HALF_OPEN) {
+                        return;
+                    }
+                    halfOpenFailures++;
+                    open();
+                }
+            }
+        }
+
+        private void record(boolean failure) {
+            synchronized (lock) {
+                outcomes.addLast(failure);
+                while (outcomes.size() > windowSize) {
+                    outcomes.removeFirst();
+                }
+                if (outcomes.size() < minCalls) {
+                    return;
+                }
+                int fails = 0;
+                for (Boolean it : outcomes) {
+                    if (Boolean.TRUE.equals(it)) {
+                        fails++;
+                    }
+                }
+                int rate = (int) ((fails * 100L) / outcomes.size());
+                if (rate >= failureRateThreshold) {
+                    open();
+                }
+            }
+        }
+
+        private void open() {
+            state.set(CircuitState.OPEN);
+            openUntilMs = System.currentTimeMillis() + openWaitMs;
+        }
+    }
+
+    private enum CircuitState {
+        CLOSED,
+        OPEN,
+        HALF_OPEN
     }
 
     private static final class HttpMetrics {

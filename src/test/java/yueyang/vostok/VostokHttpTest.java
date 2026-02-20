@@ -34,6 +34,8 @@ public class VostokHttpTest {
     private final AtomicInteger retryCounter = new AtomicInteger();
     private final AtomicInteger retryAfterCounter = new AtomicInteger();
     private final AtomicInteger retryUnsafeCounter = new AtomicInteger();
+    private final AtomicInteger circuitCounter = new AtomicInteger();
+    private final AtomicInteger bulkheadActive = new AtomicInteger();
 
     @BeforeEach
     void setUp() throws Exception {
@@ -44,6 +46,8 @@ public class VostokHttpTest {
         server.createContext("/retry", this::handleRetry);
         server.createContext("/retry-after", this::handleRetryAfter);
         server.createContext("/retry-unsafe", this::handleRetryUnsafe);
+        server.createContext("/circuit", this::handleCircuit);
+        server.createContext("/bulkhead", this::handleBulkhead);
         server.createContext("/timeout", this::handleTimeout);
         server.createContext("/status404", this::handleStatus404);
         server.createContext("/form", this::handleForm);
@@ -222,6 +226,69 @@ public class VostokHttpTest {
     }
 
     @Test
+    void testRateLimit() {
+        Vostok.Http.registerClient("rate", new VKHttpClientConfig()
+                .baseUrl(baseUrl)
+                .rateLimitQps(1)
+                .rateLimitBurst(1));
+
+        Vostok.Http.get("/echo").client("rate").execute();
+        VKHttpException ex = assertThrows(VKHttpException.class,
+                () -> Vostok.Http.get("/echo").client("rate").execute());
+        assertEquals(VKHttpErrorCode.RATE_LIMITED, ex.getCode());
+    }
+
+    @Test
+    void testCircuitBreakerOpens() {
+        Vostok.Http.registerClient("circuit", new VKHttpClientConfig()
+                .baseUrl(baseUrl)
+                .circuitEnabled(true)
+                .circuitMinCalls(3)
+                .circuitWindowSize(4)
+                .circuitFailureRateThreshold(50)
+                .circuitOpenWaitMs(3000L)
+                .maxRetries(0)
+                .retryOnStatuses());
+
+        for (int i = 0; i < 3; i++) {
+            assertThrows(VKHttpException.class,
+                    () -> Vostok.Http.get("/circuit").client("circuit").execute());
+        }
+        VKHttpException ex = assertThrows(VKHttpException.class,
+                () -> Vostok.Http.get("/circuit").client("circuit").execute());
+        assertEquals(VKHttpErrorCode.CIRCUIT_OPEN, ex.getCode());
+    }
+
+    @Test
+    void testBulkheadRejects() throws Exception {
+        Vostok.Http.registerClient("bulkhead", new VKHttpClientConfig()
+                .baseUrl(baseUrl)
+                .bulkheadEnabled(true)
+                .bulkheadMaxConcurrent(1)
+                .bulkheadQueueSize(0));
+
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            var f1 = pool.submit(() -> Vostok.Http.get("/bulkhead").client("bulkhead").execute());
+            Thread.sleep(30);
+            var f2 = pool.submit(() -> {
+                try {
+                    Vostok.Http.get("/bulkhead").client("bulkhead").execute();
+                    return null;
+                } catch (VKHttpException e) {
+                    return e;
+                }
+            });
+            f1.get(2, TimeUnit.SECONDS);
+            VKHttpException ex = f2.get(2, TimeUnit.SECONDS);
+            assertNotNull(ex);
+            assertEquals(VKHttpErrorCode.BULKHEAD_REJECTED, ex.getCode());
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    @Test
     void testFormAndMultipart() {
         VKHttpResponse formResp = Vostok.Http.post("/form")
                 .client("demo")
@@ -306,6 +373,29 @@ public class VostokHttpTest {
             return;
         }
         writeJson(exchange, 200, Map.of("ok", true, "attempt", n));
+    }
+
+    private void handleCircuit(HttpExchange exchange) throws IOException {
+        int n = circuitCounter.incrementAndGet();
+        if (n <= 3) {
+            writeText(exchange, 503, "down");
+            return;
+        }
+        writeText(exchange, 200, "up");
+    }
+
+    private void handleBulkhead(HttpExchange exchange) throws IOException {
+        bulkheadActive.incrementAndGet();
+        try {
+            try {
+                Thread.sleep(180);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            writeText(exchange, 200, "ok");
+        } finally {
+            bulkheadActive.decrementAndGet();
+        }
     }
 
     private void handleTimeout(HttpExchange exchange) throws IOException {

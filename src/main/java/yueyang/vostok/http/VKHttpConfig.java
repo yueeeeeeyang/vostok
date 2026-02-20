@@ -27,6 +27,19 @@ public class VKHttpConfig {
     private boolean metricsEnabled = true;
     private long maxResponseBodyBytes = 8L * 1024 * 1024;
     private long clientReuseIdleEvictMs = 10 * 60 * 1000L;
+    private int rateLimitQps = 0;
+    private int rateLimitBurst = 0;
+    private boolean circuitEnabled = false;
+    private int circuitWindowSize = 20;
+    private int circuitMinCalls = 10;
+    private int circuitFailureRateThreshold = 50;
+    private long circuitOpenWaitMs = 5000;
+    private int circuitHalfOpenMaxCalls = 3;
+    private Set<Integer> circuitRecordStatuses = new LinkedHashSet<>(Set.of(429, 500, 502, 503, 504));
+    private boolean bulkheadEnabled = false;
+    private int bulkheadMaxConcurrent = 100;
+    private int bulkheadQueueSize = 0;
+    private long bulkheadAcquireTimeoutMs = 0;
     private String userAgent = "VostokHttp/1.0";
     private Map<String, String> defaultHeaders = new LinkedHashMap<>();
 
@@ -53,6 +66,19 @@ public class VKHttpConfig {
         c.metricsEnabled = this.metricsEnabled;
         c.maxResponseBodyBytes = this.maxResponseBodyBytes;
         c.clientReuseIdleEvictMs = this.clientReuseIdleEvictMs;
+        c.rateLimitQps = this.rateLimitQps;
+        c.rateLimitBurst = this.rateLimitBurst;
+        c.circuitEnabled = this.circuitEnabled;
+        c.circuitWindowSize = this.circuitWindowSize;
+        c.circuitMinCalls = this.circuitMinCalls;
+        c.circuitFailureRateThreshold = this.circuitFailureRateThreshold;
+        c.circuitOpenWaitMs = this.circuitOpenWaitMs;
+        c.circuitHalfOpenMaxCalls = this.circuitHalfOpenMaxCalls;
+        c.circuitRecordStatuses = new LinkedHashSet<>(this.circuitRecordStatuses);
+        c.bulkheadEnabled = this.bulkheadEnabled;
+        c.bulkheadMaxConcurrent = this.bulkheadMaxConcurrent;
+        c.bulkheadQueueSize = this.bulkheadQueueSize;
+        c.bulkheadAcquireTimeoutMs = this.bulkheadAcquireTimeoutMs;
         c.userAgent = this.userAgent;
         c.defaultHeaders = new LinkedHashMap<>(this.defaultHeaders);
         return c;
@@ -279,6 +305,137 @@ public class VKHttpConfig {
 
     public VKHttpConfig clientReuseIdleEvictMs(long clientReuseIdleEvictMs) {
         this.clientReuseIdleEvictMs = Math.max(1000, clientReuseIdleEvictMs);
+        return this;
+    }
+
+    public int getRateLimitQps() {
+        return rateLimitQps;
+    }
+
+    public VKHttpConfig rateLimitQps(int rateLimitQps) {
+        this.rateLimitQps = Math.max(0, rateLimitQps);
+        return this;
+    }
+
+    public int getRateLimitBurst() {
+        return rateLimitBurst;
+    }
+
+    public VKHttpConfig rateLimitBurst(int rateLimitBurst) {
+        this.rateLimitBurst = Math.max(0, rateLimitBurst);
+        return this;
+    }
+
+    public boolean isCircuitEnabled() {
+        return circuitEnabled;
+    }
+
+    public VKHttpConfig circuitEnabled(boolean circuitEnabled) {
+        this.circuitEnabled = circuitEnabled;
+        return this;
+    }
+
+    public int getCircuitWindowSize() {
+        return circuitWindowSize;
+    }
+
+    public VKHttpConfig circuitWindowSize(int circuitWindowSize) {
+        this.circuitWindowSize = Math.max(1, circuitWindowSize);
+        return this;
+    }
+
+    public int getCircuitMinCalls() {
+        return circuitMinCalls;
+    }
+
+    public VKHttpConfig circuitMinCalls(int circuitMinCalls) {
+        this.circuitMinCalls = Math.max(1, circuitMinCalls);
+        return this;
+    }
+
+    public int getCircuitFailureRateThreshold() {
+        return circuitFailureRateThreshold;
+    }
+
+    public VKHttpConfig circuitFailureRateThreshold(int circuitFailureRateThreshold) {
+        this.circuitFailureRateThreshold = Math.min(100, Math.max(1, circuitFailureRateThreshold));
+        return this;
+    }
+
+    public long getCircuitOpenWaitMs() {
+        return circuitOpenWaitMs;
+    }
+
+    public VKHttpConfig circuitOpenWaitMs(long circuitOpenWaitMs) {
+        this.circuitOpenWaitMs = Math.max(100, circuitOpenWaitMs);
+        return this;
+    }
+
+    public int getCircuitHalfOpenMaxCalls() {
+        return circuitHalfOpenMaxCalls;
+    }
+
+    public VKHttpConfig circuitHalfOpenMaxCalls(int circuitHalfOpenMaxCalls) {
+        this.circuitHalfOpenMaxCalls = Math.max(1, circuitHalfOpenMaxCalls);
+        return this;
+    }
+
+    public Set<Integer> getCircuitRecordStatuses() {
+        return Set.copyOf(circuitRecordStatuses);
+    }
+
+    public VKHttpConfig circuitRecordStatuses(Set<Integer> circuitRecordStatuses) {
+        this.circuitRecordStatuses = circuitRecordStatuses == null
+                ? new LinkedHashSet<>()
+                : new LinkedHashSet<>(circuitRecordStatuses);
+        return this;
+    }
+
+    public VKHttpConfig circuitRecordStatuses(Integer... circuitRecordStatuses) {
+        this.circuitRecordStatuses = new LinkedHashSet<>();
+        if (circuitRecordStatuses != null) {
+            for (Integer s : circuitRecordStatuses) {
+                if (s != null) {
+                    this.circuitRecordStatuses.add(s);
+                }
+            }
+        }
+        return this;
+    }
+
+    public boolean isBulkheadEnabled() {
+        return bulkheadEnabled;
+    }
+
+    public VKHttpConfig bulkheadEnabled(boolean bulkheadEnabled) {
+        this.bulkheadEnabled = bulkheadEnabled;
+        return this;
+    }
+
+    public int getBulkheadMaxConcurrent() {
+        return bulkheadMaxConcurrent;
+    }
+
+    public VKHttpConfig bulkheadMaxConcurrent(int bulkheadMaxConcurrent) {
+        this.bulkheadMaxConcurrent = Math.max(1, bulkheadMaxConcurrent);
+        return this;
+    }
+
+    public int getBulkheadQueueSize() {
+        return bulkheadQueueSize;
+    }
+
+    public VKHttpConfig bulkheadQueueSize(int bulkheadQueueSize) {
+        this.bulkheadQueueSize = Math.max(0, bulkheadQueueSize);
+        return this;
+    }
+
+    public long getBulkheadAcquireTimeoutMs() {
+        return bulkheadAcquireTimeoutMs;
+    }
+
+    public VKHttpConfig bulkheadAcquireTimeoutMs(long bulkheadAcquireTimeoutMs) {
+        this.bulkheadAcquireTimeoutMs = Math.max(0, bulkheadAcquireTimeoutMs);
         return this;
     }
 
