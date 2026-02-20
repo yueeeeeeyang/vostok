@@ -47,6 +47,10 @@ public class VostokCache {
         return RUNTIME.config();
     }
 
+    public static List<VKCachePoolMetrics> poolMetrics() {
+        return RUNTIME.poolMetrics();
+    }
+
     public static void close() {
         RUNTIME.close();
     }
@@ -61,6 +65,10 @@ public class VostokCache {
 
     public static <T> T withCache(String name, Supplier<T> supplier) {
         return RUNTIME.withCache(name, supplier);
+    }
+
+    public static <T> T withKeyLock(String key, Supplier<T> supplier) {
+        return RUNTIME.withKeyLock(key, supplier);
     }
 
     public static String currentCacheName() {
@@ -89,6 +97,10 @@ public class VostokCache {
 
     public static <T> T get(String key, Class<T> type) {
         return RUNTIME.get(key, type);
+    }
+
+    public static <T> T getOrLoad(String key, Class<T> type, long ttlMs, Supplier<T> loader) {
+        return RUNTIME.getOrLoad(key, type, ttlMs, loader);
     }
 
     public static long delete(String... keys) {
@@ -129,5 +141,49 @@ public class VostokCache {
 
     public static void mset(Map<String, ?> values, long ttlMs) {
         RUNTIME.mset(values, ttlMs);
+    }
+
+    public static long hset(String key, String field, Object value) {
+        return RUNTIME.hset(key, field, value);
+    }
+
+    public static <T> T hget(String key, String field, Class<T> type) {
+        return RUNTIME.hget(key, field, type);
+    }
+
+    public static <T> Map<String, T> hgetAll(String key, Class<T> type) {
+        return RUNTIME.hgetAll(key, type);
+    }
+
+    public static long hdel(String key, String... fields) {
+        return RUNTIME.hdel(key, fields);
+    }
+
+    public static long lpush(String key, Object... values) {
+        return RUNTIME.lpush(key, values);
+    }
+
+    public static <T> List<T> lrange(String key, long start, long stop, Class<T> type) {
+        return RUNTIME.lrange(key, start, stop, type);
+    }
+
+    public static long sadd(String key, Object... members) {
+        return RUNTIME.sadd(key, members);
+    }
+
+    public static <T> Set<T> smembers(String key, Class<T> type) {
+        return RUNTIME.smembers(key, type);
+    }
+
+    public static long zadd(String key, double score, Object member) {
+        return RUNTIME.zadd(key, score, member);
+    }
+
+    public static <T> List<T> zrange(String key, long start, long stop, Class<T> type) {
+        return RUNTIME.zrange(key, start, stop, type);
+    }
+
+    public static List<String> scan(String pattern, int count) {
+        return RUNTIME.scan(pattern, count);
     }
 }

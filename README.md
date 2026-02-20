@@ -3361,22 +3361,61 @@ VKEventConfig cfg = new VKEventConfig()
 
 # 9. Cache 模块
 
-`Vostok.Cache` 为统一缓存门面，当前支持：
+`Vostok.Cache` 为统一缓存门面，目标是提供可生产落地的缓存基线能力，当前支持：
 
-- `MEMORY`：进程内缓存（用于本地开发、测试或轻量场景）
-- `REDIS`：通过 RESP 协议连接 Redis（单节点模式）
+- `MEMORY`：进程内缓存（开发/测试/降级场景）
+- `REDIS`：RESP 协议 Redis 客户端（`SINGLE/SENTINEL/CLUSTER`）
 
-设计原则：
+核心原则：
 
-- 不依赖 `Vostok.Config`
-- 显式初始化（`init(...)`）
-- 连接池内置（`minIdle/maxActive/maxWaitMs/testOnBorrow`）
-- Provider 可扩展（后续可接入其他缓存中间件）
+- 不依赖 `Vostok.Config`，全部通过显式配置初始化
+- 内置连接池（驱逐、校验、泄漏检测、指标）
+- 内置高可用路由（端点失效隔离与恢复）
+- 内置缓存治理（防穿透/击穿/雪崩）
 
-## 9.1 接口定义
+## 9.1 生产能力总览
+
+1. 高可用与拓扑能力
+- Redis 模式：`SINGLE`、`SENTINEL`、`CLUSTER`
+- 多 endpoint 路由与失效端点临时隔离
+- Cluster 模式按 key hash 分片路由
+
+2. 连接池生产化
+- `minIdle/maxActive/maxWaitMs`
+- 后台驱逐线程：idle 回收、定期健康校验、minIdle 自动补足
+- 泄漏检测：借出超过阈值计数
+
+3. 连接可靠性
+- 半开检测：心跳 `PING`
+- 自动重连：失败重建连接
+- 退避重试：指数退避 + 抖动
+
+4. 限流与降级
+- 连接池级 QPS 限流
+- 降级策略：`FAIL_FAST` / `RETURN_NULL` / `SKIP_WRITE`
+
+5. 数据结构命令
+- KV：`set/get/delete/exists/expire/incr/mset/mget`
+- Hash：`hset/hget/hgetAll/hdel`
+- List：`lpush/lrange`
+- Set：`sadd/smembers`
+- ZSet：`zadd/zrange`
+- Key 扫描：`scan`
+
+6. 缓存治理
+- 防穿透：空值缓存 + BloomFilter 接口
+- 防击穿：single-flight + key 级互斥
+- 防雪崩：TTL 抖动（jitter）
+
+7. 安全
+- ACL：`username/password`（`AUTH`）
+- TLS：`ssl(true)` 启用 SSL Socket
+
+## 9.2 接口定义
 
 ```java
 public interface Vostok.Cache {
+    // lifecycle
     public static void init(VKCacheConfig config);
     public static void init(VKCacheConfigLoader loader);
     public static void initFromEnv(String prefix);
@@ -3384,126 +3423,193 @@ public interface Vostok.Cache {
     public static void reinit(VKCacheConfig config);
     public static boolean started();
     public static VKCacheConfig config();
+    public static List<VKCachePoolMetrics> poolMetrics();
     public static void close();
 
+    // multi cache / context
     public static void registerCache(String name, VKCacheConfig config);
     public static void withCache(String name, Runnable action);
     public static <T> T withCache(String name, Supplier<T> supplier);
+    public static <T> T withKeyLock(String key, Supplier<T> supplier);
 
+    // KV
     public static void set(String key, Object value);
     public static void set(String key, Object value, long ttlMs);
-    public static String get(String key);
     public static <T> T get(String key, Class<T> type);
+    public static <T> T getOrLoad(String key, Class<T> type, long ttlMs, Supplier<T> loader);
     public static long delete(String... keys);
     public static boolean exists(String key);
     public static boolean expire(String key, long ttlMs);
-
-    public static long incr(String key);
     public static long incrBy(String key, long delta);
-    public static long decr(String key);
-    public static long decrBy(String key, long delta);
-
     public static <T> List<T> mget(Class<T> type, String... keys);
-    public static void mset(Map<String, ?> values);
     public static void mset(Map<String, ?> values, long ttlMs);
+
+    // Hash/List/Set/ZSet/Scan
+    public static long hset(String key, String field, Object value);
+    public static <T> T hget(String key, String field, Class<T> type);
+    public static <T> Map<String, T> hgetAll(String key, Class<T> type);
+    public static long hdel(String key, String... fields);
+    public static long lpush(String key, Object... values);
+    public static <T> List<T> lrange(String key, long start, long stop, Class<T> type);
+    public static long sadd(String key, Object... members);
+    public static <T> Set<T> smembers(String key, Class<T> type);
+    public static long zadd(String key, double score, Object member);
+    public static <T> List<T> zrange(String key, long start, long stop, Class<T> type);
+    public static List<String> scan(String pattern, int count);
 }
 ```
 
-## 9.2 使用 Demo
+## 9.3 使用 Demo（生产配置）
 
 ```java
 import yueyang.vostok.Vostok;
-import yueyang.vostok.cache.VKCacheConfig;
-import yueyang.vostok.cache.VKCacheProviderType;
+import yueyang.vostok.cache.*;
 
-import java.nio.file.Path;
 import java.util.Map;
 
-public class CacheDemo {
+public class CacheProdDemo {
     public static void main(String[] args) {
-        // 1) 代码方式初始化（Redis）
-        Vostok.Cache.init(new VKCacheConfig()
+        VKCacheConfig cfg = new VKCacheConfig()
                 .providerType(VKCacheProviderType.REDIS)
-                .endpoints("127.0.0.1:6379")
+                .redisMode(VKRedisMode.SENTINEL)
+                .endpoints("10.0.0.11:6379", "10.0.0.12:6379", "10.0.0.13:6379")
+                .sentinelMaster("mymaster")
+
+                // security
+                .ssl(true)
+                .username("app-user")
+                .password("***")
+
+                // pool
+                .minIdle(4)
+                .maxActive(64)
+                .maxWaitMs(1500)
+                .testOnBorrow(true)
+                .idleValidationIntervalMs(15_000)
+                .idleTimeoutMs(120_000)
+                .leakDetectMs(60_000)
+
+                // retry / heartbeat
+                .heartbeatIntervalMs(10_000)
+                .reconnectMaxAttempts(3)
+                .retryEnabled(true)
+                .maxRetries(2)
+                .retryBackoffBaseMs(20)
+                .retryBackoffMaxMs(800)
+                .retryJitterEnabled(true)
+
+                // anti avalanche / degradation
+                .defaultTtlMs(60_000)
+                .ttlJitterMs(15_000)
+                .rateLimitQps(20_000)
+                .degradePolicy(VKCacheDegradePolicy.RETURN_NULL)
+
+                // anti penetration / breakdown
+                .nullCacheEnabled(true)
+                .nullCacheTtlMs(20_000)
+                .singleFlightEnabled(true)
+                .keyMutexEnabled(true)
+                .bloomFilter(VKBloomFilter.noOp())
+
                 .keyPrefix("app:")
-                .codec("string")
-                .minIdle(1)
-                .maxActive(16)
-                .maxWaitMs(3000)
-                .testOnBorrow(true));
+                .codec("json");
 
-        Vostok.Cache.set("k1", "v1");
-        String v1 = Vostok.Cache.get("k1");
+        Vostok.Cache.init(cfg);
 
-        Vostok.Cache.mset(Map.of("a", "A", "b", "B"));
-        var list = Vostok.Cache.mget(String.class, "a", "b", "x");
+        // getOrLoad + single-flight + null-cache
+        User user = Vostok.Cache.getOrLoad("user:1", User.class, 300_000, () -> loadUser(1L));
 
-        long n1 = Vostok.Cache.incr("counter");
-        long n2 = Vostok.Cache.incrBy("counter", 9);
+        // data structures
+        Vostok.Cache.hset("user:1:profile", "nickname", "neo");
+        String nick = Vostok.Cache.hget("user:1:profile", "nickname", String.class);
 
-        Vostok.Cache.set("otp", "123456", 30_000);
-        boolean exists = Vostok.Cache.exists("otp");
+        Vostok.Cache.lpush("jobs", "j3", "j2", "j1");
+        var jobs = Vostok.Cache.lrange("jobs", 0, 10, String.class);
 
-        // 2) 注册命名缓存实例
-        Vostok.Cache.registerCache("local", new VKCacheConfig()
-                .providerType(VKCacheProviderType.MEMORY)
-                .codec("json")
-                .keyPrefix("local:"));
+        Vostok.Cache.sadd("roles:1", "admin", "dev");
+        var roles = Vostok.Cache.smembers("roles:1", String.class);
 
-        Vostok.Cache.withCache("local", () -> {
-            Vostok.Cache.set("user:1", Map.of("name", "neo", "age", 20));
-        });
+        Vostok.Cache.zadd("rank", 98.5, "u1");
+        Vostok.Cache.zadd("rank", 99.1, "u2");
 
-        // 3) 可选：从 properties 初始化（不依赖 Vostok.Config）
-        Vostok.Cache.reinit(yueyang.vostok.cache.VKCacheConfigFactory
-                .fromProperties(Path.of("/opt/app/cache.properties"), "cache"));
+        Vostok.Cache.mset(Map.of("k1", "v1", "k2", "v2"), 30_000);
+
+        // metrics
+        System.out.println(Vostok.Cache.poolMetrics());
 
         Vostok.Cache.close();
+    }
+
+    static User loadUser(long id) {
+        return null;
+    }
+
+    static class User {
+        public Long id;
+        public String name;
     }
 }
 ```
 
-## 9.3 配置详解（VKCacheConfig）
+## 9.4 配置详解（VKCacheConfig）
 
 ```java
-import yueyang.vostok.cache.VKCacheConfig;
-import yueyang.vostok.cache.VKCacheProviderType;
-
 VKCacheConfig cfg = new VKCacheConfig()
-    // Provider 类型：MEMORY / REDIS
     .providerType(VKCacheProviderType.REDIS)
-    // 连接端点（Redis 示例）
+    .redisMode(VKRedisMode.SINGLE)          // SINGLE / SENTINEL / CLUSTER
     .endpoints("127.0.0.1:6379")
+    .sentinelMaster("mymaster")
+
+    // TLS + ACL
+    .ssl(false)
     .username(null)
     .password(null)
     .database(0)
 
-    // 网络超时
+    // network
     .connectTimeoutMs(2000)
     .readTimeoutMs(2000)
+    .heartbeatIntervalMs(15000)
+    .reconnectMaxAttempts(2)
 
-    // 连接池
+    // pool
     .minIdle(1)
     .maxActive(8)
     .maxWaitMs(3000)
     .testOnBorrow(true)
     .testOnReturn(false)
+    .idleValidationIntervalMs(30000)
+    .idleTimeoutMs(120000)
+    .leakDetectMs(60000)
 
-    // 重试
-    .retryEnabled(false)
-    .maxRetries(1)
+    // retry
+    .retryEnabled(true)
+    .maxRetries(2)
     .retryBackoffBaseMs(30)
     .retryBackoffMaxMs(500)
+    .retryJitterEnabled(true)
 
-    // 行为
+    // cache behavior
     .defaultTtlMs(0)
+    .ttlJitterMs(0)
     .keyPrefix("app:")
-    .codec("json");
+    .codec("json")
+    .metricsEnabled(true)
+
+    // anti penetration / breakdown
+    .nullCacheEnabled(true)
+    .nullCacheTtlMs(30000)
+    .singleFlightEnabled(true)
+    .keyMutexEnabled(true)
+    .keyMutexMaxSize(10000)
+    .bloomFilter(VKBloomFilter.noOp())
+
+    // anti avalanche / protection
+    .rateLimitQps(0)
+    .degradePolicy(VKCacheDegradePolicy.FAIL_FAST);
 ```
 
-## 9.4 显式 Loader 方案（无 Config 模块依赖）
-
-支持从环境变量、properties、map 显式加载：
+## 9.5 显式 Loader（无 Config 依赖）
 
 ```java
 import yueyang.vostok.cache.VKCacheConfigFactory;
@@ -3513,11 +3619,39 @@ var fromMap = VKCacheConfigFactory.fromMap(Map.of("cache.provider", "memory"), "
 var fromProperties = VKCacheConfigFactory.fromProperties(Path.of("./cache.properties"), "cache");
 ```
 
-约定 key 示例（prefix=`cache`）：
+常用 key（prefix=`cache`）示例：
 
 - `cache.provider=redis`
-- `cache.endpoints=127.0.0.1:6379,127.0.0.1:6380`
-- `cache.maxActive=16`
-- `cache.keyPrefix=app:`
-- `cache.codec=string`
+- `cache.redisMode=cluster`
+- `cache.endpoints=10.0.0.11:6379,10.0.0.12:6379`
+- `cache.ssl=true`
+- `cache.username=app`
+- `cache.password=***`
+- `cache.maxActive=64`
+- `cache.idleValidationIntervalMs=15000`
+- `cache.leakDetectMs=60000`
+- `cache.rateLimitQps=20000`
+- `cache.degradePolicy=RETURN_NULL`
+- `cache.nullCacheEnabled=true`
+- `cache.singleFlightEnabled=true`
+- `cache.ttlJitterMs=15000`
+
+## 9.6 指标说明
+
+`poolMetrics()` 返回每个缓存实例的池状态：
+
+- `total`：池内连接总数
+- `active`：借出连接数
+- `idle`：空闲连接数
+- `borrowTimeouts`：借连接超时次数
+- `leakedConnections`：泄漏检测计数
+- `evictedConnections`：驱逐/失效销毁连接数
+- `rejectedByRateLimit`：限流拒绝次数
+
+## 9.7 说明与边界
+
+- `SENTINEL/CLUSTER` 当前实现为客户端侧多 endpoint 路由与故障隔离；适合作为统一 API 层高可用基础能力。
+- `SCAN` 当前返回单次扫描批次（`count` 限制），如需全量遍历请循环调用。
+- BloomFilter 由业务注入，默认 `noOp`（始终放行）。
+- `RETURN_NULL` / `SKIP_WRITE` 降级策略仅在命中池限流时生效。
 

@@ -8,6 +8,7 @@ import yueyang.vostok.cache.provider.VKCacheProvider;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -20,7 +21,8 @@ public class VKCacheConnectionPoolTest {
                 .maxActive(1)
                 .minIdle(0)
                 .maxWaitMs(80)
-                .testOnBorrow(false);
+                .testOnBorrow(false)
+                .idleValidationIntervalMs(1000);
         provider.init(cfg);
 
         VKCacheConnectionPool pool = new VKCacheConnectionPool(provider, cfg);
@@ -50,16 +52,17 @@ public class VKCacheConnectionPoolTest {
                 .maxActive(2)
                 .minIdle(1)
                 .maxWaitMs(50)
-                .testOnBorrow(true);
+                .testOnBorrow(true)
+                .idleValidationIntervalMs(1000);
         provider.init(cfg);
 
         VKCacheConnectionPool pool = new VKCacheConnectionPool(provider, cfg);
         assertThrows(VKCacheException.class, pool::borrow);
         assertTrue(provider.destroyed.get() >= 1);
+        pool.close();
     }
 
     private static final class DummyProvider implements VKCacheProvider {
-        private final AtomicInteger created = new AtomicInteger();
         private final AtomicInteger destroyed = new AtomicInteger();
         private volatile boolean valid = true;
 
@@ -75,7 +78,6 @@ public class VKCacheConnectionPoolTest {
 
         @Override
         public VKCacheClient createClient() {
-            created.incrementAndGet();
             return new DummyClient();
         }
 
@@ -132,6 +134,66 @@ public class VKCacheConnectionPoolTest {
 
         @Override
         public void mset(Map<String, byte[]> kv) {
+        }
+
+        @Override
+        public long hset(String key, String field, byte[] value) {
+            return 0;
+        }
+
+        @Override
+        public byte[] hget(String key, String field) {
+            return null;
+        }
+
+        @Override
+        public Map<String, byte[]> hgetAll(String key) {
+            return Map.of();
+        }
+
+        @Override
+        public long hdel(String key, String... fields) {
+            return 0;
+        }
+
+        @Override
+        public long lpush(String key, byte[]... values) {
+            return 0;
+        }
+
+        @Override
+        public List<byte[]> lrange(String key, long start, long stop) {
+            return List.of();
+        }
+
+        @Override
+        public long sadd(String key, byte[]... members) {
+            return 0;
+        }
+
+        @Override
+        public Set<byte[]> smembers(String key) {
+            return Set.of();
+        }
+
+        @Override
+        public long zadd(String key, double score, byte[] member) {
+            return 0;
+        }
+
+        @Override
+        public List<byte[]> zrange(String key, long start, long stop) {
+            return List.of();
+        }
+
+        @Override
+        public List<String> scan(String pattern, int count) {
+            return List.of();
+        }
+
+        @Override
+        public boolean ping() {
+            return true;
         }
 
         @Override

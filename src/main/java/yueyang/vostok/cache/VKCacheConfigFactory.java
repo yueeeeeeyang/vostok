@@ -47,12 +47,18 @@ public final class VKCacheConfigFactory {
         VKCacheConfig cfg = new VKCacheConfig();
         cfg.providerType(VKCacheProviderType.from(read(source, p, "provider", cfg.getProviderType().name())));
         cfg.endpoints(splitCsv(read(source, p, "endpoints", String.join(",", cfg.getEndpoints()))));
+        cfg.redisMode(readEnum(source, p, "redisMode", VKRedisMode.class, cfg.getRedisMode()));
+        cfg.sentinelMaster(read(source, p, "sentinelMaster", cfg.getSentinelMaster()));
+        cfg.clusterVirtualNodes(readInt(source, p, "clusterVirtualNodes", cfg.getClusterVirtualNodes()));
+
         cfg.username(read(source, p, "username", cfg.getUsername()));
         cfg.password(read(source, p, "password", cfg.getPassword()));
         cfg.database(readInt(source, p, "database", cfg.getDatabase()));
         cfg.ssl(readBool(source, p, "ssl", cfg.isSsl()));
         cfg.connectTimeoutMs(readInt(source, p, "connectTimeoutMs", cfg.getConnectTimeoutMs()));
         cfg.readTimeoutMs(readInt(source, p, "readTimeoutMs", cfg.getReadTimeoutMs()));
+        cfg.heartbeatIntervalMs(readInt(source, p, "heartbeatIntervalMs", cfg.getHeartbeatIntervalMs()));
+        cfg.reconnectMaxAttempts(readInt(source, p, "reconnectMaxAttempts", cfg.getReconnectMaxAttempts()));
 
         cfg.minIdle(readInt(source, p, "minIdle", cfg.getMinIdle()));
         cfg.maxActive(readInt(source, p, "maxActive", cfg.getMaxActive()));
@@ -61,16 +67,27 @@ public final class VKCacheConfigFactory {
         cfg.testOnReturn(readBool(source, p, "testOnReturn", cfg.isTestOnReturn()));
         cfg.idleValidationIntervalMs(readLong(source, p, "idleValidationIntervalMs", cfg.getIdleValidationIntervalMs()));
         cfg.idleTimeoutMs(readLong(source, p, "idleTimeoutMs", cfg.getIdleTimeoutMs()));
+        cfg.leakDetectMs(readLong(source, p, "leakDetectMs", cfg.getLeakDetectMs()));
 
         cfg.retryEnabled(readBool(source, p, "retryEnabled", cfg.isRetryEnabled()));
         cfg.maxRetries(readInt(source, p, "maxRetries", cfg.getMaxRetries()));
         cfg.retryBackoffBaseMs(readLong(source, p, "retryBackoffBaseMs", cfg.getRetryBackoffBaseMs()));
         cfg.retryBackoffMaxMs(readLong(source, p, "retryBackoffMaxMs", cfg.getRetryBackoffMaxMs()));
+        cfg.retryJitterEnabled(readBool(source, p, "retryJitterEnabled", cfg.isRetryJitterEnabled()));
 
         cfg.defaultTtlMs(readLong(source, p, "defaultTtlMs", cfg.getDefaultTtlMs()));
+        cfg.ttlJitterMs(readLong(source, p, "ttlJitterMs", cfg.getTtlJitterMs()));
         cfg.keyPrefix(read(source, p, "keyPrefix", cfg.getKeyPrefix()));
         cfg.codec(read(source, p, "codec", cfg.getCodec()));
         cfg.metricsEnabled(readBool(source, p, "metricsEnabled", cfg.isMetricsEnabled()));
+
+        cfg.nullCacheEnabled(readBool(source, p, "nullCacheEnabled", cfg.isNullCacheEnabled()));
+        cfg.nullCacheTtlMs(readLong(source, p, "nullCacheTtlMs", cfg.getNullCacheTtlMs()));
+        cfg.singleFlightEnabled(readBool(source, p, "singleFlightEnabled", cfg.isSingleFlightEnabled()));
+        cfg.keyMutexEnabled(readBool(source, p, "keyMutexEnabled", cfg.isKeyMutexEnabled()));
+        cfg.keyMutexMaxSize(readInt(source, p, "keyMutexMaxSize", cfg.getKeyMutexMaxSize()));
+        cfg.rateLimitQps(readInt(source, p, "rateLimitQps", cfg.getRateLimitQps()));
+        cfg.degradePolicy(readEnum(source, p, "degradePolicy", VKCacheDegradePolicy.class, cfg.getDegradePolicy()));
         return cfg;
     }
 
@@ -137,5 +154,21 @@ public final class VKCacheConfigFactory {
                 .map(String::trim)
                 .filter(it -> !it.isEmpty())
                 .toArray(String[]::new);
+    }
+
+    private static <E extends Enum<E>> E readEnum(Map<String, String> source,
+                                                  String prefix,
+                                                  String key,
+                                                  Class<E> enumType,
+                                                  E defaultValue) {
+        String v = read(source, prefix, key, null);
+        if (v == null || v.isBlank()) {
+            return defaultValue;
+        }
+        try {
+            return Enum.valueOf(enumType, v.trim().toUpperCase());
+        } catch (Exception e) {
+            return defaultValue;
+        }
     }
 }

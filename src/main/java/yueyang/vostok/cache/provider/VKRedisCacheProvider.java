@@ -1,13 +1,16 @@
 package yueyang.vostok.cache.provider;
 
 import yueyang.vostok.cache.VKCacheConfig;
+import yueyang.vostok.cache.VKRedisMode;
 import yueyang.vostok.cache.exception.VKCacheErrorCode;
 import yueyang.vostok.cache.exception.VKCacheException;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class VKRedisCacheProvider implements VKCacheProvider {
     private VKCacheConfig config;
-    private String host;
-    private int port;
+    private VKRedisTopologyResolver resolver;
 
     @Override
     public String type() {
@@ -19,36 +22,33 @@ public class VKRedisCacheProvider implements VKCacheProvider {
         if (config == null) {
             throw new VKCacheException(VKCacheErrorCode.CONFIG_ERROR, "VKCacheConfig is null");
         }
-        String[] endpoints = config.getEndpoints();
-        if (endpoints.length == 0) {
+        String[] eps = config.getEndpoints();
+        if (eps.length == 0) {
             throw new VKCacheException(VKCacheErrorCode.CONFIG_ERROR, "Redis endpoints are empty");
         }
-        String endpoint = endpoints[0];
-        String[] parts = endpoint.split(":", 2);
-        if (parts.length != 2) {
-            throw new VKCacheException(VKCacheErrorCode.CONFIG_ERROR, "Redis endpoint format invalid: " + endpoint);
+        List<VKRedisEndpoint> endpoints = new ArrayList<>();
+        for (String ep : eps) {
+            try {
+                endpoints.add(VKRedisEndpoint.parse(ep));
+            } catch (Exception e) {
+                throw new VKCacheException(VKCacheErrorCode.CONFIG_ERROR,
+                        "Redis endpoint invalid: " + ep, e);
+            }
         }
-        this.host = parts[0].trim();
-        try {
-            this.port = Integer.parseInt(parts[1].trim());
-        } catch (Exception e) {
-            throw new VKCacheException(VKCacheErrorCode.CONFIG_ERROR, "Redis endpoint port invalid: " + endpoint);
-        }
+        VKRedisMode mode = config.getRedisMode() == null ? VKRedisMode.SINGLE : config.getRedisMode();
         this.config = config.copy();
+        this.resolver = new VKRedisTopologyResolver(mode, endpoints);
     }
 
     @Override
     public VKCacheClient createClient() {
         ensureInit();
-        return new VKRedisClient(host, port, config);
+        return new VKRedisClient(resolver, config);
     }
 
     @Override
     public boolean validate(VKCacheClient client) {
-        if (!(client instanceof VKRedisClient redisClient)) {
-            return false;
-        }
-        return redisClient.ping();
+        return client != null && client.ping();
     }
 
     @Override
@@ -67,7 +67,7 @@ public class VKRedisCacheProvider implements VKCacheProvider {
     }
 
     private void ensureInit() {
-        if (config == null) {
+        if (config == null || resolver == null) {
             throw new VKCacheException(VKCacheErrorCode.STATE_ERROR,
                     "Redis cache provider is not initialized");
         }

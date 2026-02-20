@@ -7,6 +7,10 @@ import java.util.Map;
 public class VKCacheConfig {
     private VKCacheProviderType providerType = VKCacheProviderType.MEMORY;
     private String[] endpoints = new String[]{"127.0.0.1:6379"};
+    private VKRedisMode redisMode = VKRedisMode.SINGLE;
+    private String sentinelMaster = "mymaster";
+    private int clusterVirtualNodes = 128;
+
     private String username;
     private String password;
     private int database = 0;
@@ -14,24 +18,40 @@ public class VKCacheConfig {
 
     private int connectTimeoutMs = 2000;
     private int readTimeoutMs = 2000;
+    private int heartbeatIntervalMs = 15000;
+    private int reconnectMaxAttempts = 2;
 
     private int minIdle = 1;
     private int maxActive = 8;
     private long maxWaitMs = 3000;
     private boolean testOnBorrow = true;
     private boolean testOnReturn = false;
-    private long idleValidationIntervalMs = 0;
-    private long idleTimeoutMs = 0;
+    private long idleValidationIntervalMs = 30000;
+    private long idleTimeoutMs = 120000;
+    private long leakDetectMs = 60000;
 
-    private boolean retryEnabled = false;
-    private int maxRetries = 1;
+    private boolean retryEnabled = true;
+    private int maxRetries = 2;
     private long retryBackoffBaseMs = 30;
     private long retryBackoffMaxMs = 500;
+    private boolean retryJitterEnabled = true;
 
     private long defaultTtlMs = 0;
+    private long ttlJitterMs = 0;
     private String keyPrefix = "";
     private String codec = "json";
     private boolean metricsEnabled = true;
+
+    private boolean nullCacheEnabled = true;
+    private long nullCacheTtlMs = 30000;
+    private boolean singleFlightEnabled = true;
+    private boolean keyMutexEnabled = true;
+    private int keyMutexMaxSize = 10000;
+
+    private int rateLimitQps = 0;
+    private VKCacheDegradePolicy degradePolicy = VKCacheDegradePolicy.FAIL_FAST;
+
+    private transient VKBloomFilter bloomFilter = VKBloomFilter.noOp();
 
     private Map<String, String> options = new LinkedHashMap<>();
 
@@ -50,6 +70,33 @@ public class VKCacheConfig {
 
     public VKCacheConfig endpoints(String... endpoints) {
         this.endpoints = endpoints == null ? new String[0] : endpoints.clone();
+        return this;
+    }
+
+    public VKRedisMode getRedisMode() {
+        return redisMode;
+    }
+
+    public VKCacheConfig redisMode(VKRedisMode redisMode) {
+        this.redisMode = redisMode == null ? VKRedisMode.SINGLE : redisMode;
+        return this;
+    }
+
+    public String getSentinelMaster() {
+        return sentinelMaster;
+    }
+
+    public VKCacheConfig sentinelMaster(String sentinelMaster) {
+        this.sentinelMaster = sentinelMaster == null ? "mymaster" : sentinelMaster;
+        return this;
+    }
+
+    public int getClusterVirtualNodes() {
+        return clusterVirtualNodes;
+    }
+
+    public VKCacheConfig clusterVirtualNodes(int clusterVirtualNodes) {
+        this.clusterVirtualNodes = clusterVirtualNodes;
         return this;
     }
 
@@ -104,6 +151,24 @@ public class VKCacheConfig {
 
     public VKCacheConfig readTimeoutMs(int readTimeoutMs) {
         this.readTimeoutMs = readTimeoutMs;
+        return this;
+    }
+
+    public int getHeartbeatIntervalMs() {
+        return heartbeatIntervalMs;
+    }
+
+    public VKCacheConfig heartbeatIntervalMs(int heartbeatIntervalMs) {
+        this.heartbeatIntervalMs = heartbeatIntervalMs;
+        return this;
+    }
+
+    public int getReconnectMaxAttempts() {
+        return reconnectMaxAttempts;
+    }
+
+    public VKCacheConfig reconnectMaxAttempts(int reconnectMaxAttempts) {
+        this.reconnectMaxAttempts = reconnectMaxAttempts;
         return this;
     }
 
@@ -170,6 +235,15 @@ public class VKCacheConfig {
         return this;
     }
 
+    public long getLeakDetectMs() {
+        return leakDetectMs;
+    }
+
+    public VKCacheConfig leakDetectMs(long leakDetectMs) {
+        this.leakDetectMs = leakDetectMs;
+        return this;
+    }
+
     public boolean isRetryEnabled() {
         return retryEnabled;
     }
@@ -206,12 +280,30 @@ public class VKCacheConfig {
         return this;
     }
 
+    public boolean isRetryJitterEnabled() {
+        return retryJitterEnabled;
+    }
+
+    public VKCacheConfig retryJitterEnabled(boolean retryJitterEnabled) {
+        this.retryJitterEnabled = retryJitterEnabled;
+        return this;
+    }
+
     public long getDefaultTtlMs() {
         return defaultTtlMs;
     }
 
     public VKCacheConfig defaultTtlMs(long defaultTtlMs) {
         this.defaultTtlMs = defaultTtlMs;
+        return this;
+    }
+
+    public long getTtlJitterMs() {
+        return ttlJitterMs;
+    }
+
+    public VKCacheConfig ttlJitterMs(long ttlJitterMs) {
+        this.ttlJitterMs = ttlJitterMs;
         return this;
     }
 
@@ -242,6 +334,78 @@ public class VKCacheConfig {
         return this;
     }
 
+    public boolean isNullCacheEnabled() {
+        return nullCacheEnabled;
+    }
+
+    public VKCacheConfig nullCacheEnabled(boolean nullCacheEnabled) {
+        this.nullCacheEnabled = nullCacheEnabled;
+        return this;
+    }
+
+    public long getNullCacheTtlMs() {
+        return nullCacheTtlMs;
+    }
+
+    public VKCacheConfig nullCacheTtlMs(long nullCacheTtlMs) {
+        this.nullCacheTtlMs = nullCacheTtlMs;
+        return this;
+    }
+
+    public boolean isSingleFlightEnabled() {
+        return singleFlightEnabled;
+    }
+
+    public VKCacheConfig singleFlightEnabled(boolean singleFlightEnabled) {
+        this.singleFlightEnabled = singleFlightEnabled;
+        return this;
+    }
+
+    public boolean isKeyMutexEnabled() {
+        return keyMutexEnabled;
+    }
+
+    public VKCacheConfig keyMutexEnabled(boolean keyMutexEnabled) {
+        this.keyMutexEnabled = keyMutexEnabled;
+        return this;
+    }
+
+    public int getKeyMutexMaxSize() {
+        return keyMutexMaxSize;
+    }
+
+    public VKCacheConfig keyMutexMaxSize(int keyMutexMaxSize) {
+        this.keyMutexMaxSize = keyMutexMaxSize;
+        return this;
+    }
+
+    public int getRateLimitQps() {
+        return rateLimitQps;
+    }
+
+    public VKCacheConfig rateLimitQps(int rateLimitQps) {
+        this.rateLimitQps = rateLimitQps;
+        return this;
+    }
+
+    public VKCacheDegradePolicy getDegradePolicy() {
+        return degradePolicy;
+    }
+
+    public VKCacheConfig degradePolicy(VKCacheDegradePolicy degradePolicy) {
+        this.degradePolicy = degradePolicy == null ? VKCacheDegradePolicy.FAIL_FAST : degradePolicy;
+        return this;
+    }
+
+    public VKBloomFilter getBloomFilter() {
+        return bloomFilter;
+    }
+
+    public VKCacheConfig bloomFilter(VKBloomFilter bloomFilter) {
+        this.bloomFilter = bloomFilter == null ? VKBloomFilter.noOp() : bloomFilter;
+        return this;
+    }
+
     public Map<String, String> getOptions() {
         return new LinkedHashMap<>(options);
     }
@@ -263,15 +427,20 @@ public class VKCacheConfig {
     }
 
     public VKCacheConfig copy() {
-        VKCacheConfig cfg = new VKCacheConfig()
+        return new VKCacheConfig()
                 .providerType(providerType)
                 .endpoints(getEndpoints())
+                .redisMode(redisMode)
+                .sentinelMaster(sentinelMaster)
+                .clusterVirtualNodes(clusterVirtualNodes)
                 .username(username)
                 .password(password)
                 .database(database)
                 .ssl(ssl)
                 .connectTimeoutMs(connectTimeoutMs)
                 .readTimeoutMs(readTimeoutMs)
+                .heartbeatIntervalMs(heartbeatIntervalMs)
+                .reconnectMaxAttempts(reconnectMaxAttempts)
                 .minIdle(minIdle)
                 .maxActive(maxActive)
                 .maxWaitMs(maxWaitMs)
@@ -279,16 +448,26 @@ public class VKCacheConfig {
                 .testOnReturn(testOnReturn)
                 .idleValidationIntervalMs(idleValidationIntervalMs)
                 .idleTimeoutMs(idleTimeoutMs)
+                .leakDetectMs(leakDetectMs)
                 .retryEnabled(retryEnabled)
                 .maxRetries(maxRetries)
                 .retryBackoffBaseMs(retryBackoffBaseMs)
                 .retryBackoffMaxMs(retryBackoffMaxMs)
+                .retryJitterEnabled(retryJitterEnabled)
                 .defaultTtlMs(defaultTtlMs)
+                .ttlJitterMs(ttlJitterMs)
                 .keyPrefix(keyPrefix)
                 .codec(codec)
                 .metricsEnabled(metricsEnabled)
+                .nullCacheEnabled(nullCacheEnabled)
+                .nullCacheTtlMs(nullCacheTtlMs)
+                .singleFlightEnabled(singleFlightEnabled)
+                .keyMutexEnabled(keyMutexEnabled)
+                .keyMutexMaxSize(keyMutexMaxSize)
+                .rateLimitQps(rateLimitQps)
+                .degradePolicy(degradePolicy)
+                .bloomFilter(bloomFilter)
                 .options(options);
-        return cfg;
     }
 
     @Override
@@ -296,11 +475,13 @@ public class VKCacheConfig {
         return "VKCacheConfig{" +
                 "providerType=" + providerType +
                 ", endpoints=" + Arrays.toString(endpoints) +
+                ", redisMode=" + redisMode +
                 ", database=" + database +
                 ", ssl=" + ssl +
                 ", minIdle=" + minIdle +
                 ", maxActive=" + maxActive +
                 ", defaultTtlMs=" + defaultTtlMs +
+                ", ttlJitterMs=" + ttlJitterMs +
                 ", keyPrefix='" + keyPrefix + '\'' +
                 ", codec='" + codec + '\'' +
                 '}';
