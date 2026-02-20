@@ -3828,3 +3828,180 @@ var fromProperties = VKCacheConfigFactory.fromProperties(Path.of("./cache.proper
 - `SCAN` 当前返回单次扫描批次（`count` 限制），如需全量遍历请循环调用。
 - BloomFilter 由业务注入，默认 `noOp`（始终放行）。
 - `RETURN_NULL` / `SKIP_WRITE` 降级策略仅在命中池限流时生效。
+
+# 10. Http 模块
+
+`Vostok.Http` 提供面向第三方 API 的统一调用能力，支持命名 Client、鉴权、重试、超时、表单/文件上传、JSON 序列化与指标。
+
+## 10.1 接口定义
+
+```java
+public interface Vostok.Http {
+    // 生命周期
+    public static void init();
+    public static void init(VKHttpConfig config);
+    public static void reinit(VKHttpConfig config);
+    public static boolean started();
+    public static VKHttpConfig config();
+    public static void close();
+
+    // 命名 Client
+    public static void registerClient(String name, VKHttpClientConfig config);
+    public static void withClient(String name, Runnable action);
+    public static <T> T withClient(String name, Supplier<T> supplier);
+    public static Set<String> clientNames();
+    public static String currentClientName();
+
+    // 请求构建
+    public static VKHttpRequestBuilder request();
+    public static VKHttpRequestBuilder get(String urlOrPath);
+    public static VKHttpRequestBuilder post(String urlOrPath);
+    public static VKHttpRequestBuilder put(String urlOrPath);
+    public static VKHttpRequestBuilder patch(String urlOrPath);
+    public static VKHttpRequestBuilder delete(String urlOrPath);
+    public static VKHttpRequestBuilder head(String urlOrPath);
+
+    // 执行
+    public static VKHttpResponse execute(VKHttpRequest request);
+    public static <T> T executeJson(VKHttpRequest request, Class<T> type);
+    public static CompletableFuture<VKHttpResponse> executeAsync(VKHttpRequest request);
+    public static <T> CompletableFuture<T> executeJsonAsync(VKHttpRequest request, Class<T> type);
+
+    // 指标
+    public static VKHttpMetrics metrics();
+    public static void resetMetrics();
+}
+```
+
+## 10.2 使用 Demo
+
+### 10.2.1 基础调用（GET + Path + Query）
+
+```java
+Vostok.Http.init(new VKHttpConfig()
+        .requestTimeoutMs(3000)
+        .maxRetries(1));
+
+Vostok.Http.registerClient("github", new VKHttpClientConfig()
+        .baseUrl("https://api.github.com")
+        .putHeader("Accept", "application/json"));
+
+var user = Vostok.Http.get("/users/{name}")
+        .client("github")
+        .path("name", "octocat")
+        .query("per_page", 20)
+        .executeJson(MyUser.class);
+```
+
+### 10.2.2 POST JSON
+
+```java
+var response = Vostok.Http.post("/orders")
+        .client("erp")
+        .bodyJson(Map.of("bizId", "A-1001", "amount", 99.5))
+        .execute();
+
+int status = response.statusCode();
+String body = response.bodyText();
+```
+
+### 10.2.3 鉴权
+
+```java
+Vostok.Http.registerClient("openai", new VKHttpClientConfig()
+        .baseUrl("https://api.openai.com")
+        .auth(new VKBearerAuth("<TOKEN>")));
+
+Vostok.Http.registerClient("internal", new VKHttpClientConfig()
+        .baseUrl("https://example.com")
+        .auth(VKApiKeyAuth.query("api_key", "k-xxx")));
+```
+
+### 10.2.4 表单与文件上传
+
+```java
+// x-www-form-urlencoded
+Vostok.Http.post("/oauth/token")
+        .client("auth")
+        .form("grant_type", "client_credentials")
+        .form("client_id", "abc")
+        .form("client_secret", "***")
+        .execute();
+
+// multipart/form-data
+Vostok.Http.post("/upload")
+        .client("file")
+        .multipart("desc", "avatar")
+        .multipart("file", "a.png", "image/png", bytes)
+        .execute();
+```
+
+### 10.2.5 异步调用
+
+```java
+CompletableFuture<MyResp> future = Vostok.Http.get("/jobs/{id}")
+        .client("job")
+        .path("id", 1001)
+        .executeJsonAsync(MyResp.class);
+
+MyResp resp = future.join();
+```
+
+## 10.3 配置详解
+
+### 10.3.1 VKHttpConfig（全局）
+
+- `connectTimeoutMs`：连接超时（默认 `3000`）
+- `requestTimeoutMs`：请求超时（默认 `10000`）
+- `maxRetries`：默认重试次数（默认 `1`）
+- `retryBackoffBaseMs/retryBackoffMaxMs/retryJitterEnabled`：退避策略
+- `retryOnNetworkError`：网络异常是否重试（默认 `true`）
+- `retryOnStatuses`：可重试状态码（默认 `429/502/503/504`）
+- `retryMethods`：允许重试的方法（默认 `GET/HEAD/OPTIONS/PUT/DELETE`）
+- `failOnNon2xx`：是否将非 2xx 视为异常（默认 `true`）
+- `followRedirects`：是否跟随重定向（默认 `true`）
+- `maxResponseBodyBytes`：响应体大小上限（默认 `8MB`）
+- `logEnabled`：是否输出调用日志
+- `metricsEnabled`：是否启用指标采集
+- `userAgent/defaultHeaders`：全局请求头
+
+### 10.3.2 VKHttpClientConfig（命名 Client）
+
+- `baseUrl`：基础地址（调用相对路径时必填）
+- `connectTimeoutMs/requestTimeoutMs`：覆盖全局超时
+- `maxRetries/retryOnStatuses/retryMethods`：覆盖全局重试
+- `retryOnNetworkError/failOnNon2xx/followRedirects`：覆盖全局行为
+- `maxResponseBodyBytes`：覆盖全局响应上限
+- `defaultHeaders/userAgent`：Client 级请求头
+- `auth`：Client 级鉴权策略
+
+## 10.4 错误模型
+
+`Vostok.Http` 抛出 `VKHttpException`，并包含 `VKHttpErrorCode`：
+
+- `INVALID_ARGUMENT`：非法参数
+- `CONFIG_ERROR`：配置错误（如相对路径未配置 `baseUrl`）
+- `NETWORK_ERROR`：网络 I/O 错误
+- `TIMEOUT`：请求超时
+- `HTTP_STATUS`：非 2xx（在 `failOnNon2xx=true` 时）
+- `RESPONSE_TOO_LARGE`：响应体超限
+- `SERIALIZATION_ERROR`：JSON 序列化/反序列化失败
+
+## 10.5 指标说明
+
+通过 `Vostok.Http.metrics()` 获取快照：
+
+- `totalCalls/successCalls/failedCalls`
+- `retriedCalls`
+- `timeoutCalls/networkErrorCalls`
+- `totalCostMs`
+- `statusCounts`（按状态码聚合）
+
+可通过 `Vostok.Http.resetMetrics()` 清零。
+
+## 10.6 说明与边界
+
+- `Vostok.Http` 是 HTTP Client，不是 Web Server。
+- 当前默认 JSON 能力使用 `VKJson`，复杂泛型反序列化建议业务侧自行转换。
+- 重试默认仅覆盖幂等方法；如需对 `POST` 重试，请结合业务幂等键控制。
+- 非 2xx 默认抛异常，可在请求级调用 `.failOnNon2xx(false)` 改为手动处理响应。

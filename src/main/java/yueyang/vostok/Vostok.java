@@ -8,6 +8,7 @@ import yueyang.vostok.file.VostokFile;
 import yueyang.vostok.log.VostokLog;
 import yueyang.vostok.security.VostokSecurity;
 import yueyang.vostok.web.VostokWeb;
+import yueyang.vostok.http.VostokHttp;
 
 /**
  * Vostok 统一入口。
@@ -77,6 +78,14 @@ public final class Vostok {
      */
     public static final class Event extends VostokEvent {
         private Event() {
+        }
+    }
+
+    /**
+     * Http entry.
+     */
+    public static final class Http extends VostokHttp {
+        private Http() {
         }
     }
 }
