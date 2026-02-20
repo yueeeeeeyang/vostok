@@ -6,7 +6,7 @@ import yueyang.vostok.data.ds.VKDataSourceRegistry;
 import yueyang.vostok.data.meta.MetaRegistry;
 import yueyang.vostok.data.plugin.VKInterceptor;
 import yueyang.vostok.data.plugin.VKInterceptorRegistry;
-import yueyang.vostok.common.scan.VKScanner;
+import yueyang.vostok.util.scan.VKScanner;
 import yueyang.vostok.data.sql.VKSqlWhitelist;
 import yueyang.vostok.util.VKAssert;
 import yueyang.vostok.Vostok;

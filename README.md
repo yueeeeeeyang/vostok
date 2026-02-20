@@ -2,7 +2,7 @@
 
 ---
 
-Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合九个模块能力：
+Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合十个模块能力：
 
 - `Vostok.Data`：基于 JDBC 的数据访问（CRUD、事务、查询、多数据源、连接池）
 - `Vostok.Web`：基于 NIO Reactor 的 Web 服务器（路由、中间件、静态资源、自动 CRUD API）
@@ -13,6 +13,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Event`：进程内事件总线（统一 `publish(...)`，监听器支持同步/异步）
 - `Vostok.Cache`：统一缓存访问（支持 Redis 或内存 Provider、内置连接池、可扩展编解码器）
 - `Vostok.Http`：统一 HTTP Client（命名 Client、鉴权、重试、超时、JSON/表单/文件上传）
+- `Vostok.Util`：通用工具门面（JSON 能力、Provider 注册与切换）
 
 项目构建方式为 Maven：`/Users/yueyang/Develop/code/codex/Vostok/pom.xml`。
 
@@ -32,11 +33,10 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Event` 仅提供一个发布方法 `publish(...)`；同步/异步行为由监听器注册模式决定。
 - `Vostok.Cache` 不依赖 `Vostok.Config`，必须通过 `VKCacheConfig` 或显式 Loader 初始化。
 - `Vostok.Http` 建议显式 `init(...)` 后再使用；如调用相对路径，必须先注册带 `baseUrl` 的命名 Client。
+- JSON 能力通过 `Vostok.Util` 暴露，默认使用内置 `builtin` 实现；如需 Jackson/Gson/Fastjson 等能力，请业务侧自行实现 `VKJsonProvider` 并注册切换。
 - `Vostok.Http` 默认会对非 `2xx` 响应抛出异常（可通过 `failOnNon2xx(false)` 关闭）。
 - `Vostok.Security` 的检测结果是风险判断，不替代参数化查询、鉴权、最小权限、WAF/主机安全等基础安全控制。
 - 对于 `Vostok.Security` 的响应脱敏与文件检测能力，建议与业务字段分级、上传大小限制、存储隔离与病毒扫描联合使用。
-
----
 
 ---
 
@@ -456,8 +456,8 @@ public interface Vostok.Data {
 
 ```java
 import yueyang.vostok.Vostok;
-import yueyang.vostok.common.annotation.VKEntity;
-import yueyang.vostok.common.scan.VKScanner;
+import yueyang.vostok.util.annotation.VKEntity;
+import yueyang.vostok.util.scan.VKScanner;
 import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.annotation.VKColumn;
 import yueyang.vostok.data.annotation.VKId;
@@ -616,7 +616,7 @@ Vostok.Log.init(new VKLogConfig()
 
 ```java
 import yueyang.vostok.Vostok;
-import yueyang.vostok.common.annotation.VKEntity;
+import yueyang.vostok.util.annotation.VKEntity;
 import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.annotation.VKColumn;
 import yueyang.vostok.data.annotation.VKId;
@@ -3847,7 +3847,7 @@ var fromProperties = VKCacheConfigFactory.fromProperties(Path.of("./cache.proper
 - 当使用相对路径（如 `/users/{id}`）时，必须通过 `.client(\"name\")` 指定已注册且包含 `baseUrl` 的命名 Client。
 - 默认 `failOnNon2xx=true`，非 `2xx` 会抛出 `VKHttpException(HTTP_STATUS)`；如需手动处理响应可在请求级关闭。
 - 重试默认只覆盖幂等方法（`GET/HEAD/OPTIONS/PUT/DELETE`）；若对 `POST` 重试，请配合业务幂等键。
-- `VKJson` 适合常见对象映射，复杂泛型响应建议业务侧自行解析/转换。
+- JSON 能力通过 `Vostok.Util` 提供，复杂泛型响应建议业务侧自行解析/转换。
 
 ## 10.1 接口定义
 
@@ -4074,9 +4074,350 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 ## 10.6 说明与边界
 
 - `Vostok.Http` 是 HTTP Client，不是 Web Server。
-- 当前默认 JSON 能力使用 `VKJson`，复杂泛型反序列化建议业务侧自行转换。
+- 当前默认 JSON 能力由 `Vostok.Util` 提供，底层为内置 `builtin` 实现；如需其他 JSON 库，请业务侧实现 `VKJsonProvider` 并自行注册切换。
 - 重试默认仅覆盖幂等方法；如需对 `POST/PATCH` 重试，建议显式设置 `retryMethods(...)` 并提供 `Idempotency-Key`。
 - 非 2xx 默认抛异常，可在请求级调用 `.failOnNon2xx(false)` 改为手动处理响应。
 - HTTPS 可通过 `VKHttpClientConfig` 代码内配置 `trustStore/keyStore`，无需 JVM 全局 `-Djavax.net.ssl.*` 参数。
 - 命名 Client 会复用底层 `HttpClient`；配置变更（`registerClient/reinit/close`）会触发复用缓存刷新。
 - 默认执行顺序为：`RateLimit -> CircuitBreaker -> Bulkhead -> Execute`。
+
+---
+
+# 11. Util 模块
+
+`Vostok.Util` 提供通用工具门面，当前包含 JSON 能力与高性能字符串能力。
+
+## 11.1 接口定义
+
+```java
+public interface Vostok.Util {
+    /**
+     * 对象序列化为 JSON 字符串。
+     *
+     * - value：待序列化对象，类型为 Object，可为 null。
+     * - 返回值：String（JSON 文本；value 为 null 时返回 "null"）。
+     */
+    public static String toJson(Object value);
+
+    /**
+     * JSON 反序列化为指定类型对象。
+     *
+     * - json：JSON 文本，类型为 String，可为 null。
+     * - type：目标类型，类型为 Class<T>，不能为空。
+     * - 返回值：T（反序列化结果；json 为 null 时返回 null）。
+     */
+    public static <T> T fromJson(String json, Class<T> type);
+
+    /**
+     * 注册 JSON Provider 实现。
+     *
+     * - provider：Provider 实现，类型为 VKJsonProvider，不能为空。
+     */
+    public static void registerJsonProvider(VKJsonProvider provider);
+
+    /**
+     * 切换当前 JSON Provider。
+     *
+     * - name：Provider 名称，类型为 String，不能为空。
+     */
+    public static void useJsonProvider(String name);
+
+    /**
+     * 切换回默认 JSON Provider（builtin）。
+     */
+    public static void resetDefaultJsonProvider();
+
+    /**
+     * 获取当前 JSON Provider 名称。
+     *
+     * - 返回值：String（当前 Provider 名称）。
+     */
+    public static String currentJsonProviderName();
+
+    /**
+     * 获取已注册 JSON Provider 名称集合。
+     *
+     * - 返回值：Set<String>（Provider 名称集合）。
+     */
+    public static Set<String> jsonProviderNames();
+
+    /**
+     * 判断字符串是否为空（null 或 length=0）。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：boolean。
+     */
+    public static boolean isEmpty(String value);
+
+    /**
+     * 判断字符串是否为空白（null 或全部为空白字符）。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：boolean。
+     */
+    public static boolean isBlank(String value);
+
+    /**
+     * 去首尾空白；若结果为空字符串则返回 null。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String trimToNull(String value);
+
+    /**
+     * 去首尾空白；若输入为 null 返回空字符串。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String trimToEmpty(String value);
+
+    /**
+     * 空白字符串回退默认值。
+     *
+     * - value：输入字符串，类型为 String。
+     * - defaultValue：默认值，类型为 String。
+     * - 返回值：String。
+     */
+    public static String defaultIfBlank(String value, String defaultValue);
+
+    /**
+     * 按单字符分隔符快速拆分（非正则）。
+     *
+     * - value：输入字符串，类型为 String。
+     * - delimiter：分隔符，类型为 char。
+     * - 返回值：String[]。
+     */
+    public static String[] fastSplit(String value, char delimiter);
+
+    /**
+     * 使用分隔符拼接多个值。
+     *
+     * - delimiter：分隔符，类型为 char。
+     * - values：待拼接值，类型为 Object...。
+     * - 返回值：String。
+     */
+    public static String join(char delimiter, Object... values);
+
+    /**
+     * ASCII 忽略大小写比较。
+     *
+     * - a：左值，类型为 String。
+     * - b：右值，类型为 String。
+     * - 返回值：boolean。
+     */
+    public static boolean equalsIgnoreCaseAscii(String a, String b);
+
+    /**
+     * ASCII 忽略大小写包含判断。
+     *
+     * - value：输入字符串，类型为 String。
+     * - part：子串，类型为 String。
+     * - 返回值：boolean。
+     */
+    public static boolean containsIgnoreCaseAscii(String value, String part);
+
+    /**
+     * ASCII 忽略大小写前缀判断。
+     *
+     * - value：输入字符串，类型为 String。
+     * - prefix：前缀，类型为 String。
+     * - 返回值：boolean。
+     */
+    public static boolean startsWithIgnoreCaseAscii(String value, String prefix);
+
+    /**
+     * 通配符匹配（支持 * 和 ?）。
+     *
+     * - value：输入字符串，类型为 String。
+     * - pattern：通配规则，类型为 String。
+     * - 返回值：boolean。
+     */
+    public static boolean wildcardMatch(String value, String pattern);
+
+    /**
+     * 替换指定字符。
+     *
+     * - value：输入字符串，类型为 String。
+     * - target：目标字符，类型为 char。
+     * - replacement：替换字符，类型为 char。
+     * - 返回值：String。
+     */
+    public static String replaceChar(String value, char target, char replacement);
+
+    /**
+     * 移除全部空白字符。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String removeWhitespace(String value);
+
+    /**
+     * 折叠连续空白为单空格并 trim。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String collapseSpaces(String value);
+
+    /**
+     * 移除控制字符（保留 \\n/\\r/\\t）。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String stripControlChars(String value);
+
+    /**
+     * 按 Unicode code point 截断。
+     *
+     * - value：输入字符串，类型为 String。
+     * - maxCodePoints：最大 code point 数，类型为 int。
+     * - 返回值：String。
+     */
+    public static String truncateByCodePoint(String value, int maxCodePoints);
+
+    /**
+     * 按 code point 截断并追加省略号。
+     *
+     * - value：输入字符串，类型为 String。
+     * - maxCodePoints：最大 code point 数，类型为 int。
+     * - 返回值：String。
+     */
+    public static String ellipsis(String value, int maxCodePoints);
+
+    /**
+     * 安全子串（自动裁剪越界下标）。
+     *
+     * - value：输入字符串，类型为 String。
+     * - start：起始下标，类型为 int。
+     * - end：结束下标（不含），类型为 int。
+     * - 返回值：String。
+     */
+    public static String safeSubstring(String value, int start, int end);
+
+    /**
+     * camelCase 转 snake_case。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String camelToSnake(String value);
+
+    /**
+     * snake_case 转 camelCase。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String snakeToCamel(String value);
+
+    /**
+     * kebab-case 转 camelCase。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String kebabToCamel(String value);
+
+    /**
+     * UTF-8 URL 编码。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String urlEncodeUtf8(String value);
+
+    /**
+     * UTF-8 URL 解码。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String urlDecodeUtf8(String value);
+
+    /**
+     * 字符串转 UTF-8 字节数组。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：byte[]。
+     */
+    public static byte[] toUtf8Bytes(String value);
+
+    /**
+     * UTF-8 字节数组转字符串。
+     *
+     * - bytes：输入字节数组，类型为 byte[]。
+     * - 返回值：String。
+     */
+    public static String fromUtf8Bytes(byte[] bytes);
+
+    /**
+     * 解析 int，失败返回默认值。
+     *
+     * - value：输入字符串，类型为 String。
+     * - defaultValue：默认值，类型为 int。
+     * - 返回值：int。
+     */
+    public static int toIntOrDefault(String value, int defaultValue);
+
+    /**
+     * 解析 long，失败返回默认值。
+     *
+     * - value：输入字符串，类型为 String。
+     * - defaultValue：默认值，类型为 long。
+     * - 返回值：long。
+     */
+    public static long toLongOrDefault(String value, long defaultValue);
+
+    /**
+     * 解析 boolean，失败返回默认值。
+     *
+     * - value：输入字符串，类型为 String。
+     * - defaultValue：默认值，类型为 boolean。
+     * - 返回值：boolean。
+     */
+    public static boolean toBoolOrDefault(String value, boolean defaultValue);
+}
+```
+
+## 11.2 使用 Demo
+
+```java
+String json = Vostok.Util.toJson(Map.of("name", "Tom"));
+Map<?, ?> obj = Vostok.Util.fromJson(json, Map.class);
+```
+
+```java
+import yueyang.vostok.util.json.VKJsonProvider;
+
+public final class MyJsonProvider implements VKJsonProvider {
+    @Override
+    public String name() { return "my-json"; }
+
+    @Override
+    public String toJson(Object value) { /* 调用你的 JSON 库 */ return "..."; }
+
+    @Override
+    public <T> T fromJson(String json, Class<T> type) { /* 调用你的 JSON 库 */ return null; }
+}
+
+Vostok.Util.registerJsonProvider(new MyJsonProvider());
+Vostok.Util.useJsonProvider("my-json");
+```
+
+```java
+String compact = Vostok.Util.removeWhitespace(" a b\\n c ");
+String[] parts = Vostok.Util.fastSplit("a,b,c", ',');
+String snake = Vostok.Util.camelToSnake("userName");
+boolean ok = Vostok.Util.wildcardMatch("report-2026.log", "report-*.log");
+```
+
+## 11.3 说明与边界
+
+- 默认 JSON Provider 为内置 `builtin`。
+- 第三方 JSON 库接入方式：业务侧实现 `VKJsonProvider` 并在启动阶段注册切换。
+- 字符串能力默认使用低分配实现（`char` 分隔快路径、ASCII 忽略大小写匹配、ThreadLocal `StringBuilder` 复用）。
+- `Vostok.Http`、`Vostok.Web`、`Vostok.Cache` 内部统一通过 `Vostok.Util` 调用 JSON/字符串工具能力。

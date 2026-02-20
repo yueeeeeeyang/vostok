@@ -1,7 +1,7 @@
 package yueyang.vostok.data.core;
 
 import yueyang.vostok.data.ds.VKDataSourceRegistry;
-import yueyang.vostok.common.scan.VKScanner;
+import yueyang.vostok.util.scan.VKScanner;
 import yueyang.vostok.data.sql.VKSqlWhitelist;
 
 /**

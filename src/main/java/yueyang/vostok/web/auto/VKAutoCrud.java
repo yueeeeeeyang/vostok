@@ -1,9 +1,8 @@
 package yueyang.vostok.web.auto;
 
 import yueyang.vostok.Vostok;
-import yueyang.vostok.common.annotation.VKEntity;
-import yueyang.vostok.common.json.VKJson;
-import yueyang.vostok.common.scan.VKScanner;
+import yueyang.vostok.util.annotation.VKEntity;
+import yueyang.vostok.util.scan.VKScanner;
 import yueyang.vostok.data.annotation.VKId;
 import yueyang.vostok.web.VKHandler;
 import yueyang.vostok.web.http.VKRequest;
@@ -49,7 +48,7 @@ public final class VKAutoCrud {
     private static VKHandler listHandler(Class<?> clazz) {
         return (req, res) -> {
             List<?> all = Vostok.Data.findAll(clazz);
-            res.json(VKJson.toJson(all));
+            res.json(Vostok.Util.toJson(all));
         };
     }
 
@@ -66,7 +65,7 @@ public final class VKAutoCrud {
                 res.status(404).text("Not Found");
                 return;
             }
-            res.json(VKJson.toJson(one));
+            res.json(Vostok.Util.toJson(one));
         };
     }
 
@@ -126,7 +125,7 @@ public final class VKAutoCrud {
                 res.status(404).text("Not Found");
                 return;
             }
-            res.json(VKJson.toJson(one));
+            res.json(Vostok.Util.toJson(one));
         };
     }
 
@@ -169,7 +168,7 @@ public final class VKAutoCrud {
             return null;
         }
         try {
-            return VKJson.fromJson(body, clazz);
+            return Vostok.Util.fromJson(body, clazz);
         } catch (Exception e) {
             res.status(400).text("Invalid JSON");
             return null;

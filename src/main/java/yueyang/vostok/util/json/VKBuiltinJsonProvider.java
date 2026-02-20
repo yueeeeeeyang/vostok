@@ -1,4 +1,4 @@
-package yueyang.vostok.common.json;
+package yueyang.vostok.util.json;
 
 import java.lang.reflect.Array;
 import java.lang.reflect.Constructor;
@@ -13,17 +13,21 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
-public final class VKJson {
-    private VKJson() {
+public final class VKBuiltinJsonProvider implements VKJsonProvider {
+    @Override
+    public String name() {
+        return "builtin";
     }
 
-    public static String toJson(Object obj) {
+    @Override
+    public String toJson(Object obj) {
         StringBuilder sb = new StringBuilder(256);
         writeValue(obj, sb);
         return sb.toString();
     }
 
-    public static <T> T fromJson(String json, Class<T> type) {
+    @Override
+    public <T> T fromJson(String json, Class<T> type) {
         Objects.requireNonNull(type, "type is null");
         if (json == null) {
             return null;

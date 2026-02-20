@@ -1292,7 +1292,7 @@ public class VostokIntegrationTest {
         assertEquals(2, yueyang.vostok.data.meta.MetaRegistry.size());
 
         // restore default scanner + config for remaining tests
-        Vostok.Data.setScanner(yueyang.vostok.common.scan.VKScanner::scan);
+        Vostok.Data.setScanner(yueyang.vostok.util.scan.VKScanner::scan);
         Vostok.Data.close();
         VKDataConfig cfg2 = new VKDataConfig()
                 .url(JDBC_URL)

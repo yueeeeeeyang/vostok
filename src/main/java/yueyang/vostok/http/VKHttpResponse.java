@@ -1,6 +1,6 @@
 package yueyang.vostok.http;
 
-import yueyang.vostok.common.json.VKJson;
+import yueyang.vostok.Vostok;
 import yueyang.vostok.http.exception.VKHttpErrorCode;
 import yueyang.vostok.http.exception.VKHttpException;
 
@@ -48,7 +48,7 @@ public final class VKHttpResponse {
 
     public <T> T bodyJson(Class<T> type) {
         try {
-            return VKJson.fromJson(bodyText(), type);
+            return Vostok.Util.fromJson(bodyText(), type);
         } catch (Exception e) {
             throw new VKHttpException(VKHttpErrorCode.SERIALIZATION_ERROR, "Failed to parse response body to JSON", e);
         }

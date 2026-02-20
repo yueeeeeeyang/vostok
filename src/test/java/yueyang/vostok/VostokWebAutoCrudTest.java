@@ -5,7 +5,6 @@ import org.junit.jupiter.api.Test;
 import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.config.VKBatchFailStrategy;
 import yueyang.vostok.data.dialect.VKDialectType;
-import yueyang.vostok.common.json.VKJson;
 import yueyang.vostok.web.auto.VKCrudStyle;
 
 import java.net.URI;
@@ -59,7 +58,7 @@ public class VostokWebAutoCrudTest {
         HttpResponse<String> listRes = client.send(list, HttpResponse.BodyHandlers.ofString());
         assertEquals(200, listRes.statusCode());
 
-        List<?> listObj = VKJson.fromJson(listRes.body(), List.class);
+        List<?> listObj = Vostok.Util.fromJson(listRes.body(), List.class);
         assertEquals(1, listObj.size());
         Map<?, ?> item = (Map<?, ?>) listObj.get(0);
         Object id = item.get("id");
@@ -113,7 +112,7 @@ public class VostokWebAutoCrudTest {
                 .GET()
                 .build();
         HttpResponse<String> listRes = client.send(list, HttpResponse.BodyHandlers.ofString());
-        List<?> listObj = VKJson.fromJson(listRes.body(), List.class);
+        List<?> listObj = Vostok.Util.fromJson(listRes.body(), List.class);
         Map<?, ?> item = (Map<?, ?>) listObj.get(0);
         Object id = item.get("id");
 

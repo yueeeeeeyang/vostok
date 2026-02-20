@@ -17,7 +17,7 @@ import yueyang.vostok.data.pool.VKPoolMetrics;
 import yueyang.vostok.data.plugin.VKInterceptor;
 import yueyang.vostok.data.query.VKAggregate;
 import yueyang.vostok.data.query.VKQuery;
-import yueyang.vostok.common.scan.VKScanner;
+import yueyang.vostok.util.scan.VKScanner;
 import yueyang.vostok.util.VKAssert;
 
 import java.util.List;

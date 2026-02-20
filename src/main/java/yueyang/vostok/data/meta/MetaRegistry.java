@@ -1,6 +1,6 @@
 package yueyang.vostok.data.meta;
 
-import yueyang.vostok.common.annotation.VKEntity;
+import yueyang.vostok.util.annotation.VKEntity;
 import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.sql.SqlTemplateCache;
 import yueyang.vostok.util.VKAssert;

@@ -1,6 +1,6 @@
 package yueyang.vostok.http;
 
-import yueyang.vostok.common.json.VKJson;
+import yueyang.vostok.Vostok;
 import yueyang.vostok.http.auth.VKApiKeyAuth;
 import yueyang.vostok.http.auth.VKBasicAuth;
 import yueyang.vostok.http.auth.VKBearerAuth;
@@ -174,7 +174,7 @@ public final class VKHttpRequestBuilder {
     }
 
     public VKHttpRequestBuilder bodyJson(Object value) {
-        String json = VKJson.toJson(value);
+        String json = Vostok.Util.toJson(value);
         this.body = json.getBytes(StandardCharsets.UTF_8);
         this.contentType = "application/json; charset=UTF-8";
         this.formFields.clear();

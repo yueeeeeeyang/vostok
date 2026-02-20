@@ -1,6 +1,6 @@
 package yueyang.vostokbad;
 
-import yueyang.vostok.common.annotation.VKEntity;
+import yueyang.vostok.util.annotation.VKEntity;
 import yueyang.vostok.data.annotation.VKColumn;
 import yueyang.vostok.data.annotation.VKId;
 

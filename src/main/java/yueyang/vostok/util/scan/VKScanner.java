@@ -1,4 +1,4 @@
-package yueyang.vostok.common.scan;
+package yueyang.vostok.util.scan;
 
 import yueyang.vostok.Vostok;
 

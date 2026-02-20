@@ -1,6 +1,6 @@
 package yueyang.vostok.cache.codec;
 
-import yueyang.vostok.common.json.VKJson;
+import yueyang.vostok.Vostok;
 
 import java.nio.charset.StandardCharsets;
 
@@ -21,7 +21,7 @@ public class VKJsonCacheCodec implements VKCacheCodec {
         if (value instanceof String s) {
             return s.getBytes(StandardCharsets.UTF_8);
         }
-        return VKJson.toJson(value).getBytes(StandardCharsets.UTF_8);
+        return Vostok.Util.toJson(value).getBytes(StandardCharsets.UTF_8);
     }
 
     @Override
@@ -37,6 +37,6 @@ public class VKJsonCacheCodec implements VKCacheCodec {
         if (type == String.class) {
             return (T) json;
         }
-        return VKJson.fromJson(json, type);
+        return Vostok.Util.fromJson(json, type);
     }
 }

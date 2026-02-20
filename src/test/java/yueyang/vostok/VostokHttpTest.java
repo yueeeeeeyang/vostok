@@ -428,7 +428,7 @@ public class VostokHttpTest {
     }
 
     private void writeJson(HttpExchange exchange, int status, Map<String, ?> data) throws IOException {
-        byte[] bytes = yueyang.vostok.common.json.VKJson.toJson(data).getBytes(StandardCharsets.UTF_8);
+        byte[] bytes = Vostok.Util.toJson(data).getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
         exchange.sendResponseHeaders(status, bytes.length);
         exchange.getResponseBody().write(bytes);
