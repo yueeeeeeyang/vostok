@@ -4380,6 +4380,479 @@ public interface Vostok.Util {
      * - 返回值：boolean。
      */
     public static boolean toBoolOrDefault(String value, boolean defaultValue);
+
+    /**
+     * 判断集合是否为空（null 或 size=0）。
+     *
+     * - value：输入集合，类型为 Collection<?>。
+     * - 返回值：boolean。
+     */
+    public static boolean isEmpty(Collection<?> value);
+
+    /**
+     * 判断 Map 是否为空（null 或 size=0）。
+     *
+     * - value：输入 Map，类型为 Map<?, ?>。
+     * - 返回值：boolean。
+     */
+    public static boolean isEmpty(Map<?, ?> value);
+
+    /**
+     * 按预估大小创建 HashMap，减少扩容。
+     *
+     * - expectedSize：预估元素个数，类型为 int。
+     * - 返回值：HashMap<K, V>。
+     */
+    public static <K, V> HashMap<K, V> newHashMapWithExpectedSize(int expectedSize);
+
+    /**
+     * 安全读取列表元素（越界返回默认值）。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - index：目标下标，类型为 int。
+     * - defaultValue：默认值，类型为 T。
+     * - 返回值：T。
+     */
+    public static <T> T safeGet(List<T> list, int index, T defaultValue);
+
+    /**
+     * 列表去重并保持原始顺序。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - 返回值：List<T>。
+     */
+    public static <T> List<T> distinctPreserveOrder(List<T> list);
+
+    /**
+     * 按预估大小创建 ArrayList。
+     *
+     * - expectedSize：预估元素个数，类型为 int。
+     * - 返回值：ArrayList<T>。
+     */
+    public static <T> ArrayList<T> newArrayListWithExpectedSize(int expectedSize);
+
+    /**
+     * 按预估大小创建 HashSet。
+     *
+     * - expectedSize：预估元素个数，类型为 int。
+     * - 返回值：HashSet<T>。
+     */
+    public static <T> HashSet<T> newHashSetWithExpectedSize(int expectedSize);
+
+    /**
+     * 按预估大小创建 LinkedHashMap。
+     *
+     * - expectedSize：预估元素个数，类型为 int。
+     * - 返回值：LinkedHashMap<K, V>。
+     */
+    public static <K, V> LinkedHashMap<K, V> newLinkedHashMapWithExpectedSize(int expectedSize);
+
+    /**
+     * 按预估大小创建 ConcurrentHashMap。
+     *
+     * - expectedSize：预估元素个数，类型为 int。
+     * - 返回值：ConcurrentHashMap<K, V>。
+     */
+    public static <K, V> ConcurrentHashMap<K, V> newConcurrentHashMapWithExpectedSize(int expectedSize);
+
+    /**
+     * 安全读取首元素（空列表返回默认值）。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - defaultValue：默认值，类型为 T。
+     * - 返回值：T。
+     */
+    public static <T> T safeFirst(List<T> list, T defaultValue);
+
+    /**
+     * 安全读取尾元素（空列表返回默认值）。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - defaultValue：默认值，类型为 T。
+     * - 返回值：T。
+     */
+    public static <T> T safeLast(List<T> list, T defaultValue);
+
+    /**
+     * 安全子列表（自动裁剪越界下标）。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - from：起始下标，类型为 int。
+     * - to：结束下标（不含），类型为 int。
+     * - 返回值：List<T>。
+     */
+    public static <T> List<T> safeSubList(List<T> list, int from, int to);
+
+    /**
+     * 安全 Map 读取（null Map 返回默认值）。
+     *
+     * - map：输入 Map，类型为 Map<K, V>。
+     * - key：键，类型为 K。
+     * - defaultValue：默认值，类型为 V。
+     * - 返回值：V。
+     */
+    public static <K, V> V getOrDefault(Map<K, V> map, K key, V defaultValue);
+
+    /**
+     * 按 key 函数去重并保持顺序。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - keyFn：去重 key 函数，类型为 Function<T, K>。
+     * - 返回值：List<T>。
+     */
+    public static <T, K> List<T> distinctBy(List<T> list, Function<T, K> keyFn);
+
+    /**
+     * 并集（保持顺序）。
+     *
+     * - a：左列表，类型为 List<T>。
+     * - b：右列表，类型为 List<T>。
+     * - 返回值：List<T>。
+     */
+    public static <T> List<T> union(List<T> a, List<T> b);
+
+    /**
+     * 交集（保持左列表顺序）。
+     *
+     * - a：左列表，类型为 List<T>。
+     * - b：右列表，类型为 List<T>。
+     * - 返回值：List<T>。
+     */
+    public static <T> List<T> intersect(List<T> a, List<T> b);
+
+    /**
+     * 差集（a-b，保持顺序）。
+     *
+     * - a：左列表，类型为 List<T>。
+     * - b：右列表，类型为 List<T>。
+     * - 返回值：List<T>。
+     */
+    public static <T> List<T> difference(List<T> a, List<T> b);
+
+    /**
+     * 列表过滤。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - predicate：过滤条件，类型为 Predicate<T>。
+     * - 返回值：List<T>。
+     */
+    public static <T> List<T> filter(List<T> list, Predicate<T> predicate);
+
+    /**
+     * 列表映射。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - fn：映射函数，类型为 Function<T, R>。
+     * - 返回值：List<R>。
+     */
+    public static <T, R> List<R> map(List<T> list, Function<T, R> fn);
+
+    /**
+     * 列表平铺映射。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - fn：平铺函数，类型为 Function<T, List<R>>。
+     * - 返回值：List<R>。
+     */
+    public static <T, R> List<R> flatMap(List<T> list, Function<T, List<R>> fn);
+
+    /**
+     * 移除列表中的 null 元素。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - 返回值：List<T>。
+     */
+    public static <T> List<T> compact(List<T> list);
+
+    /**
+     * 列表按 key 建索引（同 key 后者覆盖前者）。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - keyFn：键函数，类型为 Function<T, K>。
+     * - 返回值：Map<K, T>。
+     */
+    public static <T, K> Map<K, T> indexBy(List<T> list, Function<T, K> keyFn);
+
+    /**
+     * 列表按 key 分组。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - keyFn：分组键函数，类型为 Function<T, K>。
+     * - 返回值：Map<K, List<T>>。
+     */
+    public static <T, K> Map<K, List<T>> groupBy(List<T> list, Function<T, K> keyFn);
+
+    /**
+     * 列表转 Map（支持冲突合并）。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - keyFn：键函数，类型为 Function<T, K>。
+     * - valueFn：值函数，类型为 Function<T, V>。
+     * - mergeFn：冲突合并函数，类型为 BiFunction<V, V, V>，可为 null。
+     * - 返回值：Map<K, V>。
+     */
+    public static <T, K, V> Map<K, V> toMap(List<T> list, Function<T, K> keyFn, Function<T, V> valueFn,
+                                             BiFunction<V, V, V> mergeFn);
+
+    /**
+     * 分批切片（batchSize）。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - batchSize：批大小，类型为 int。
+     * - 返回值：List<List<T>>。
+     */
+    public static <T> List<List<T>> partition(List<T> list, int batchSize);
+
+    /**
+     * 分块切片（chunkSize）。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - chunkSize：块大小，类型为 int。
+     * - 返回值：List<List<T>>。
+     */
+    public static <T> List<List<T>> chunked(List<T> list, int chunkSize);
+
+    /**
+     * 列表分页（pageNo 从 1 开始）。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - pageNo：页号，类型为 int。
+     * - pageSize：页大小，类型为 int。
+     * - 返回值：List<T>。
+     */
+    public static <T> List<T> page(List<T> list, int pageNo, int pageSize);
+
+    /**
+     * 任一匹配判断。
+     *
+     * - value：输入集合，类型为 Collection<T>。
+     * - predicate：判断函数，类型为 Predicate<T>。
+     * - 返回值：boolean。
+     */
+    public static <T> boolean anyMatch(Collection<T> value, Predicate<T> predicate);
+
+    /**
+     * 全量匹配判断。
+     *
+     * - value：输入集合，类型为 Collection<T>。
+     * - predicate：判断函数，类型为 Predicate<T>。
+     * - 返回值：boolean。
+     */
+    public static <T> boolean allMatch(Collection<T> value, Predicate<T> predicate);
+
+    /**
+     * 统计匹配个数。
+     *
+     * - value：输入集合，类型为 Collection<T>。
+     * - predicate：判断函数，类型为 Predicate<T>。
+     * - 返回值：long。
+     */
+    public static <T> long count(Collection<T> value, Predicate<T> predicate);
+
+    /**
+     * 判断两集合是否存在任一相同元素。
+     *
+     * - left：左集合，类型为 Collection<T>。
+     * - right：右集合，类型为 Collection<T>。
+     * - 返回值：boolean。
+     */
+    public static <T> boolean containsAny(Collection<T> left, Collection<T> right);
+
+    /**
+     * 返回反转后的新列表（不修改原列表）。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - 返回值：List<T>。
+     */
+    public static <T> List<T> reverseNew(List<T> list);
+
+    /**
+     * 交换列表两个位置元素。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - i：下标 i，类型为 int。
+     * - j：下标 j，类型为 int。
+     */
+    public static <T> void swap(List<T> list, int i, int j);
+
+    /**
+     * 生成重复元素列表。
+     *
+     * - value：元素值，类型为 T。
+     * - n：重复次数，类型为 int。
+     * - 返回值：List<T>。
+     */
+    public static <T> List<T> repeat(T value, int n);
+
+    /**
+     * 生成不可变列表副本。
+     *
+     * - list：输入列表，类型为 List<T>。
+     * - 返回值：List<T>（不可变）。
+     */
+    public static <T> List<T> immutableCopy(List<T> list);
+
+    /**
+     * 生成不可变集合副本。
+     *
+     * - set：输入集合，类型为 Set<T>。
+     * - 返回值：Set<T>（不可变）。
+     */
+    public static <T> Set<T> immutableCopy(Set<T> set);
+
+    /**
+     * 生成不可变 Map 副本。
+     *
+     * - map：输入 Map，类型为 Map<K, V>。
+     * - 返回值：Map<K, V>（不可变）。
+     */
+    public static <K, V> Map<K, V> immutableCopy(Map<K, V> map);
+
+    /**
+     * 当前时间戳（毫秒）。
+     *
+     * - 返回值：long。
+     */
+    public static long nowEpochMs();
+
+    /**
+     * 当前时间戳（秒）。
+     *
+     * - 返回值：long。
+     */
+    public static long nowEpochSec();
+
+    /**
+     * Instant 格式化为字符串。
+     *
+     * - instant：输入时间，类型为 Instant。
+     * - zoneId：时区，类型为 ZoneId，可为 null（默认系统时区）。
+     * - pattern：格式模板，类型为 String，可为 null（默认 yyyy-MM-dd HH:mm:ss）。
+     * - 返回值：String。
+     */
+    public static String formatInstant(Instant instant, ZoneId zoneId, String pattern);
+
+    /**
+     * 文本按格式解析为 Instant。
+     *
+     * - text：输入文本，类型为 String。
+     * - zoneId：时区，类型为 ZoneId，可为 null（默认系统时区）。
+     * - pattern：格式模板，类型为 String，可为 null（默认 yyyy-MM-dd HH:mm:ss）。
+     * - 返回值：Instant。
+     */
+    public static Instant parseInstant(String text, ZoneId zoneId, String pattern);
+
+    /**
+     * 计算输入时间所在日开始时刻。
+     *
+     * - instant：输入时间，类型为 Instant。
+     * - zoneId：时区，类型为 ZoneId。
+     * - 返回值：Instant。
+     */
+    public static Instant startOfDay(Instant instant, ZoneId zoneId);
+
+    /**
+     * 计算输入时间所在日结束时刻。
+     *
+     * - instant：输入时间，类型为 Instant。
+     * - zoneId：时区，类型为 ZoneId。
+     * - 返回值：Instant。
+     */
+    public static Instant endOfDay(Instant instant, ZoneId zoneId);
+
+    /**
+     * 生成标准 UUID 字符串。
+     *
+     * - 返回值：String。
+     */
+    public static String uuid();
+
+    /**
+     * 生成指定长度的随机字母数字串。
+     *
+     * - len：目标长度，类型为 int。
+     * - 返回值：String。
+     */
+    public static String randomAlphaNum(int len);
+
+    /**
+     * 生成短链路追踪 ID（时间戳 + 随机段）。
+     *
+     * - 返回值：String。
+     */
+    public static String traceId();
+
+    /**
+     * 字节数组 Base64 编码。
+     *
+     * - value：输入字节数组，类型为 byte[]。
+     * - 返回值：String。
+     */
+    public static String base64Encode(byte[] value);
+
+    /**
+     * UTF-8 字符串 Base64 编码。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String base64Encode(String value);
+
+    /**
+     * Base64 解码为字节数组。
+     *
+     * - value：Base64 字符串，类型为 String。
+     * - 返回值：byte[]。
+     */
+    public static byte[] base64DecodeToBytes(String value);
+
+    /**
+     * Base64 解码为 UTF-8 字符串。
+     *
+     * - value：Base64 字符串，类型为 String。
+     * - 返回值：String。
+     */
+    public static String base64DecodeToString(String value);
+
+    /**
+     * 字节数组 Hex 编码（小写）。
+     *
+     * - bytes：输入字节数组，类型为 byte[]。
+     * - 返回值：String。
+     */
+    public static String hexEncode(byte[] bytes);
+
+    /**
+     * Hex 字符串解码为字节数组。
+     *
+     * - hex：Hex 文本，类型为 String。
+     * - 返回值：byte[]。
+     */
+    public static byte[] hexDecode(String hex);
+
+    /**
+     * 计算 CRC32。
+     *
+     * - bytes：输入字节数组，类型为 byte[]。
+     * - 返回值：long。
+     */
+    public static long crc32(byte[] bytes);
+
+    /**
+     * 计算 MD5（Hex）。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String（32 位小写 Hex）。
+     */
+    public static String md5Hex(String value);
+
+    /**
+     * 计算 SHA-256（Hex）。
+     *
+     * - value：输入字符串，类型为 String。
+     * - 返回值：String（64 位小写 Hex）。
+     */
+    public static String sha256Hex(String value);
 }
 ```
 
@@ -4415,9 +4888,40 @@ String snake = Vostok.Util.camelToSnake("userName");
 boolean ok = Vostok.Util.wildcardMatch("report-2026.log", "report-*.log");
 ```
 
+```java
+Map<String, Integer> m = Vostok.Util.newHashMapWithExpectedSize(128);
+List<String> distinct = Vostok.Util.distinctPreserveOrder(List.of("a", "b", "a"));
+String second = Vostok.Util.safeGet(distinct, 1, "fallback");
+```
+
+```java
+List<String> union = Vostok.Util.union(List.of("a", "b"), List.of("b", "c"));
+Map<String, List<String>> grouped = Vostok.Util.groupBy(List.of("aa", "ab", "ba"), s -> s.substring(0, 1));
+List<List<Integer>> batches = Vostok.Util.partition(List.of(1, 2, 3, 4, 5), 2);
+List<Integer> page2 = Vostok.Util.page(List.of(1, 2, 3, 4, 5), 2, 2);
+```
+
+```java
+Instant now = Instant.now();
+String ts = Vostok.Util.formatInstant(now, ZoneId.of("UTC"), "yyyy-MM-dd HH:mm:ss");
+Instant parsed = Vostok.Util.parseInstant(ts, ZoneId.of("UTC"), "yyyy-MM-dd HH:mm:ss");
+Instant dayStart = Vostok.Util.startOfDay(now, ZoneId.of("UTC"));
+```
+
+```java
+String traceId = Vostok.Util.traceId();
+String rand = Vostok.Util.randomAlphaNum(16);
+String hex = Vostok.Util.hexEncode("hello".getBytes(StandardCharsets.UTF_8));
+long crc = Vostok.Util.crc32("hello".getBytes(StandardCharsets.UTF_8));
+```
+
 ## 11.3 说明与边界
 
 - 默认 JSON Provider 为内置 `builtin`。
 - 第三方 JSON 库接入方式：业务侧实现 `VKJsonProvider` 并在启动阶段注册切换。
 - 字符串能力默认使用低分配实现（`char` 分隔快路径、ASCII 忽略大小写匹配、ThreadLocal `StringBuilder` 复用）。
+- 集合工具优先覆盖高频场景（容量构造、安全读取、集合运算、索引分组、分页批处理、不可变副本），不替代完整集合框架。
+- 时间工具默认使用系统时区；生产建议显式传入业务时区以避免跨环境差异。
+- 随机/ID 工具提供通用能力（uuid/traceId/随机串），不替代强业务语义主键策略。
+- 编解码工具提供 Base64/Hex/CRC32/MD5/SHA-256；`MD5/SHA-256` 为摘要能力，不等价于签名机制。
 - `Vostok.Http`、`Vostok.Web`、`Vostok.Cache` 内部统一通过 `Vostok.Util` 调用 JSON/字符串工具能力。
