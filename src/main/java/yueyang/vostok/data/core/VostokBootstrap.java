@@ -33,10 +33,12 @@ public final class VostokBootstrap {
             }
             VostokInternal.validateConfig(config);
 
-            try {
-                Class.forName(config.getDriver());
-            } catch (ClassNotFoundException e) {
-                throw new yueyang.vostok.data.exception.VKConfigException("JDBC driver not found: " + config.getDriver());
+            if (config.getExternalDataSource() == null) {
+                try {
+                    Class.forName(config.getDriver());
+                } catch (ClassNotFoundException e) {
+                    throw new yueyang.vostok.data.exception.VKConfigException("JDBC driver not found: " + config.getDriver());
+                }
             }
 
             try {

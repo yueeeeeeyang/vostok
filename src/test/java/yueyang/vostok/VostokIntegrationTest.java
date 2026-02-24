@@ -38,8 +38,11 @@ import yueyang.vostok.data.ds.VKDataSourceRegistry;
 import yueyang.vostok.data.ds.VKDataSourceHolder;
 
 import java.math.BigDecimal;
+import java.io.PrintWriter;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.PreparedStatement;
+import java.sql.SQLFeatureNotSupportedException;
 import java.nio.file.Files;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -50,6 +53,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Logger;
+import javax.sql.DataSource;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -1275,6 +1281,83 @@ public class VostokIntegrationTest {
     }
 
     @Test
+    @Order(101)
+    void testExternalDataSourceInitAndClosePolicy() {
+        TrackingDataSource ds = new TrackingDataSource(JDBC_URL, "sa", "");
+        try {
+            Vostok.Data.close();
+            VKDataConfig cfg = new VKDataConfig()
+                    .externalDataSource(ds)
+                    .dialect(VKDialectType.MYSQL)
+                    .validationQuery("SELECT 1");
+            Vostok.Data.init(cfg, "yueyang.vostok");
+
+            UserEntity u = user("ext-init", 11);
+            assertEquals(1, Vostok.Data.insert(u));
+            assertNotNull(u.getId());
+            var metrics = Vostok.Data.poolMetrics().get(0);
+            assertEquals(-1, metrics.getTotal());
+            assertEquals(-1, metrics.getActive());
+            assertEquals(-1, metrics.getIdle());
+            assertFalse(ds.closed.get());
+        } finally {
+            Vostok.Data.close();
+            restoreDefaultDataConfig();
+        }
+        assertFalse(ds.closed.get());
+
+        TrackingDataSource ds2 = new TrackingDataSource(JDBC_URL, "sa", "");
+        try {
+            Vostok.Data.close();
+            VKDataConfig cfg2 = new VKDataConfig()
+                    .externalDataSource(ds2)
+                    .closeExternalDataSource(true)
+                    .dialect(VKDialectType.MYSQL)
+                    .validationQuery("SELECT 1");
+            Vostok.Data.init(cfg2, "yueyang.vostok");
+        } finally {
+            Vostok.Data.close();
+            restoreDefaultDataConfig();
+        }
+        assertTrue(ds2.closed.get());
+    }
+
+    @Test
+    @Order(102)
+    void testExternalDataSourceMultiDataSourceSwitch() {
+        TrackingDataSource defaultDs = new TrackingDataSource(JDBC_URL, "sa", "");
+        TrackingDataSource ds2 = new TrackingDataSource("jdbc:h2:mem:ext_ds2;MODE=MySQL;DB_CLOSE_DELAY=-1", "sa", "");
+        try {
+            try (var conn = DriverManager.getConnection("jdbc:h2:mem:ext_ds2;MODE=MySQL;DB_CLOSE_DELAY=-1", "sa", "");
+                 var stmt = conn.createStatement()) {
+                stmt.execute("CREATE TABLE IF NOT EXISTS t_user (id BIGINT AUTO_INCREMENT PRIMARY KEY, user_name VARCHAR(64) NOT NULL, age INT)");
+                stmt.execute("DELETE FROM t_user");
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+
+            Vostok.Data.close();
+            Vostok.Data.init(new VKDataConfig()
+                    .externalDataSource(defaultDs)
+                    .dialect(VKDialectType.MYSQL)
+                    .validationQuery("SELECT 1"), "yueyang.vostok");
+            Vostok.Data.registerDataSource("ds2", new VKDataConfig()
+                    .externalDataSource(ds2)
+                    .dialect(VKDialectType.MYSQL)
+                    .validationQuery("SELECT 1"));
+
+            Vostok.Data.insert(user("main-a", 1));
+            Vostok.Data.withDataSource("ds2", () -> Vostok.Data.insert(user("sub-a", 2)));
+
+            assertEquals(1, Vostok.Data.findAll(UserEntity.class).size());
+            Vostok.Data.withDataSource("ds2", () -> assertEquals(1, Vostok.Data.findAll(UserEntity.class).size()));
+        } finally {
+            Vostok.Data.close();
+            restoreDefaultDataConfig();
+        }
+    }
+
+    @Test
     @Order(89)
     void testCustomScanner() {
         Vostok.Data.close();
@@ -1334,6 +1417,75 @@ public class VostokIntegrationTest {
                 "SELECT 1 FROM t_user u2 WHERE u2.id = t_user.id AND u2.age >= ?",
                 "SELECT id FROM t_user WHERE age >= ?"
         );
+    }
+
+    private static class TrackingDataSource implements DataSource, AutoCloseable {
+        private final String url;
+        private final String username;
+        private final String password;
+        private final AtomicBoolean closed = new AtomicBoolean(false);
+
+        private TrackingDataSource(String url, String username, String password) {
+            this.url = url;
+            this.username = username;
+            this.password = password;
+        }
+
+        @Override
+        public Connection getConnection() throws java.sql.SQLException {
+            if (closed.get()) {
+                throw new java.sql.SQLException("DataSource closed");
+            }
+            return DriverManager.getConnection(url, username, password);
+        }
+
+        @Override
+        public Connection getConnection(String username, String password) throws java.sql.SQLException {
+            if (closed.get()) {
+                throw new java.sql.SQLException("DataSource closed");
+            }
+            return DriverManager.getConnection(url, username, password);
+        }
+
+        @Override
+        public PrintWriter getLogWriter() {
+            return null;
+        }
+
+        @Override
+        public void setLogWriter(PrintWriter out) {
+            // no-op
+        }
+
+        @Override
+        public void setLoginTimeout(int seconds) {
+            // no-op
+        }
+
+        @Override
+        public int getLoginTimeout() {
+            return 0;
+        }
+
+        @Override
+        public Logger getParentLogger() throws SQLFeatureNotSupportedException {
+            throw new SQLFeatureNotSupportedException("Not supported");
+        }
+
+        @Override
+        public <T> T unwrap(Class<T> iface) throws java.sql.SQLException {
+            throw new java.sql.SQLException("Not supported");
+        }
+
+        @Override
+        public boolean isWrapperFor(Class<?> iface) {
+            return false;
+        }
+
+        @Override
+        public void close() {
+            closed.set(true);
+        }
     }
 
     @Test

@@ -3,6 +3,8 @@ package yueyang.vostok.data;
 import yueyang.vostok.data.config.VKBatchFailStrategy;
 import yueyang.vostok.data.dialect.VKDialectType;
 
+import javax.sql.DataSource;
+
 /**
  * Vostok 数据源与连接池配置。
  * 只能通过 Vostok.Data.init(...) 显式传入。
@@ -86,6 +88,10 @@ public class VKDataConfig {
     private String defaultEncryptionKeyId = "data-default";
     /** 是否允许读取未加密明文（用于迁移期兼容） */
     private boolean allowPlaintextRead = false;
+    /** 外部注入数据源（第三方连接池） */
+    private DataSource externalDataSource;
+    /** 关闭 Data 模块时是否关闭 externalDataSource（默认 false） */
+    private boolean closeExternalDataSource = false;
 
     
     public String getUrl() {
@@ -505,6 +511,24 @@ public class VKDataConfig {
 
     public VKDataConfig allowPlaintextRead(boolean allowPlaintextRead) {
         this.allowPlaintextRead = allowPlaintextRead;
+        return this;
+    }
+
+    public DataSource getExternalDataSource() {
+        return externalDataSource;
+    }
+
+    public VKDataConfig externalDataSource(DataSource externalDataSource) {
+        this.externalDataSource = externalDataSource;
+        return this;
+    }
+
+    public boolean isCloseExternalDataSource() {
+        return closeExternalDataSource;
+    }
+
+    public VKDataConfig closeExternalDataSource(boolean closeExternalDataSource) {
+        this.closeExternalDataSource = closeExternalDataSource;
         return this;
     }
 }

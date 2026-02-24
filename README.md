@@ -640,6 +640,39 @@ public class DataApiDemo {
 }
 ```
 
+### 2.2.4 接入第三方连接池（无适配器）
+
+```java
+import com.zaxxer.hikari.HikariConfig;
+import com.zaxxer.hikari.HikariDataSource;
+import yueyang.vostok.Vostok;
+import yueyang.vostok.data.VKDataConfig;
+import yueyang.vostok.data.dialect.VKDialectType;
+
+HikariConfig hc = new HikariConfig();
+hc.setJdbcUrl("jdbc:mysql://127.0.0.1:3306/demo");
+hc.setUsername("root");
+hc.setPassword("123456");
+hc.setMaximumPoolSize(20);
+HikariDataSource hikari = new HikariDataSource(hc);
+
+VKDataConfig cfg = new VKDataConfig()
+        .externalDataSource(hikari)       // 直接注入 javax.sql.DataSource
+        .closeExternalDataSource(false)   // 默认 false，Data.close() 不关闭外部连接池
+        .dialect(VKDialectType.MYSQL)
+        .validationQuery("SELECT 1");
+
+Vostok.Data.init(cfg, "com.example.entity");
+// ... 正常使用 Vostok.Data CRUD/事务/查询
+Vostok.Data.close(); // 不会关闭 hikari（由业务自己管理）
+hikari.close();      // 业务侧按生命周期关闭
+```
+
+- 该模式不需要为 Hikari/Druid/Tomcat 等连接池写适配器。
+- 约束：外部连接池需实现 `javax.sql.DataSource`。
+- 当使用 externalDataSource 时，`poolMetrics()` 的 `total/active/idle` 返回 `-1`（Vostok 无法统一读取第三方池内部指标）。
+- 如需由 Vostok 在 `Data.close()` 时关闭外部连接池，可设置 `closeExternalDataSource(true)`，且数据源实现需支持 `AutoCloseable`。
+
 ### 2.2.1 Data 日志接入说明
 
 - Data 模块日志统一直接调用 `Vostok.Log` 接口（`info/warn/error/debug/trace`）。
@@ -843,6 +876,10 @@ VKDataConfig cfg = new VKDataConfig()
     .txTimeoutMs(0)
     // 非事务 SQL 超时毫秒。默认 0（不限制）；>0 会设置 Statement timeout。
     .queryTimeoutMs(0)
+    // 外部注入 DataSource（第三方连接池）；设置后可不填 url/username/password/driver。
+    .externalDataSource(null)
+    // Data.close() 时是否关闭 externalDataSource。默认 false。
+    .closeExternalDataSource(false)
     // 是否启用字段加密（仅 @VKColumn(encrypted=true) 字段生效）。默认 false。
     .fieldEncryptionEnabled(false)
     // 默认字段加密 keyId。默认 data-default；当字段未指定 keyId 时使用。

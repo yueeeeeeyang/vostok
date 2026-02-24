@@ -31,9 +31,12 @@ final class VostokInternal {
 
     static void validateConfig(VKDataConfig cfg) {
         VKAssert.notNull(cfg, "VKDataConfig is null");
-        VKAssert.notBlank(cfg.getUrl(), "jdbc url is blank");
-        VKAssert.notBlank(cfg.getUsername(), "username is blank");
-        VKAssert.notBlank(cfg.getDriver(), "driver is blank");
+        boolean useExternalDataSource = cfg.getExternalDataSource() != null;
+        if (!useExternalDataSource) {
+            VKAssert.notBlank(cfg.getUrl(), "jdbc url is blank");
+            VKAssert.notBlank(cfg.getUsername(), "username is blank");
+            VKAssert.notBlank(cfg.getDriver(), "driver is blank");
+        }
         VKAssert.isTrue(cfg.getMinIdle() >= 0, "minIdle must be >= 0");
         VKAssert.isTrue(cfg.getMaxActive() > 0, "maxActive must be > 0");
         VKAssert.isTrue(cfg.getMinIdle() <= cfg.getMaxActive(), "minIdle must be <= maxActive");
