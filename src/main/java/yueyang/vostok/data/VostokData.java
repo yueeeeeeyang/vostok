@@ -116,6 +116,10 @@ public class VostokData {
         VostokBootstrap.close();
     }
 
+    public static boolean started() {
+        return VostokBootstrap.started();
+    }
+
     // 事务
 
     public static void tx(Runnable action) {

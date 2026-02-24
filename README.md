@@ -22,6 +22,68 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 
 # 1. 注意事项
 
+## 1.1 统一 init 用法
+
+`Vostok.init(...)` 支持在一个入口里按需初始化模块：哪个配置了就初始化哪个模块；未配置的模块不会被触发。
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.data.VKDataConfig;
+import yueyang.vostok.log.VKLogConfig;
+import yueyang.vostok.security.VKSecurityConfig;
+import yueyang.vostok.config.VKConfigOptions;
+import yueyang.vostok.file.VKFileConfig;
+import yueyang.vostok.web.VKWebConfig;
+
+Vostok.init(cfg -> cfg
+        // Config
+        .configOptions(opt -> opt
+                .watchEnabled(true)
+                .watchDebounceMs(300)
+        )
+
+        // Log
+        .logConfig(new VKLogConfig()
+                .outputDir("logs")
+                .consoleEnabled(true)
+        )
+
+        // Security
+        .securityConfig(new VKSecurityConfig()
+                .strictMode(true)
+        )
+
+        // Data
+        .dataConfig(new VKDataConfig()
+                .url("jdbc:mysql://127.0.0.1:3306/demo")
+                .username("root")
+                .password("123456")
+                .driver("com.mysql.cj.jdbc.Driver")
+                .maxActive(30)
+        )
+        .dataPackages("com.example.demo.entity")
+
+        // File（可选）
+        .fileConfig(new VKFileConfig()
+                .baseDir("./data/files")
+        )
+
+        // Web（可选）
+        .webConfig(new VKWebConfig().port(8080))
+        .webSetup(web -> web
+                .get("/health", (req, res) -> res.json("{\"ok\":true}"))
+        )
+        .webStart(true)
+);
+```
+
+规则说明：
+
+- `dataPackages(...)` 只有在配置了 `dataConfig(...)` 时有效。
+- `webSetup(...)` 或 `webStart(true)` 会触发 Web 初始化；若未配置 `webConfig(...)`，使用默认 Web 配置。
+- `Vostok.init(...)` 无返回值；需要统一关闭时调用 `Vostok.close()`。
+- 除统一入口外，仍可继续使用各模块独立 `init(...)` API。
+
 - 当前项目定位为实验与技术验证，不建议直接用于生产环境。
 - 运行环境为 `JDK 17+`。
 - 数据模块为纯 JDBC 模式，生产环境需自行提供对应数据库驱动。

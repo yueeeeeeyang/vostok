@@ -175,4 +175,8 @@ public final class VostokBootstrap {
             VostokRuntime.initPackages = new String[0];
         }
     }
+
+    public static boolean started() {
+        return VostokRuntime.initialized;
+    }
 }
