@@ -123,6 +123,14 @@ public class VostokAI {
         return RUNTIME.rag(request);
     }
 
+    public static void healthCheckRag(String clientName) {
+        RUNTIME.healthCheckRag(clientName, true);
+    }
+
+    public static void healthCheckRag(String clientName, boolean includeRerank) {
+        RUNTIME.healthCheckRag(clientName, includeRerank);
+    }
+
     public static void registerTool(VKAiTool tool) {
         RUNTIME.registerTool(tool);
     }

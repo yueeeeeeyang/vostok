@@ -15,7 +15,9 @@ public class VKAiConfig {
     private boolean failOnNon2xx = true;
     private boolean metricsEnabled = true;
     private boolean logEnabled = false;
-    private String defaultModel = "gpt-4o-mini";
+    private String defaultModel = "deepseek-chat";
+    private String defaultEmbeddingModel;
+    private String defaultRerankModel;
     private boolean toolCallingEnabled = true;
     private boolean securityCheckEnabled = true;
     private boolean blockOnSecurityRisk = true;
@@ -42,6 +44,8 @@ public class VKAiConfig {
         c.metricsEnabled = this.metricsEnabled;
         c.logEnabled = this.logEnabled;
         c.defaultModel = this.defaultModel;
+        c.defaultEmbeddingModel = this.defaultEmbeddingModel;
+        c.defaultRerankModel = this.defaultRerankModel;
         c.toolCallingEnabled = this.toolCallingEnabled;
         c.securityCheckEnabled = this.securityCheckEnabled;
         c.blockOnSecurityRisk = this.blockOnSecurityRisk;
@@ -175,6 +179,28 @@ public class VKAiConfig {
         if (defaultModel != null && !defaultModel.isBlank()) {
             this.defaultModel = defaultModel.trim();
         }
+        return this;
+    }
+
+    public String getDefaultEmbeddingModel() {
+        return defaultEmbeddingModel;
+    }
+
+    public VKAiConfig defaultEmbeddingModel(String defaultEmbeddingModel) {
+        this.defaultEmbeddingModel = defaultEmbeddingModel == null || defaultEmbeddingModel.isBlank()
+                ? null
+                : defaultEmbeddingModel.trim();
+        return this;
+    }
+
+    public String getDefaultRerankModel() {
+        return defaultRerankModel;
+    }
+
+    public VKAiConfig defaultRerankModel(String defaultRerankModel) {
+        this.defaultRerankModel = defaultRerankModel == null || defaultRerankModel.isBlank()
+                ? null
+                : defaultRerankModel.trim();
         return this;
     }
 

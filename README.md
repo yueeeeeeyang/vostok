@@ -5065,6 +5065,8 @@ public interface Vostok.AI {
     public static VKAiRagIngestResult ingestRagDocument(VKAiRagIngestRequest request);
     public static void clearVectorStore();
     public static VKAiRagResponse rag(VKAiRagRequest request);
+    public static void healthCheckRag(String clientName);
+    public static void healthCheckRag(String clientName, boolean includeRerank);
 
     public static List<VKAiAuditRecord> audits(int limit);
     public static void clearAudits();
@@ -5106,12 +5108,17 @@ Vostok.AI.init(new VKAiConfig()
 Vostok.AI.registerClient("openai", new VKAiClientConfig()
         .baseUrl("https://api.openai.com")
         .apiKey("sk-***")
-        .model("gpt-4o-mini"));
+        .model("gpt-4o-mini")
+        .embeddingModel("text-embedding-3-small")
+        .rerankModel("bge-reranker-v2-m3"));
 
 // 3) Chat
 VKAiChatResponse r = Vostok.AI.chat(new VKAiChatRequest()
         .client("openai")
         .system("You are a concise assistant")
+        .historyTrimEnabled(true)
+        .historyMaxMessages(12)
+        .historyMaxChars(4000)
         .message("user", "Hello"));
 System.out.println(r.getText());
 
@@ -5179,10 +5186,25 @@ VKAiRagIngestResult ingest = Vostok.AI.ingestRagDocument(new VKAiRagIngestReques
 System.out.println(ingest.getInsertedChunks());
 
 VKAiRagResponse rag = Vostok.AI.rag(new VKAiRagRequest()
-        .client("openai")
+        .client("openai") // 默认回退 client
+        .chatClient("openai-chat") // 可选：chat provider
+        .embeddingClient("openai-embed") // 可选：embedding provider
+        .rerankClient("cohere-rerank") // 可选：rerank provider
+        .model("gpt-4o-mini")
+        .embeddingModel("text-embedding-3-small")
+        .rerankModel("bge-reranker-v2-m3")
         .query("what runs on jvm?")
-        .topK(2));
+        .topK(2)
+        .queryRewriteEnabled(true)
+        .dynamicTopKEnabled(true)
+        .mergeSimilarChunksEnabled(true)
+        .contextCompressionEnabled(true)
+        .contextMaxCharsPerChunk(280)
+        .contextMaxChars(1800));
 System.out.println(rag.getAnswer().getText());
+
+// 9.2) 启动前预检（强烈建议）
+Vostok.AI.healthCheckRag("openai", true); // true=同时预检 embedding + rerank
 
 // 10) Rerank
 VKAiRerankResponse rerank = Vostok.AI.rerank(new VKAiRerankRequest()
@@ -5210,6 +5232,8 @@ System.out.println(m.totalCalls());
 - `failOnNon2xx`：非 2xx 是否抛异常。
 - `metricsEnabled`：是否统计指标。
 - `defaultModel`：默认模型名。
+- `defaultEmbeddingModel`：全局默认 Embedding 模型（用于 `embed/rag`）。
+- `defaultRerankModel`：全局默认 Rerank 模型（用于 `rerank/rag`）。
 - `toolCallingEnabled`：是否启用工具调用。
 - `securityCheckEnabled`：是否启用输入安全扫描。
 - `blockOnSecurityRisk`：命中风险是否阻断。
@@ -5220,12 +5244,23 @@ System.out.println(m.totalCalls());
 - `maxToolCallsPerRequest`：单次 chat 最多执行工具数量。
 - `maxAuditRecords`：审计记录内存上限。
 
-### 12.3.2 VKAiClientConfig（命名 Client）
+### 12.3.2 Token 优化参数（请求级）
+
+- `VKAiChatRequest.historyTrimEnabled/historyMaxMessages/historyMaxChars`：发送到模型前自动裁剪历史消息，降低上下文 token。
+- `VKAiRagRequest.queryRewriteEnabled`：轻量查询重写（从长文本中提炼检索 query）。
+- `VKAiRagRequest.dynamicTopKEnabled`：按问题复杂度动态调整 `topK`（简单问题减少片段数）。
+- `VKAiRagRequest.mergeSimilarChunksEnabled`：合并同文档相邻/高相似片段，减少重复上下文。
+- `VKAiRagRequest.contextCompressionEnabled`：上下文压缩开关。
+- `VKAiRagRequest.contextMaxCharsPerChunk/contextMaxChars`：单片段与总上下文字符预算。
+
+### 12.3.3 VKAiClientConfig（命名 Client）
 
 - `provider`：Provider 名称（默认 `openai-compatible`）。
 - `baseUrl`：Provider 根地址（必填）。
 - `apiKey`：鉴权 Key（自动写入 `Authorization: Bearer ...`）。
 - `model`：Client 默认模型。
+- `embeddingModel`：Client 默认 Embedding 模型。
+- `rerankModel`：Client 默认 Rerank 模型。
 - `chatPath`：Chat 接口路径（默认 `/v1/chat/completions`）。
 - `embeddingPath`：Embedding 接口路径（默认 `/v1/embeddings`）。
 - `rerankPath`：Rerank 接口路径（默认 `/v1/rerank`）。
@@ -5280,9 +5315,24 @@ System.out.println(m.totalCalls());
   3) 候选去重（按文本归一化）
   4) 调用 rerank 重排
   5) 拼接 context 并调用 chat 生成最终回答
+- 模型配置分层（从高到低）：
+  1) 请求级：`VKAiRagRequest.embeddingModel/rerankModel` 或 `VKAiEmbeddingRequest.model` / `VKAiRerankRequest.model`
+  2) Client 级：`VKAiClientConfig.embeddingModel/rerankModel`
+  3) 全局级：`VKAiConfig.defaultEmbeddingModel/defaultRerankModel`
+  4) 兼容回退：`VKAiClientConfig.model` -> `VKAiConfig.defaultModel`
+- Provider 路由分层（RAG 内部）：
+  1) `VKAiRagRequest.chatClient/embeddingClient/rerankClient`（分别指定三段链路的 Client）
+  2) 未指定时回退 `VKAiRagRequest.client`
+  3) Client 决定各自 `baseUrl + path`，因此可对接不同模型提供商
+- 启动前预检建议：
+  1) 服务启动后执行 `Vostok.AI.healthCheckRag(client, true)`，尽早发现模型名或路径配置错误
+  2) 若仅使用向量检索，可用 `healthCheckRag(client, false)` 只预检 embedding
 - 第一阶段成本/延迟优化：
   1) 通过 `Vostok.Cache` 缓存 embedding/rerank/rag-answer
   2) rerank 超时自动降级，避免长尾阻塞
+  3) 长 query 轻量重写，避免无关语料参与检索
+  4) 动态 topK + 相似片段合并，减少重复召回
+  5) 上下文压缩与历史消息裁剪，降低 prompt token
 - 生产建议：
   1) 使用持久化向量库（如 pgvector/ES/Milvus 自定义实现 `VKAiVectorStore`）
   2) 配置合理 chunk size/overlap，避免上下文断裂

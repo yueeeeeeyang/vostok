@@ -40,6 +40,7 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -50,6 +51,14 @@ public class VostokAiTest {
     private final AtomicInteger rerankCounter = new AtomicInteger();
     private final AtomicInteger embeddingCounter = new AtomicInteger();
     private final AtomicInteger ragChatCounter = new AtomicInteger();
+    private final AtomicInteger rerankAltCounter = new AtomicInteger();
+    private final AtomicInteger embeddingAltCounter = new AtomicInteger();
+    private final AtomicInteger ragChatAltCounter = new AtomicInteger();
+    private final AtomicInteger chatMessageCount = new AtomicInteger();
+    private final AtomicReference<String> lastEmbeddingInput = new AtomicReference<>();
+    private final AtomicReference<String> lastRagUserPrompt = new AtomicReference<>();
+    private final AtomicReference<String> lastEmbeddingModel = new AtomicReference<>();
+    private final AtomicReference<String> lastRerankModel = new AtomicReference<>();
 
     @BeforeEach
     void setUp() throws Exception {
@@ -66,8 +75,11 @@ public class VostokAiTest {
         server.createContext("/v1/chat/tool", this::handleToolChat);
         server.createContext("/v1/chat/tool-missing", this::handleToolMissingChat);
         server.createContext("/v1/chat/rag", this::handleRagChat);
+        server.createContext("/v1/chat/rag-alt", this::handleRagChatAlt);
         server.createContext("/v1/embeddings", this::handleEmbeddings);
+        server.createContext("/v1/embeddings-alt", this::handleEmbeddingsAlt);
         server.createContext("/v1/rerank", this::handleRerank);
+        server.createContext("/v1/rerank-alt", this::handleRerankAlt);
 
         server.start();
         baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
@@ -99,6 +111,14 @@ public class VostokAiTest {
         rerankCounter.set(0);
         embeddingCounter.set(0);
         ragChatCounter.set(0);
+        rerankAltCounter.set(0);
+        embeddingAltCounter.set(0);
+        ragChatAltCounter.set(0);
+        chatMessageCount.set(0);
+        lastEmbeddingInput.set(null);
+        lastRagUserPrompt.set(null);
+        lastEmbeddingModel.set(null);
+        lastRerankModel.set(null);
     }
 
     @AfterEach
@@ -363,6 +383,113 @@ public class VostokAiTest {
     }
 
     @Test
+    void testModelLayeringForEmbeddingAndRerank() {
+        Vostok.AI.reinit(new VKAiConfig()
+                .logEnabled(false)
+                .auditEnabled(true)
+                .securityCheckEnabled(true)
+                .blockOnSecurityRisk(true)
+                .defaultModel("chat-global")
+                .defaultEmbeddingModel("embed-global")
+                .defaultRerankModel("rerank-global"));
+        Vostok.AI.registerClient("layer-client", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .apiKey("demo-key")
+                .embeddingModel("embed-client")
+                .rerankModel("rerank-client"));
+        Vostok.AI.registerClient("layer-global", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .apiKey("demo-key"));
+        Vostok.AI.registerClient("layer-compat", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .apiKey("demo-key")
+                .model("chat-client"));
+
+        Vostok.AI.embed(new VKAiEmbeddingRequest().client("layer-client").model("embed-request").input("hello"));
+        assertEquals("embed-request", lastEmbeddingModel.get());
+        Vostok.AI.embed(new VKAiEmbeddingRequest().client("layer-client").input("hello2"));
+        assertEquals("embed-client", lastEmbeddingModel.get());
+        Vostok.AI.embed(new VKAiEmbeddingRequest().client("layer-global").input("hello3"));
+        assertEquals("embed-global", lastEmbeddingModel.get());
+        Vostok.AI.embed(new VKAiEmbeddingRequest().client("layer-compat").input("hello4"));
+        assertEquals("embed-global", lastEmbeddingModel.get());
+
+        Vostok.AI.rerank(new VKAiRerankRequest()
+                .client("layer-client")
+                .model("rerank-request")
+                .query("q")
+                .document("a")
+                .document("b")
+                .topK(1));
+        assertEquals("rerank-request", lastRerankModel.get());
+        Vostok.AI.rerank(new VKAiRerankRequest()
+                .client("layer-client")
+                .query("q2")
+                .document("a")
+                .document("b")
+                .topK(1));
+        assertEquals("rerank-client", lastRerankModel.get());
+        Vostok.AI.rerank(new VKAiRerankRequest()
+                .client("layer-global")
+                .query("q3")
+                .document("a")
+                .document("b")
+                .topK(1));
+        assertEquals("rerank-global", lastRerankModel.get());
+    }
+
+    @Test
+    void testRagHealthCheckSuccessAndConfigErrorMapping() {
+        Vostok.AI.healthCheckRag("demo", true);
+        assertNotNull(lastEmbeddingModel.get());
+        assertNotNull(lastRerankModel.get());
+
+        Vostok.AI.registerClient("bad-rag", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .apiKey("demo-key")
+                .embeddingModel("bad-embed"));
+
+        VKAiException ex = assertThrows(VKAiException.class, () -> Vostok.AI.healthCheckRag("bad-rag", false));
+        assertEquals(VKAiErrorCode.CONFIG_ERROR, ex.getCode());
+        assertTrue(ex.getMessage().contains("precheck failed at embedding"));
+    }
+
+    @Test
+    void testRagCanUseDifferentClientsForChatEmbeddingRerank() {
+        Vostok.AI.registerClient("rag-chat-provider", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .chatPath("/v1/chat/rag-alt"));
+        Vostok.AI.registerClient("rag-embed-provider", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .embeddingPath("/v1/embeddings-alt"));
+        Vostok.AI.registerClient("rag-rerank-provider", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .rerankPath("/v1/rerank-alt"));
+
+        List<VKAiEmbedding> docs = Vostok.AI.embed(new VKAiEmbeddingRequest()
+                .client("rag-embed-provider")
+                .input("java runs on jvm")
+                .input("python uses interpreter"));
+        Vostok.AI.upsertVectorDocs(List.of(
+                new VKAiVectorDoc("mp-java", "java runs on jvm", docs.get(0).getVector(), Map.of()),
+                new VKAiVectorDoc("mp-py", "python uses interpreter", docs.get(1).getVector(), Map.of())
+        ));
+
+        VKAiRagResponse response = Vostok.AI.rag(new VKAiRagRequest()
+                .client("demo")
+                .chatClient("rag-chat-provider")
+                .embeddingClient("rag-embed-provider")
+                .rerankClient("rag-rerank-provider")
+                .query("what runs on jvm?")
+                .topK(1));
+
+        assertEquals("java from alt provider", response.getAnswer().getText());
+        assertTrue(embeddingAltCounter.get() >= 2, "ingest + rag query should hit embedding alt provider");
+        assertTrue(rerankAltCounter.get() >= 1, "rag rerank should hit rerank alt provider");
+        assertEquals(1, ragChatAltCounter.get(), "rag answer should hit chat alt provider");
+    }
+
+    @Test
     void testVectorStoreAndSearch() {
         Vostok.AI.upsertVectorDocs(List.of(
                 new VKAiVectorDoc("d1", "java guide", List.of(0.99, 0.01), Map.of("lang", "java")),
@@ -477,6 +604,100 @@ public class VostokAiTest {
         assertEquals("h1", response.getHits().get(0).getId());
     }
 
+    @Test
+    void testHistoryTrimOnChatRequest() {
+        Vostok.AI.chat(new VKAiChatRequest()
+                .client("demo")
+                .historyMaxMessages(3)
+                .historyMaxChars(120)
+                .message("user", "m1")
+                .message("assistant", "m2")
+                .message("user", "m3")
+                .message("assistant", "m4")
+                .message("user", "m5"));
+
+        assertTrue(chatMessageCount.get() <= 3);
+        assertTrue(chatMessageCount.get() >= 1);
+    }
+
+    @Test
+    void testRagLightQueryRewrite() {
+        Vostok.AI.registerClient("rag", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .chatPath("/v1/chat/rag")
+                .embeddingPath("/v1/embeddings")
+                .rerankPath("/v1/rerank"));
+        Vostok.AI.upsertVectorDocs(List.of(
+                new VKAiVectorDoc("q1", "java runs on jvm", List.of(0.95, 0.05), Map.of()),
+                new VKAiVectorDoc("q2", "python uses interpreter", List.of(0.05, 0.95), Map.of())
+        ));
+
+        String longQuery = "这是一段很长很长的业务背景描述，包含很多无关细节和上下文信息，"
+                + "我们正在讨论服务端架构演进、部署方式、日志和监控等。请问到底什么运行在jvm上，"
+                + "并且给出关键结论和依据。";
+        Vostok.AI.rag(new VKAiRagRequest()
+                .client("rag")
+                .query(longQuery)
+                .topK(2)
+                .dynamicTopKEnabled(false));
+
+        assertNotNull(lastEmbeddingInput.get());
+        assertTrue(lastEmbeddingInput.get().length() <= 128);
+        assertTrue(lastEmbeddingInput.get().contains("jvm"));
+    }
+
+    @Test
+    void testRagDynamicTopK() {
+        Vostok.AI.upsertVectorDocs(List.of(
+                new VKAiVectorDoc("k1", "java jvm one", List.of(0.95, 0.05), Map.of()),
+                new VKAiVectorDoc("k2", "java jvm two", List.of(0.94, 0.06), Map.of()),
+                new VKAiVectorDoc("k3", "java jvm three", List.of(0.93, 0.07), Map.of()),
+                new VKAiVectorDoc("k4", "java jvm four", List.of(0.92, 0.08), Map.of())
+        ));
+
+        VKAiRagResponse response = Vostok.AI.rag(new VKAiRagRequest()
+                .client("demo")
+                .query("jvm")
+                .topK(4)
+                .queryRewriteEnabled(false)
+                .rerankEnabled(false));
+
+        assertTrue(response.getHits().size() <= 2);
+    }
+
+    @Test
+    void testRagMergeSimilarChunksAndContextCompression() {
+        Vostok.AI.registerClient("rag", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .chatPath("/v1/chat/rag")
+                .embeddingPath("/v1/embeddings")
+                .rerankPath("/v1/rerank"));
+        String longA = "partA java jvm " + "alpha ".repeat(40);
+        String longB = "partB java jvm " + "beta ".repeat(40);
+        Vostok.AI.upsertVectorDocs(List.of(
+                new VKAiVectorDoc("m1", longA, List.of(0.95, 0.05),
+                        Map.of("vk_doc_id", "doc-merge", "vk_doc_version", "v1", "vk_chunk_index", "0")),
+                new VKAiVectorDoc("m2", longB, List.of(0.94, 0.06),
+                        Map.of("vk_doc_id", "doc-merge", "vk_doc_version", "v1", "vk_chunk_index", "1")),
+                new VKAiVectorDoc("m3", "python interpreter", List.of(0.05, 0.95), Map.of())
+        ));
+
+        VKAiRagResponse response = Vostok.AI.rag(new VKAiRagRequest()
+                .client("rag")
+                .query("java jvm")
+                .topK(4)
+                .queryRewriteEnabled(false)
+                .dynamicTopKEnabled(false)
+                .rerankEnabled(false)
+                .contextMaxCharsPerChunk(80)
+                .contextMaxChars(140));
+
+        assertTrue(response.getHits().stream().anyMatch(h -> h.getMetadata().containsKey("vk_chunk_span")));
+        assertTrue(response.getHits().stream().allMatch(h -> h.getText().length() <= 83));
+        assertNotNull(lastRagUserPrompt.get());
+        assertTrue(lastRagUserPrompt.get().length() < 320);
+    }
+
     private VKAiTool sumTool() {
         return new VKAiTool() {
             @Override
@@ -510,6 +731,12 @@ public class VostokAiTest {
     }
 
     private void handleChat(HttpExchange exchange) throws IOException {
+        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        Map<?, ?> req = VKJson.fromJson(body, Map.class);
+        Object messages = req.get("messages");
+        if (messages instanceof List<?> list) {
+            chatMessageCount.set(list.size());
+        }
         String auth = exchange.getRequestHeaders().getFirst("Authorization");
         if (!"Bearer demo-key".equals(auth)) {
             write(exchange, 401, "{\"error\":\"unauthorized\"}");
@@ -561,7 +788,16 @@ public class VostokAiTest {
         embeddingCounter.incrementAndGet();
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         Map<?, ?> req = VKJson.fromJson(body, Map.class);
+        String model = req.get("model") == null ? null : String.valueOf(req.get("model"));
+        lastEmbeddingModel.set(model);
+        if (model == null || model.isBlank() || model.contains("bad-embed")) {
+            write(exchange, 404, "{\"error\":\"embedding model not found\"}");
+            return;
+        }
         List<?> input = (List<?>) req.get("input");
+        if (input != null && !input.isEmpty()) {
+            lastEmbeddingInput.set(String.valueOf(input.get(0)));
+        }
         StringBuilder sb = new StringBuilder();
         sb.append("{\"data\":[");
         for (int i = 0; i < input.size(); i++) {
@@ -581,6 +817,12 @@ public class VostokAiTest {
         rerankCounter.incrementAndGet();
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         Map<?, ?> req = VKJson.fromJson(body, Map.class);
+        String model = req.get("model") == null ? null : String.valueOf(req.get("model"));
+        lastRerankModel.set(model);
+        if (model == null || model.isBlank() || model.contains("bad-rerank")) {
+            write(exchange, 404, "{\"error\":\"rerank model not found\"}");
+            return;
+        }
         String query = String.valueOf(req.get("query")).toLowerCase();
         List<?> docs = (List<?>) req.get("documents");
         int top1 = 0;
@@ -598,10 +840,39 @@ public class VostokAiTest {
                 "{\"results\":[{\"index\":" + top1 + ",\"score\":0.98},{\"index\":" + other + ",\"score\":0.12}]}" );
     }
 
+    private void handleEmbeddingsAlt(HttpExchange exchange) throws IOException {
+        embeddingAltCounter.incrementAndGet();
+        handleEmbeddings(exchange);
+    }
+
+    private void handleRerankAlt(HttpExchange exchange) throws IOException {
+        rerankAltCounter.incrementAndGet();
+        handleRerank(exchange);
+    }
+
     private void handleRagChat(HttpExchange exchange) throws IOException {
         ragChatCounter.incrementAndGet();
+        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        Map<?, ?> req = VKJson.fromJson(body, Map.class);
+        Object messages = req.get("messages");
+        if (messages instanceof List<?> list) {
+            for (Object item : list) {
+                if (!(item instanceof Map<?, ?> m)) {
+                    continue;
+                }
+                if ("user".equals(String.valueOf(m.get("role")))) {
+                    lastRagUserPrompt.set(String.valueOf(m.get("content")));
+                }
+            }
+        }
         write(exchange, 200,
                 "{\"id\":\"req-rag\",\"choices\":[{\"message\":{\"content\":\"Java runs on the JVM.\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":6,\"total_tokens\":14}}" );
+    }
+
+    private void handleRagChatAlt(HttpExchange exchange) throws IOException {
+        ragChatAltCounter.incrementAndGet();
+        write(exchange, 200,
+                "{\"id\":\"req-rag-alt\",\"choices\":[{\"message\":{\"content\":\"java from alt provider\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":6,\"total_tokens\":14}}" );
     }
 
     private void write(HttpExchange exchange, int status, String body) throws IOException {

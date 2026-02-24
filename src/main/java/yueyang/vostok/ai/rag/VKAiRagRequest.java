@@ -2,7 +2,12 @@ package yueyang.vostok.ai.rag;
 
 public class VKAiRagRequest {
     private String clientName;
+    private String chatClientName;
+    private String embeddingClientName;
+    private String rerankClientName;
     private String model;
+    private String embeddingModel;
+    private String rerankModel;
     private String query;
     private int topK = 4;
     private int vectorTopK = 8;
@@ -10,6 +15,12 @@ public class VKAiRagRequest {
     private double vectorWeight = 0.65;
     private double keywordWeight = 0.35;
     private boolean rerankEnabled = true;
+    private boolean queryRewriteEnabled = true;
+    private boolean dynamicTopKEnabled = true;
+    private boolean mergeSimilarChunksEnabled = true;
+    private boolean contextCompressionEnabled = true;
+    private int contextMaxCharsPerChunk = 280;
+    private int contextMaxChars = 1800;
     private String systemPrompt;
 
     public String getClientName() {
@@ -21,12 +32,57 @@ public class VKAiRagRequest {
         return this;
     }
 
+    public String getChatClientName() {
+        return chatClientName;
+    }
+
+    public VKAiRagRequest chatClient(String chatClientName) {
+        this.chatClientName = chatClientName;
+        return this;
+    }
+
+    public String getEmbeddingClientName() {
+        return embeddingClientName;
+    }
+
+    public VKAiRagRequest embeddingClient(String embeddingClientName) {
+        this.embeddingClientName = embeddingClientName;
+        return this;
+    }
+
+    public String getRerankClientName() {
+        return rerankClientName;
+    }
+
+    public VKAiRagRequest rerankClient(String rerankClientName) {
+        this.rerankClientName = rerankClientName;
+        return this;
+    }
+
     public String getModel() {
         return model;
     }
 
     public VKAiRagRequest model(String model) {
         this.model = model;
+        return this;
+    }
+
+    public String getEmbeddingModel() {
+        return embeddingModel;
+    }
+
+    public VKAiRagRequest embeddingModel(String embeddingModel) {
+        this.embeddingModel = embeddingModel;
+        return this;
+    }
+
+    public String getRerankModel() {
+        return rerankModel;
+    }
+
+    public VKAiRagRequest rerankModel(String rerankModel) {
+        this.rerankModel = rerankModel;
         return this;
     }
 
@@ -90,6 +146,60 @@ public class VKAiRagRequest {
 
     public VKAiRagRequest rerankEnabled(boolean rerankEnabled) {
         this.rerankEnabled = rerankEnabled;
+        return this;
+    }
+
+    public boolean isQueryRewriteEnabled() {
+        return queryRewriteEnabled;
+    }
+
+    public VKAiRagRequest queryRewriteEnabled(boolean queryRewriteEnabled) {
+        this.queryRewriteEnabled = queryRewriteEnabled;
+        return this;
+    }
+
+    public boolean isDynamicTopKEnabled() {
+        return dynamicTopKEnabled;
+    }
+
+    public VKAiRagRequest dynamicTopKEnabled(boolean dynamicTopKEnabled) {
+        this.dynamicTopKEnabled = dynamicTopKEnabled;
+        return this;
+    }
+
+    public boolean isMergeSimilarChunksEnabled() {
+        return mergeSimilarChunksEnabled;
+    }
+
+    public VKAiRagRequest mergeSimilarChunksEnabled(boolean mergeSimilarChunksEnabled) {
+        this.mergeSimilarChunksEnabled = mergeSimilarChunksEnabled;
+        return this;
+    }
+
+    public boolean isContextCompressionEnabled() {
+        return contextCompressionEnabled;
+    }
+
+    public VKAiRagRequest contextCompressionEnabled(boolean contextCompressionEnabled) {
+        this.contextCompressionEnabled = contextCompressionEnabled;
+        return this;
+    }
+
+    public int getContextMaxCharsPerChunk() {
+        return contextMaxCharsPerChunk;
+    }
+
+    public VKAiRagRequest contextMaxCharsPerChunk(int contextMaxCharsPerChunk) {
+        this.contextMaxCharsPerChunk = Math.max(32, contextMaxCharsPerChunk);
+        return this;
+    }
+
+    public int getContextMaxChars() {
+        return contextMaxChars;
+    }
+
+    public VKAiRagRequest contextMaxChars(int contextMaxChars) {
+        this.contextMaxChars = Math.max(128, contextMaxChars);
         return this;
     }
 

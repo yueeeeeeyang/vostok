@@ -57,6 +57,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class VKAiRuntime {
     private static final Object LOCK = new Object();
@@ -516,13 +518,7 @@ public final class VKAiRuntime {
         }
 
         ClientResolved cr = resolveClient(request.getClientName());
-        String model = request.getModel();
-        if (model == null || model.isBlank()) {
-            model = cr.client().getModel();
-        }
-        if (model == null || model.isBlank()) {
-            model = config.getDefaultModel();
-        }
+        String model = resolveEmbeddingModel(request.getModel(), cr.client());
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("model", model);
@@ -587,13 +583,7 @@ public final class VKAiRuntime {
         }
 
         ClientResolved cr = resolveClient(request.getClientName());
-        String model = request.getModel();
-        if (model == null || model.isBlank()) {
-            model = cr.client().getModel();
-        }
-        if (model == null || model.isBlank()) {
-            model = config.getDefaultModel();
-        }
+        String model = resolveRerankModel(request.getModel(), cr.client());
 
         long start = System.currentTimeMillis();
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -655,23 +645,45 @@ public final class VKAiRuntime {
         if (request == null || request.getQuery() == null || request.getQuery().isBlank()) {
             throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "RAG query is blank");
         }
+        String chatClientName = resolveRagClientName(request.getChatClientName(), request.getClientName());
+        String embeddingClientName = resolveRagClientName(request.getEmbeddingClientName(), request.getClientName());
+        String rerankClientName = resolveRagClientName(request.getRerankClientName(), request.getClientName());
+
+        String retrievalQuery = request.isQueryRewriteEnabled()
+                ? rewriteRagQueryLight(request.getQuery())
+                : request.getQuery();
+        int effectiveTopK = request.isDynamicTopKEnabled()
+                ? computeDynamicTopK(request.getTopK(), retrievalQuery)
+                : request.getTopK();
+        int vectorTopK = request.isDynamicTopKEnabled()
+                ? dynamicCandidateTopK(request.getVectorTopK(), effectiveTopK)
+                : Math.max(request.getTopK(), request.getVectorTopK());
+        int keywordTopK = request.isDynamicTopKEnabled()
+                ? dynamicCandidateTopK(request.getKeywordTopK(), effectiveTopK)
+                : Math.max(request.getTopK(), request.getKeywordTopK());
 
         List<VKAiEmbedding> queryEmbeddings = embed(new VKAiEmbeddingRequest()
-                .client(request.getClientName())
-                .model(request.getModel())
-                .input(request.getQuery()));
+                .client(embeddingClientName)
+                .model(request.getEmbeddingModel())
+                .input(retrievalQuery));
         if (queryEmbeddings.isEmpty()) {
             throw new VKAiException(VKAiErrorCode.SERIALIZATION_ERROR, "Embedding response is empty");
         }
 
-        int vectorTopK = Math.max(request.getTopK(), request.getVectorTopK());
-        int keywordTopK = Math.max(request.getTopK(), request.getKeywordTopK());
         List<VKAiVectorHit> vectorHits = searchVector(queryEmbeddings.get(0).getVector(), vectorTopK);
-        List<VKAiVectorHit> keywordHits = searchKeywords(request.getQuery(), keywordTopK);
+        List<VKAiVectorHit> keywordHits = searchKeywords(retrievalQuery, keywordTopK);
         List<VKAiVectorHit> merged = mergeHybridHits(vectorHits, keywordHits, request);
-        List<VKAiVectorHit> hits = request.isRerankEnabled() ? rerankHits(request, merged) : merged;
-        if (hits.size() > request.getTopK()) {
-            hits = List.copyOf(hits.subList(0, request.getTopK()));
+        if (request.isMergeSimilarChunksEnabled()) {
+            merged = mergeSimilarChunks(merged);
+        }
+        List<VKAiVectorHit> hits = request.isRerankEnabled()
+                ? rerankHits(request, rerankClientName, merged, retrievalQuery, effectiveTopK)
+                : merged;
+        if (request.isContextCompressionEnabled()) {
+            hits = compressContextHits(hits, effectiveTopK, request.getContextMaxCharsPerChunk(), request.getContextMaxChars());
+        }
+        if (hits.size() > effectiveTopK) {
+            hits = List.copyOf(hits.subList(0, effectiveTopK));
         }
 
         StringBuilder context = new StringBuilder(256);
@@ -685,20 +697,26 @@ public final class VKAiRuntime {
             systemPrompt = "Answer only from context. If unknown, say unknown.";
         }
 
-        String answerCacheKey = "vk:ai:rag-answer:" + shortHash(buildRagAnswerCacheMaterial(request, systemPrompt, hits));
+        String answerCacheKey = "vk:ai:rag-answer:" + shortHash(buildRagAnswerCacheMaterial(
+                request,
+                chatClientName,
+                embeddingClientName,
+                rerankClientName,
+                systemPrompt,
+                hits));
         if (config.isRagCacheEnabled() && config.getRagAnswerCacheTtlMs() > 0) {
             String cachedAnswer = cacheGetString(answerCacheKey);
             if (cachedAnswer != null) {
                 VKAiChatResponse cached = decodeCachedChatResponse(cachedAnswer);
                 if (cached != null) {
-                    audit("RAG_ANSWER_CACHE_HIT", request.getClientName(), "key=" + answerCacheKey);
+                    audit("RAG_ANSWER_CACHE_HIT", chatClientName, "key=" + answerCacheKey);
                     return new VKAiRagResponse(cached, hits);
                 }
             }
         }
 
         VKAiChatResponse answer = chat(new VKAiChatRequest()
-                .client(request.getClientName())
+                .client(chatClientName)
                 .model(request.getModel())
                 .system(systemPrompt)
                 .message("user", "Question:\n" + request.getQuery() + "\n\nContext:\n" + context));
@@ -706,6 +724,36 @@ public final class VKAiRuntime {
             cacheSetString(answerCacheKey, encodeChatResponseForCache(answer), config.getRagAnswerCacheTtlMs());
         }
         return new VKAiRagResponse(answer, hits);
+    }
+
+    public void healthCheckRag(String clientName, boolean includeRerank) {
+        ensureInit();
+        ClientResolved cr = resolveClient(clientName);
+        String embeddingModel = resolveEmbeddingModel(null, cr.client());
+        try {
+            embed(new VKAiEmbeddingRequest()
+                    .client(cr.name())
+                    .model(embeddingModel)
+                    .input("health check"));
+        } catch (VKAiException e) {
+            throw mapRagPrecheckException("embedding", cr.name(), embeddingModel, e);
+        }
+
+        if (!includeRerank) {
+            return;
+        }
+        String rerankModel = resolveRerankModel(null, cr.client());
+        try {
+            rerank(new VKAiRerankRequest()
+                    .client(cr.name())
+                    .model(rerankModel)
+                    .query("health check")
+                    .document("doc one")
+                    .document("doc two")
+                    .topK(1));
+        } catch (VKAiException e) {
+            throw mapRagPrecheckException("rerank", cr.name(), rerankModel, e);
+        }
     }
 
     public VKAiMetrics metrics() {
@@ -818,19 +866,14 @@ public final class VKAiRuntime {
         String clientName = clientResolved.name();
         VKAiClientConfig client = clientResolved.client();
 
-        String model = request.getModel();
-        if (model == null || model.isBlank()) {
-            model = client.getModel();
-        }
-        if (model == null || model.isBlank()) {
-            model = config.getDefaultModel();
-        }
+        String model = resolveChatModel(request.getModel(), client);
 
+        List<VKAiMessage> preparedMessages = trimHistoryMessages(request);
         List<Map<String, Object>> messages = new ArrayList<>();
         if (request.getSystemPrompt() != null && !request.getSystemPrompt().isBlank()) {
             messages.add(Map.of("role", "system", "content", request.getSystemPrompt()));
         }
-        for (VKAiMessage msg : request.getMessages()) {
+        for (VKAiMessage msg : preparedMessages) {
             if (msg == null || msg.getRole() == null || msg.getRole().isBlank()) {
                 continue;
             }
@@ -883,7 +926,7 @@ public final class VKAiRuntime {
                 model,
                 url,
                 request.getSystemPrompt(),
-                request.getMessages(),
+                preparedMessages,
                 VKJson.toJson(payload),
                 toHeaderArray(headers),
                 connectTimeoutMs,
@@ -892,6 +935,41 @@ public final class VKAiRuntime {
                 failOnNon2xx,
                 allowedTools
         );
+    }
+
+    private List<VKAiMessage> trimHistoryMessages(VKAiChatRequest request) {
+        List<VKAiMessage> raw = request.getMessages();
+        if (raw.isEmpty() || !request.isHistoryTrimEnabled()) {
+            return raw;
+        }
+        int maxMessages = request.getHistoryMaxMessages() == null ? 12 : Math.max(1, request.getHistoryMaxMessages());
+        int maxChars = request.getHistoryMaxChars() == null ? 4000 : Math.max(128, request.getHistoryMaxChars());
+
+        List<VKAiMessage> reversed = new ArrayList<>();
+        int totalChars = 0;
+        for (int i = raw.size() - 1; i >= 0; i--) {
+            VKAiMessage msg = raw.get(i);
+            if (msg == null || msg.getRole() == null || msg.getRole().isBlank()) {
+                continue;
+            }
+            String content = msg.getContent() == null ? "" : msg.getContent().trim();
+            if (reversed.isEmpty() && content.length() > maxChars) {
+                content = content.substring(content.length() - maxChars);
+            }
+            if (!reversed.isEmpty() && totalChars + content.length() > maxChars) {
+                break;
+            }
+            if (reversed.size() >= maxMessages) {
+                break;
+            }
+            reversed.add(new VKAiMessage(msg.getRole(), content));
+            totalChars += content.length();
+        }
+        List<VKAiMessage> out = new ArrayList<>(reversed.size());
+        for (int i = reversed.size() - 1; i >= 0; i--) {
+            out.add(reversed.get(i));
+        }
+        return out;
     }
 
     private Map<String, Object> parseJsonOrEmptyObject(String json) {
@@ -949,6 +1027,70 @@ public final class VKAiRuntime {
             throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai client not found: " + normalized);
         }
         return new ClientResolved(normalized, client);
+    }
+
+    private String resolveRagClientName(String specificClientName, String fallbackClientName) {
+        return firstNonBlank(specificClientName, fallbackClientName);
+    }
+
+    private String resolveChatModel(String requestModel, VKAiClientConfig client) {
+        String model = firstNonBlank(requestModel, client.getModel(), config.getDefaultModel());
+        if (model == null) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Chat model is not configured");
+        }
+        return model;
+    }
+
+    private String resolveEmbeddingModel(String requestModel, VKAiClientConfig client) {
+        String model = firstNonBlank(
+                requestModel,
+                client.getEmbeddingModel(),
+                config.getDefaultEmbeddingModel(),
+                client.getModel(),
+                config.getDefaultModel()
+        );
+        if (model == null) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR,
+                    "Embedding model is not configured. Set request.embeddingModel / client.embeddingModel / ai.defaultEmbeddingModel");
+        }
+        return model;
+    }
+
+    private String resolveRerankModel(String requestModel, VKAiClientConfig client) {
+        String model = firstNonBlank(
+                requestModel,
+                client.getRerankModel(),
+                config.getDefaultRerankModel(),
+                client.getModel(),
+                config.getDefaultModel()
+        );
+        if (model == null) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR,
+                    "Rerank model is not configured. Set request.rerankModel / client.rerankModel / ai.defaultRerankModel");
+        }
+        return model;
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return null;
+    }
+
+    private VKAiException mapRagPrecheckException(String stage, String clientName, String model, VKAiException e) {
+        if (e.getCode() == VKAiErrorCode.HTTP_STATUS && e.getStatusCode() != null && e.getStatusCode() == 404) {
+            return new VKAiException(VKAiErrorCode.CONFIG_ERROR,
+                    "RAG precheck failed at " + stage + " (404). client=" + clientName + ", model=" + model
+                            + ". Check " + stage + " endpoint path and model layering config.", e);
+        }
+        return new VKAiException(e.getCode(),
+                "RAG precheck failed at " + stage + ". client=" + clientName + ", model=" + model + ", cause=" + e.getMessage(), e);
     }
 
     private Map<String, String> buildHeaders(VKAiClientConfig client) {
@@ -1216,6 +1358,28 @@ public final class VKAiRuntime {
         return deduplicateByText(merged, Math.max(request.getTopK() * 3, request.getTopK()));
     }
 
+    private int computeDynamicTopK(int baseTopK, String query) {
+        int base = Math.max(1, baseTopK);
+        String[] terms = tokenizeForRewrite(query);
+        int termCount = terms.length;
+        if (termCount <= 3) {
+            return Math.min(base, 2);
+        }
+        if (termCount <= 8) {
+            return Math.min(base, 3);
+        }
+        if (termCount >= 20) {
+            return Math.min(Math.max(base + 1, 4), 8);
+        }
+        return base;
+    }
+
+    private int dynamicCandidateTopK(int configuredTopK, int effectiveTopK) {
+        int floor = Math.max(1, effectiveTopK);
+        int cap = Math.max(floor, floor * 3);
+        return Math.max(floor, Math.min(Math.max(1, configuredTopK), cap));
+    }
+
     private void combineHits(Map<String, Double> combined,
                              Map<String, VKAiVectorHit> hitById,
                              List<VKAiVectorHit> hits,
@@ -1263,7 +1427,242 @@ public final class VKAiRuntime {
         return out;
     }
 
-    private List<VKAiVectorHit> rerankHits(VKAiRagRequest request, List<VKAiVectorHit> hits) {
+    private List<VKAiVectorHit> mergeSimilarChunks(List<VKAiVectorHit> hits) {
+        if (hits == null || hits.isEmpty()) {
+            return List.of();
+        }
+        Map<String, List<VKAiVectorHit>> grouped = new LinkedHashMap<>();
+        List<VKAiVectorHit> passthrough = new ArrayList<>();
+        for (VKAiVectorHit hit : hits) {
+            if (hit == null) {
+                continue;
+            }
+            String docId = hit.getMetadata().get("vk_doc_id");
+            Integer idx = parseChunkIndex(hit);
+            if (docId == null || idx == null) {
+                passthrough.add(hit);
+                continue;
+            }
+            String version = hit.getMetadata().get("vk_doc_version");
+            String key = docId + "#" + (version == null ? "" : version);
+            grouped.computeIfAbsent(key, k -> new ArrayList<>()).add(hit);
+        }
+
+        List<VKAiVectorHit> merged = new ArrayList<>(passthrough);
+        for (List<VKAiVectorHit> group : grouped.values()) {
+            group.sort(Comparator.comparingInt(h -> parseChunkIndex(h)));
+            VKAiVectorHit current = null;
+            int prevIdx = Integer.MIN_VALUE;
+            for (VKAiVectorHit hit : group) {
+                int idx = parseChunkIndex(hit);
+                if (current == null) {
+                    current = hit;
+                    prevIdx = idx;
+                    continue;
+                }
+                boolean adjacent = idx - prevIdx <= 1;
+                boolean similar = lexicalSimilarity(current.getText(), hit.getText()) >= 0.6;
+                if (adjacent || similar) {
+                    current = mergeTwoHits(current, hit);
+                    prevIdx = idx;
+                } else {
+                    merged.add(current);
+                    current = hit;
+                    prevIdx = idx;
+                }
+            }
+            if (current != null) {
+                merged.add(current);
+            }
+        }
+        merged.sort(Comparator.comparingDouble(VKAiVectorHit::getScore).reversed());
+        return merged;
+    }
+
+    private VKAiVectorHit mergeTwoHits(VKAiVectorHit a, VKAiVectorHit b) {
+        String left = a.getText() == null ? "" : a.getText().trim();
+        String right = b.getText() == null ? "" : b.getText().trim();
+        String text = left.contains(right) ? left : (right.contains(left) ? right : (left + "\n" + right));
+        Map<String, String> metadata = new LinkedHashMap<>(a.getMetadata());
+        Integer ai = parseChunkIndex(a);
+        Integer bi = parseChunkIndex(b);
+        if (ai != null && bi != null) {
+            metadata.put("vk_chunk_span", Math.min(ai, bi) + "-" + Math.max(ai, bi));
+        }
+        String id = a.getId().equals(b.getId()) ? a.getId() : a.getId() + "~" + b.getId();
+        return new VKAiVectorHit(id, text, Math.max(a.getScore(), b.getScore()), metadata);
+    }
+
+    private Integer parseChunkIndex(VKAiVectorHit hit) {
+        if (hit == null || hit.getMetadata() == null) {
+            return null;
+        }
+        String idx = hit.getMetadata().get("vk_chunk_index");
+        if (idx == null || idx.isBlank()) {
+            return null;
+        }
+        try {
+            return Integer.parseInt(idx);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private double lexicalSimilarity(String a, String b) {
+        if (a == null || b == null || a.isBlank() || b.isBlank()) {
+            return 0.0;
+        }
+        LinkedHashSet<String> sa = new LinkedHashSet<>(List.of(tokenizeForRewrite(a)));
+        LinkedHashSet<String> sb = new LinkedHashSet<>(List.of(tokenizeForRewrite(b)));
+        if (sa.isEmpty() || sb.isEmpty()) {
+            return 0.0;
+        }
+        int inter = 0;
+        for (String t : sa) {
+            if (sb.contains(t)) {
+                inter++;
+            }
+        }
+        int union = sa.size() + sb.size() - inter;
+        if (union <= 0) {
+            return 0.0;
+        }
+        return (double) inter / union;
+    }
+
+    private List<VKAiVectorHit> compressContextHits(List<VKAiVectorHit> hits,
+                                                    int limit,
+                                                    int maxPerChunkChars,
+                                                    int maxTotalChars) {
+        if (hits == null || hits.isEmpty()) {
+            return List.of();
+        }
+        int maxPer = Math.max(64, maxPerChunkChars);
+        int maxTotal = Math.max(maxPer, maxTotalChars);
+        List<VKAiVectorHit> out = new ArrayList<>(Math.min(limit, hits.size()));
+        int total = 0;
+        for (VKAiVectorHit hit : hits) {
+            if (out.size() >= limit) {
+                break;
+            }
+            String text = compressSnippet(hit.getText(), maxPer);
+            if (text.isBlank()) {
+                continue;
+            }
+            if (total + text.length() > maxTotal) {
+                int remaining = maxTotal - total;
+                if (remaining < 32) {
+                    break;
+                }
+                text = compressSnippet(text, remaining);
+                if (text.isBlank()) {
+                    break;
+                }
+            }
+            total += text.length();
+            out.add(new VKAiVectorHit(hit.getId(), text, hit.getScore(), hit.getMetadata()));
+        }
+        return out;
+    }
+
+    private String compressSnippet(String raw, int maxChars) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String text = raw.replaceAll("\\s+", " ").trim();
+        int max = Math.max(32, maxChars);
+        if (text.length() <= max) {
+            return text;
+        }
+        int cut = max;
+        int min = Math.max(20, max / 2);
+        for (int i = max - 1; i >= min; i--) {
+            char c = text.charAt(i);
+            if (c == '。' || c == '！' || c == '？' || c == '.' || c == '!' || c == '?' || c == ';' || c == '；') {
+                cut = i + 1;
+                break;
+            }
+        }
+        String snippet = text.substring(0, Math.min(cut, text.length())).trim();
+        return snippet.length() < text.length() ? snippet + "..." : snippet;
+    }
+
+    private String rewriteRagQueryLight(String rawQuery) {
+        if (rawQuery == null || rawQuery.isBlank()) {
+            return "";
+        }
+        String normalized = rawQuery.replaceAll("\\s+", " ").trim();
+        if (normalized.length() <= 96) {
+            return normalized;
+        }
+        String candidate = pickQuestionCandidate(normalized);
+        List<String> keywords = extractLightKeywords(normalized, 6);
+        String out = candidate;
+        for (String kw : keywords) {
+            if (!out.toLowerCase().contains(kw.toLowerCase())) {
+                out += " " + kw;
+            }
+        }
+        if (out.length() > 128) {
+            out = out.substring(0, 128);
+        }
+        return out.trim();
+    }
+
+    private String pickQuestionCandidate(String normalized) {
+        String[] parts = normalized.split("[。！？!?;；\\n\\r]");
+        String best = "";
+        for (String p : parts) {
+            String s = p == null ? "" : p.trim();
+            if (s.isBlank()) {
+                continue;
+            }
+            boolean hasQuestionMarker = s.contains("如何") || s.contains("怎么") || s.contains("为什么")
+                    || s.contains("什么") || s.contains("请问") || s.endsWith("?") || s.endsWith("？");
+            if (hasQuestionMarker) {
+                best = s;
+            } else if (best.isBlank() && s.length() > best.length()) {
+                best = s;
+            }
+        }
+        if (best.isBlank()) {
+            best = normalized.length() > 96 ? normalized.substring(0, 96) : normalized;
+        }
+        return best.length() > 96 ? best.substring(0, 96) : best;
+    }
+
+    private List<String> extractLightKeywords(String input, int limit) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        Matcher latin = Pattern.compile("[a-zA-Z0-9_\\-]{3,}").matcher(input.toLowerCase());
+        while (latin.find() && out.size() < limit) {
+            out.add(latin.group());
+        }
+        Matcher han = Pattern.compile("[\\p{IsHan}]{2,6}").matcher(input);
+        while (han.find() && out.size() < limit) {
+            out.add(han.group());
+        }
+        return new ArrayList<>(out);
+    }
+
+    private String[] tokenizeForRewrite(String text) {
+        if (text == null || text.isBlank()) {
+            return new String[0];
+        }
+        String[] arr = text.toLowerCase().split("[^\\p{IsHan}a-z0-9_\\-]+");
+        List<String> out = new ArrayList<>(arr.length);
+        for (String it : arr) {
+            if (it != null && !it.isBlank()) {
+                out.add(it);
+            }
+        }
+        return out.toArray(new String[0]);
+    }
+
+    private List<VKAiVectorHit> rerankHits(VKAiRagRequest request,
+                                           String rerankClientName,
+                                           List<VKAiVectorHit> hits,
+                                           String retrievalQuery,
+                                           int effectiveTopK) {
         if (hits == null || hits.isEmpty()) {
             return List.of();
         }
@@ -1272,11 +1671,11 @@ public final class VKAiRuntime {
             docs.add(hit.getText());
         }
         VKAiRerankRequest rerankRequest = new VKAiRerankRequest()
-                .client(request.getClientName())
-                .model(request.getModel())
-                .query(request.getQuery())
+                .client(rerankClientName)
+                .model(request.getRerankModel())
+                .query(retrievalQuery)
                 .documents(docs)
-                .topK(Math.min(request.getTopK(), docs.size()));
+                .topK(Math.min(effectiveTopK, docs.size()));
         VKAiRerankResponse rerank;
         long timeoutMs = config.getRagRerankTimeoutMs();
         if (timeoutMs > 0) {
@@ -1284,13 +1683,13 @@ public final class VKAiRuntime {
                 rerank = CompletableFuture.supplyAsync(() -> rerank(rerankRequest))
                         .get(timeoutMs, TimeUnit.MILLISECONDS);
             } catch (TimeoutException e) {
-                audit("RAG_DEGRADE", request.getClientName(), "reason=rerank_timeout, timeoutMs=" + timeoutMs);
+                audit("RAG_DEGRADE", rerankClientName, "reason=rerank_timeout, timeoutMs=" + timeoutMs);
                 return hits;
             } catch (Exception e) {
                 if (e instanceof InterruptedException) {
                     Thread.currentThread().interrupt();
                 }
-                audit("RAG_DEGRADE", request.getClientName(), "reason=rerank_error");
+                audit("RAG_DEGRADE", rerankClientName, "reason=rerank_error");
                 return hits;
             }
         } else {
@@ -1371,11 +1770,18 @@ public final class VKAiRuntime {
     }
 
     private static String buildRagAnswerCacheMaterial(VKAiRagRequest request,
+                                                      String chatClientName,
+                                                      String embeddingClientName,
+                                                      String rerankClientName,
                                                       String systemPrompt,
                                                       List<VKAiVectorHit> hits) {
         StringBuilder sb = new StringBuilder(512);
-        sb.append(request.getClientName()).append('|')
+        sb.append(chatClientName).append('|')
+                .append(embeddingClientName).append('|')
+                .append(rerankClientName).append('|')
                 .append(request.getModel()).append('|')
+                .append(request.getEmbeddingModel()).append('|')
+                .append(request.getRerankModel()).append('|')
                 .append(request.getQuery()).append('|')
                 .append(request.getTopK()).append('|')
                 .append(systemPrompt == null ? "" : systemPrompt);

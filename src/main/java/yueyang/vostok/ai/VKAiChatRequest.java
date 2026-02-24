@@ -13,6 +13,9 @@ public class VKAiChatRequest {
     private Integer maxTokens;
     private String model;
     private final Set<String> allowedTools = new LinkedHashSet<>();
+    private boolean historyTrimEnabled = true;
+    private Integer historyMaxMessages;
+    private Integer historyMaxChars;
 
     public String getClientName() {
         return clientName;
@@ -93,6 +96,33 @@ public class VKAiChatRequest {
         for (String toolName : toolNames) {
             allowTool(toolName);
         }
+        return this;
+    }
+
+    public boolean isHistoryTrimEnabled() {
+        return historyTrimEnabled;
+    }
+
+    public VKAiChatRequest historyTrimEnabled(boolean historyTrimEnabled) {
+        this.historyTrimEnabled = historyTrimEnabled;
+        return this;
+    }
+
+    public Integer getHistoryMaxMessages() {
+        return historyMaxMessages;
+    }
+
+    public VKAiChatRequest historyMaxMessages(Integer historyMaxMessages) {
+        this.historyMaxMessages = historyMaxMessages;
+        return this;
+    }
+
+    public Integer getHistoryMaxChars() {
+        return historyMaxChars;
+    }
+
+    public VKAiChatRequest historyMaxChars(Integer historyMaxChars) {
+        this.historyMaxChars = historyMaxChars;
         return this;
     }
 }

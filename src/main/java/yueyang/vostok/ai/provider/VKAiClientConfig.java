@@ -8,6 +8,8 @@ public class VKAiClientConfig {
     private String baseUrl;
     private String apiKey;
     private String model;
+    private String embeddingModel;
+    private String rerankModel;
     private String chatPath = "/v1/chat/completions";
     private String embeddingPath = "/v1/embeddings";
     private String rerankPath = "/v1/rerank";
@@ -23,6 +25,8 @@ public class VKAiClientConfig {
         c.baseUrl = this.baseUrl;
         c.apiKey = this.apiKey;
         c.model = this.model;
+        c.embeddingModel = this.embeddingModel;
+        c.rerankModel = this.rerankModel;
         c.chatPath = this.chatPath;
         c.embeddingPath = this.embeddingPath;
         c.rerankPath = this.rerankPath;
@@ -69,6 +73,24 @@ public class VKAiClientConfig {
 
     public VKAiClientConfig model(String model) {
         this.model = model;
+        return this;
+    }
+
+    public String getEmbeddingModel() {
+        return embeddingModel;
+    }
+
+    public VKAiClientConfig embeddingModel(String embeddingModel) {
+        this.embeddingModel = embeddingModel;
+        return this;
+    }
+
+    public String getRerankModel() {
+        return rerankModel;
+    }
+
+    public VKAiClientConfig rerankModel(String rerankModel) {
+        this.rerankModel = rerankModel;
         return this;
     }
 
