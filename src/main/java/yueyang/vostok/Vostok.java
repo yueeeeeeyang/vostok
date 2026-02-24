@@ -10,6 +10,7 @@ import yueyang.vostok.security.VostokSecurity;
 import yueyang.vostok.web.VostokWeb;
 import yueyang.vostok.http.VostokHttp;
 import yueyang.vostok.util.VostokUtil;
+import yueyang.vostok.ai.VostokAI;
 
 /**
  * Vostok 统一入口。
@@ -95,6 +96,14 @@ public final class Vostok {
      */
     public static final class Util extends VostokUtil {
         private Util() {
+        }
+    }
+
+    /**
+     * AI entry.
+     */
+    public static final class AI extends VostokAI {
+        private AI() {
         }
     }
 }

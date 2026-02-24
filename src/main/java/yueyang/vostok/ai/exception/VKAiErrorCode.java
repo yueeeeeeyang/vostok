@@ -1,0 +1,16 @@
+package yueyang.vostok.ai.exception;
+
+public enum VKAiErrorCode {
+    INVALID_ARGUMENT,
+    CONFIG_ERROR,
+    STATE_ERROR,
+    NETWORK_ERROR,
+    TIMEOUT,
+    HTTP_STATUS,
+    SERIALIZATION_ERROR,
+    JSON_PARSE_ERROR,
+    TOOL_NOT_FOUND,
+    TOOL_DENIED,
+    TOOL_EXECUTION_ERROR,
+    SECURITY_BLOCKED
+}

@@ -2,7 +2,7 @@
 
 ---
 
-Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合十个模块能力：
+Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合十一个模块能力：
 
 - `Vostok.Data`：基于 JDBC 的数据访问（CRUD、事务、查询、多数据源、连接池）
 - `Vostok.Web`：基于 NIO Reactor 的 Web 服务器（路由、中间件、静态资源、自动 CRUD API）
@@ -14,6 +14,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Cache`：统一缓存访问（支持 Redis 或内存 Provider、内置连接池、可扩展编解码器）
 - `Vostok.Http`：统一 HTTP Client（命名 Client、鉴权、重试、超时、JSON/表单/文件上传）
 - `Vostok.Util`：通用工具门面（JSON 能力、Provider 注册与切换）
+- `Vostok.AI`：统一 AI Client（命名 Client、Chat/ChatJson、重试、指标、异常模型）
 
 项目构建方式为 Maven：`/Users/yueyang/Develop/code/codex/Vostok/pom.xml`。
 
@@ -33,6 +34,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Event` 仅提供一个发布方法 `publish(...)`；同步/异步行为由监听器注册模式决定。
 - `Vostok.Cache` 不依赖 `Vostok.Config`，必须通过 `VKCacheConfig` 或显式 Loader 初始化。
 - `Vostok.Http` 建议显式 `init(...)` 后再使用；如调用相对路径，必须先注册带 `baseUrl` 的命名 Client。
+- `Vostok.AI` 建议显式 `init(...)` 并注册命名 Client；若未指定 client 且注册了多个 Client，会抛出配置异常。
 - JSON 能力通过 `Vostok.Util` 暴露，默认使用内置 `builtin` 实现；如需 Jackson/Gson/Fastjson 等能力，请业务侧自行实现 `VKJsonProvider` 并注册切换。
 - `Vostok.Http` 默认会对非 `2xx` 响应抛出异常（可通过 `failOnNon2xx(false)` 关闭）。
 - `Vostok.Security` 的检测结果是风险判断，不替代参数化查询、鉴权、最小权限、WAF/主机安全等基础安全控制。
@@ -471,6 +473,12 @@ import yueyang.vostok.data.query.*;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
+/**
+ * 实体定义示例：
+ * - @VKEntity 指定表名
+ * - @VKId 指定主键字段
+ * - @VKColumn 可指定数据库列名
+ */
 @VKEntity(table = "t_user")
 class User {
     @VKId private Long id;
@@ -484,6 +492,7 @@ class User {
 
 public class DataApiDemo {
     public static void main(String[] args) {
+        // 1) 构建 Data 配置（最小可用配置）
         VKDataConfig cfg = new VKDataConfig()
                 .url("jdbc:h2:mem:vostok;MODE=MySQL;DB_CLOSE_DELAY=-1")
                 .username("sa")
@@ -491,43 +500,63 @@ public class DataApiDemo {
                 .driver("org.h2.Driver")
                 .dialect(VKDialectType.MYSQL);
 
-        // init / scanner / meta
+        // 2) 初始化 + 元数据刷新 + 扫描器切换
+        // init: 初始化 Data 模块，扫描指定包下实体并注册元数据
         Vostok.Data.init(cfg, "com.example.entity");
+        // refreshMeta(): 使用初始化时的包列表刷新元数据
         Vostok.Data.refreshMeta();
+        // refreshMeta(pkg...): 使用新的包列表刷新元数据
         Vostok.Data.refreshMeta("com.example.entity");
+        // setScanner(): 替换实体扫描实现（例如自定义扫描策略）
         Vostok.Data.setScanner(VKScanner::scan);
 
-        // datasource
+        // 3) 多数据源
+        // 注册名为 ds2 的数据源（与默认数据源并存）
         Vostok.Data.registerDataSource("ds2", cfg);
+        // 在指定数据源上下文执行无返回值逻辑
         Vostok.Data.withDataSource("ds2", () -> {});
+        // 在指定数据源上下文执行有返回值逻辑
         Integer x = Vostok.Data.withDataSource("ds2", () -> 1);
 
-        // context capture + wrap
+        // 4) 异步上下文传递
+        // captureContext(): 捕获当前线程的数据源上下文
         var ctx = Vostok.Data.captureContext();
+        // wrap(): 捕获“当前上下文”并包装任务，适合异步线程/线程池提交
         Runnable r1 = Vostok.Data.wrap(() -> {});
         var s1 = Vostok.Data.wrap(() -> 1);
+        // wrap(ctx,...): 使用显式上下文包装任务
         Runnable r2 = Vostok.Data.wrap(ctx, () -> {});
         var s2 = Vostok.Data.wrap(ctx, () -> 2);
+        // 异步执行时可以恢复原上下文，避免串库
         CompletableFuture.runAsync(r1).join();
         s1.get(); r2.run(); s2.get();
 
-        // interceptor / whitelist
+        // 5) SQL 拦截器与 raw/subquery 白名单
         Vostok.Data.registerInterceptor(new VKInterceptor() {});
+        // 注册默认数据源 raw 白名单
         Vostok.Data.registerRawSql("COUNT(1)");
+        // 注册指定数据源 raw 白名单
         Vostok.Data.registerRawSql("ds2", new String[]{"COUNT(1)"});
+        // 注册默认数据源 subquery 白名单
         Vostok.Data.registerSubquery("SELECT id FROM t_user WHERE age >= ?");
+        // 注册指定数据源 subquery 白名单
         Vostok.Data.registerSubquery("ds2", new String[]{"SELECT id FROM t_user WHERE age >= ?"});
+        // 清空拦截器
         Vostok.Data.clearInterceptors();
 
-        // tx (lambda)
+        // 6) 事务（Lambda 风格）
+        // 默认传播行为 + 默认隔离级别
         Vostok.Data.tx(() -> {});
+        // 指定传播行为 + 隔离级别
         Vostok.Data.tx(() -> {}, VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT);
+        // 指定只读标记
         Vostok.Data.tx(() -> {}, VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT, false);
+        // 有返回值事务
         Integer tx1 = Vostok.Data.tx(() -> 1);
         Integer tx2 = Vostok.Data.tx(() -> 2, VKTxPropagation.REQUIRES_NEW, VKTxIsolation.READ_COMMITTED);
         Integer tx3 = Vostok.Data.tx(() -> 3, VKTxPropagation.REQUIRES_NEW, VKTxIsolation.READ_COMMITTED, true);
 
-        // tx (manual)
+        // 7) 事务（手工 begin/commit/rollback）
         Vostok.Data.beginTx();
         Vostok.Data.commitTx();
         Vostok.Data.beginTx(VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT);
@@ -535,39 +564,50 @@ public class DataApiDemo {
         Vostok.Data.beginTx(VKTxPropagation.REQUIRED, VKTxIsolation.DEFAULT, true);
         Vostok.Data.rollbackTx();
 
-        // CRUD / query
+        // 8) CRUD + 查询
         User u = new User();
         u.setName("tom");
         u.setAge(18);
 
+        // 单条插入 / 批量插入（含明细）
         int inserted = Vostok.Data.insert(u);
         int bi = Vostok.Data.batchInsert(List.of(u));
         var bid = Vostok.Data.batchInsertDetail(List.of(u));
 
+        // 单条更新 / 批量更新（含明细）
         u.setName("tom-2");
         int updated = Vostok.Data.update(u);
         int bu = Vostok.Data.batchUpdate(List.of(u));
         var bud = Vostok.Data.batchUpdateDetail(List.of(u));
 
+        // 单条删除 / 批量删除（含明细）
         int deleted = Vostok.Data.delete(User.class, 1L);
         int bd = Vostok.Data.batchDelete(User.class, List.of(1L, 2L));
         var bdd = Vostok.Data.batchDeleteDetail(User.class, List.of(1L, 2L));
 
+        // 主键查询 / 全量查询
         User one = Vostok.Data.findById(User.class, 1L);
         List<User> all = Vostok.Data.findAll(User.class);
 
+        // 条件查询（where/order/limit/offset）
         VKQuery q = VKQuery.create()
                 .where(VKCondition.of("age", VKOperator.GE, 18))
                 .orderBy(VKOrder.desc("id"))
                 .limit(10)
                 .offset(0);
+        // 查询实体列表
         List<User> list = Vostok.Data.query(User.class, q);
+        // 仅查指定字段并映射回实体
         List<User> cols = Vostok.Data.queryColumns(User.class, q, "name");
+        // 聚合查询
         List<Object[]> agg = Vostok.Data.aggregate(User.class, VKQuery.create(), VKAggregate.countAll("cnt"));
+        // 统计总数（不受 limit/offset 影响）
         long count = Vostok.Data.count(User.class, q);
 
-        // crypto migrate（列迁移：明文 <-> 密文）
+        // 9) 字段迁移（明文 <-> 密文）
+        // whereSql 使用前必须先注册到 raw 白名单
         Vostok.Data.registerRawSql("tag = ?");
+        // 构建迁移参数：目标表、游标列、目标列、筛选条件、批大小、加密 keyId
         VKCryptoMigrateOptions m = new VKCryptoMigrateOptions()
                 .table("t_user")
                 .idColumn("id")
@@ -576,8 +616,11 @@ public class DataApiDemo {
                 .whereParams("A")
                 .batchSize(200)
                 .encryptKeyId("biz-user");
+        // 预览加密迁移计划（估算量，不执行更新）
         var plan = Vostok.Data.previewEncrypt(m);
+        // 执行加密迁移（明文 -> 密文）
         var enc = Vostok.Data.encryptColumn(m);
+        // 执行解密迁移（密文 -> 明文），allowPlaintextRead=true 表示遇到明文跳过
         var dec = Vostok.Data.decryptColumn(new VKCryptoMigrateOptions()
                 .table("t_user")
                 .idColumn("id")
@@ -585,10 +628,13 @@ public class DataApiDemo {
                 .batchSize(200)
                 .allowPlaintextRead(true));
 
-        // metrics / report
+        // 10) 运行指标与报告
+        // 连接池指标快照（各数据源）
         var metrics = Vostok.Data.poolMetrics();
+        // 汇总报告（连接池/SQL 统计等）
         String report = Vostok.Data.report();
 
+        // 11) 关闭 Data 模块，释放连接池与相关资源
         Vostok.Data.close();
     }
 }
@@ -4925,3 +4971,282 @@ long crc = Vostok.Util.crc32("hello".getBytes(StandardCharsets.UTF_8));
 - 随机/ID 工具提供通用能力（uuid/traceId/随机串），不替代强业务语义主键策略。
 - 编解码工具提供 Base64/Hex/CRC32/MD5/SHA-256；`MD5/SHA-256` 为摘要能力，不等价于签名机制。
 - `Vostok.Http`、`Vostok.Web`、`Vostok.Cache` 内部统一通过 `Vostok.Util` 调用 JSON/字符串工具能力。
+
+# 12. AI 模块
+
+## 12.0 说明与注意事项
+
+- 当前第三期提供 `Chat/ChatJson`、多 Client、基础重试、指标、`Tool Calling`、审计日志与基础安全策略，并新增 `Embedding / Rerank / Vector Store / RAG`。
+- AI 包结构按职责拆分为：
+  - `yueyang.vostok.ai`：统一门面与通用模型
+  - `yueyang.vostok.ai.core`：运行时编排
+  - `yueyang.vostok.ai.provider`：Provider 客户端配置
+  - `yueyang.vostok.ai.tool`：工具调用模型与接口
+  - `yueyang.vostok.ai.prompt`：提示词模板与注册器
+  - `yueyang.vostok.ai.rag`：Embedding/Rerank/Vector/RAG 模型与实现
+  - `yueyang.vostok.ai.exception`：异常模型
+- 建议使用 OpenAI 兼容协议 Provider（默认 `chatPath=/v1/chat/completions`）。
+- 当存在多个命名 Client 时，必须通过 `request.client(name)` 或 `withClient(name, ...)` 指定上下文。
+- `chatJson(...)` 会将模型文本结果按 JSON 反序列化为目标类型；如格式不合法会抛 `JSON_PARSE_ERROR`。
+- 当启用安全策略且 `blockOnSecurityRisk=true` 时，Prompt/Tool 参数命中风险会直接阻断（`SECURITY_BLOCKED`）。
+
+## 12.1 接口定义
+
+```java
+public interface Vostok.AI {
+    public static void init();
+    public static void init(VKAiConfig config);
+    public static void reinit(VKAiConfig config);
+    public static boolean started();
+    public static VKAiConfig config();
+    public static void close();
+
+    public static void registerClient(String name, VKAiClientConfig config);
+    public static void withClient(String name, Runnable action);
+    public static <T> T withClient(String name, Supplier<T> supplier);
+    public static Set<String> clientNames();
+    public static String currentClientName();
+
+    public static VKAiChatResponse chat(VKAiChatRequest request);
+    public static CompletableFuture<VKAiChatResponse> chatAsync(VKAiChatRequest request);
+
+    public static <T> T chatJson(VKAiChatRequest request, Class<T> type);
+    public static <T> CompletableFuture<T> chatJsonAsync(VKAiChatRequest request, Class<T> type);
+
+    public static void registerTool(VKAiTool tool);
+    public static void clearTools();
+    public static Set<String> toolNames();
+    public static VKAiToolCallResult callTool(VKAiToolCall call);
+
+    public static List<VKAiEmbedding> embed(VKAiEmbeddingRequest request);
+    public static VKAiRerankResponse rerank(VKAiRerankRequest request);
+
+    public static void setVectorStore(VKAiVectorStore store);
+    public static void upsertVectorDocs(List<VKAiVectorDoc> docs);
+    public static List<VKAiVectorHit> searchVector(List<Double> queryVector, int topK);
+    public static List<VKAiVectorHit> searchKeywords(String query, int topK);
+    public static VKAiRagIngestResult ingestRagDocument(VKAiRagIngestRequest request);
+    public static void clearVectorStore();
+    public static VKAiRagResponse rag(VKAiRagRequest request);
+
+    public static List<VKAiAuditRecord> audits(int limit);
+    public static void clearAudits();
+
+    public static VKAiMetrics metrics();
+    public static void resetMetrics();
+}
+```
+
+## 12.2 使用 Demo
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.ai.*;
+import yueyang.vostok.ai.provider.*;
+import yueyang.vostok.ai.tool.*;
+import yueyang.vostok.ai.rag.*;
+import yueyang.vostok.cache.*;
+
+// 0) 初始化 Cache（RAG 一级缓存依赖 Vostok.Cache）
+Vostok.Cache.init(new VKCacheConfig()
+        .providerType(VKCacheProviderType.MEMORY)
+        .codec("string"));
+
+// 1) 初始化 AI
+Vostok.AI.init(new VKAiConfig()
+        .connectTimeoutMs(3000)
+        .readTimeoutMs(30000)
+        .maxRetries(1)
+        .retryBackoffMs(150)
+        .defaultModel("gpt-4o-mini")
+        .ragCacheEnabled(true)
+        .embeddingCacheTtlMs(6 * 60 * 60 * 1000L)
+        .rerankCacheTtlMs(30 * 60 * 1000L)
+        .ragAnswerCacheTtlMs(10 * 60 * 1000L)
+        .ragRerankTimeoutMs(1500));
+
+// 2) 注册命名 Client
+Vostok.AI.registerClient("openai", new VKAiClientConfig()
+        .baseUrl("https://api.openai.com")
+        .apiKey("sk-***")
+        .model("gpt-4o-mini"));
+
+// 3) Chat
+VKAiChatResponse r = Vostok.AI.chat(new VKAiChatRequest()
+        .client("openai")
+        .system("You are a concise assistant")
+        .message("user", "Hello"));
+System.out.println(r.getText());
+
+// 4) ChatJson
+class Summary {
+    public String title;
+    public int score;
+}
+Summary summary = Vostok.AI.chatJson(new VKAiChatRequest()
+        .client("openai")
+        .system("Return JSON only")
+        .message("user", "{" + "\\\"title\\\":\\\"Demo\\\",\\\"score\\\":95}"), Summary.class);
+
+// 5) 多 client 上下文
+String text = Vostok.AI.withClient("openai", () ->
+        Vostok.AI.chat(new VKAiChatRequest().message("user", "ping")).getText());
+
+// 6) 注册工具并手动调用
+Vostok.AI.registerTool(new VKAiTool() {
+    public String name() { return "sum"; }
+    public String description() { return "sum two integers"; }
+    public String inputJsonSchema() { return "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"integer\"},\"b\":{\"type\":\"integer\"}}}"; }
+    public String outputJsonSchema() { return "{\"type\":\"object\",\"properties\":{\"result\":{\"type\":\"integer\"}}}"; }
+    public VKAiToolResult invoke(String inputJson) {
+        Map<?, ?> in = Vostok.Util.fromJson(inputJson, Map.class);
+        int a = ((Number) in.getOrDefault("a", 0)).intValue();
+        int b = ((Number) in.getOrDefault("b", 0)).intValue();
+        return VKAiToolResult.ofJson("{\"result\":" + (a + b) + "}");
+    }
+});
+VKAiToolCallResult toolResult = Vostok.AI.callTool(new VKAiToolCall("call-1", "sum", "{\"a\":2,\"b\":3}"));
+System.out.println(toolResult.getOutputJson());
+
+// 7) Chat 中自动工具调用（Provider 返回 tool_calls 时执行）
+VKAiChatResponse tr = Vostok.AI.chat(new VKAiChatRequest()
+        .client("openai")
+        .allowTool("sum")
+        .message("user", "calc 2+3"));
+System.out.println(tr.getToolResults().size());
+
+// 8) 审计
+List<VKAiAuditRecord> audits = Vostok.AI.audits(20);
+System.out.println(audits.size());
+
+// 9) Embedding + Vector Store + RAG
+List<VKAiEmbedding> vectors = Vostok.AI.embed(new VKAiEmbeddingRequest()
+        .client("openai")
+        .input("java runs on jvm")
+        .input("python uses interpreter"));
+
+Vostok.AI.upsertVectorDocs(List.of(
+        new VKAiVectorDoc("doc-java", "java runs on jvm", vectors.get(0).getVector(), Map.of("lang", "java")),
+        new VKAiVectorDoc("doc-py", "python uses interpreter", vectors.get(1).getVector(), Map.of("lang", "python"))
+));
+
+// 9.1) 文档切片入库（带重叠窗口/去重/版本）
+VKAiRagIngestResult ingest = Vostok.AI.ingestRagDocument(new VKAiRagIngestRequest()
+        .client("openai")
+        .documentId("kb-java")
+        .version("2026-02-24")
+        .chunkSize(500)
+        .chunkOverlap(80)
+        .deduplicate(true)
+        .text("... long document ..."));
+System.out.println(ingest.getInsertedChunks());
+
+VKAiRagResponse rag = Vostok.AI.rag(new VKAiRagRequest()
+        .client("openai")
+        .query("what runs on jvm?")
+        .topK(2));
+System.out.println(rag.getAnswer().getText());
+
+// 10) Rerank
+VKAiRerankResponse rerank = Vostok.AI.rerank(new VKAiRerankRequest()
+        .client("openai")
+        .query("jvm")
+        .document("python language")
+        .document("java jvm tuning")
+        .topK(2));
+
+// 11) 指标
+VKAiMetrics m = Vostok.AI.metrics();
+System.out.println(m.totalCalls());
+```
+
+## 12.3 配置详解
+
+### 12.3.1 VKAiConfig（全局）
+
+- `connectTimeoutMs`：连接超时。
+- `readTimeoutMs`：单次请求超时。
+- `maxRetries`：最大重试次数。
+- `retryBackoffMs` / `maxRetryBackoffMs`：重试退避。
+- `retryOnStatuses`：按 HTTP 状态码重试（默认含 `429/500/502/503/504`）。
+- `retryOnNetworkError` / `retryOnTimeout`：网络错误与超时重试开关。
+- `failOnNon2xx`：非 2xx 是否抛异常。
+- `metricsEnabled`：是否统计指标。
+- `defaultModel`：默认模型名。
+- `toolCallingEnabled`：是否启用工具调用。
+- `securityCheckEnabled`：是否启用输入安全扫描。
+- `blockOnSecurityRisk`：命中风险是否阻断。
+- `auditEnabled`：是否记录审计日志。
+- `ragCacheEnabled`：是否启用 RAG 缓存（依赖 `Vostok.Cache` 已初始化）。
+- `embeddingCacheTtlMs/rerankCacheTtlMs/ragAnswerCacheTtlMs`：Embedding、Rerank、RAG答案缓存 TTL。
+- `ragRerankTimeoutMs`：RAG 内 rerank 超时阈值；超时自动降级为不 rerank。
+- `maxToolCallsPerRequest`：单次 chat 最多执行工具数量。
+- `maxAuditRecords`：审计记录内存上限。
+
+### 12.3.2 VKAiClientConfig（命名 Client）
+
+- `provider`：Provider 名称（默认 `openai-compatible`）。
+- `baseUrl`：Provider 根地址（必填）。
+- `apiKey`：鉴权 Key（自动写入 `Authorization: Bearer ...`）。
+- `model`：Client 默认模型。
+- `chatPath`：Chat 接口路径（默认 `/v1/chat/completions`）。
+- `embeddingPath`：Embedding 接口路径（默认 `/v1/embeddings`）。
+- `rerankPath`：Rerank 接口路径（默认 `/v1/rerank`）。
+- `connectTimeoutMs/readTimeoutMs/maxRetries/failOnNon2xx`：Client 级覆盖全局配置。
+- `defaultHeaders`：附加默认请求头。
+
+## 12.4 错误模型
+
+`VKAiException` 搭配 `VKAiErrorCode`：
+
+- `INVALID_ARGUMENT`：参数错误。
+- `CONFIG_ERROR`：配置缺失或 client 不存在。
+- `STATE_ERROR`：线程中断等运行状态错误。
+- `NETWORK_ERROR`：网络 I/O 错误。
+- `TIMEOUT`：请求超时。
+- `HTTP_STATUS`：非 2xx 且开启失败即抛。
+- `SERIALIZATION_ERROR`：Provider 响应 JSON 结构不符合预期。
+- `JSON_PARSE_ERROR`：`chatJson(...)` 反序列化失败。
+- `TOOL_NOT_FOUND`：请求调用的工具未注册。
+- `TOOL_DENIED`：工具不在请求允许名单或全局被禁用。
+- `TOOL_EXECUTION_ERROR`：工具执行异常。
+- `SECURITY_BLOCKED`：输入被安全策略阻断。
+
+## 12.5 指标说明
+
+`VKAiMetrics` 当前统计：
+
+- `totalCalls/successCalls/failedCalls`：总调用、成功、失败。
+- `retriedCalls`：重试次数。
+- `timeoutCalls/networkErrorCalls`：超时与网络失败次数。
+- `totalCostMs`：总耗时。
+- `totalPromptTokens/totalCompletionTokens/totalTokens`：Token 汇总。
+- `statusCounts`：HTTP 状态码分布。
+
+## 12.6 Tool Calling / 安全 / 审计说明
+
+- `Tool Calling`：当 Provider 返回 `choices[0].message.tool_calls` 时，运行时会按顺序执行工具并写入 `VKAiChatResponse.getToolResults()`。
+- 工具白名单：通过 `VKAiChatRequest.allowTool(...)` 声明本次请求允许调用的工具；不在白名单会抛 `TOOL_DENIED`。
+- 安全策略：当前对 Prompt 与 Tool 参数执行 XSS/命令注入/路径穿越检测；命中后按 `blockOnSecurityRisk` 决定是否阻断。
+- 审计日志：`CHAT_REQUEST / CHAT_RESPONSE / TOOL_CALL / TOOL_DENIED / CHAT_SECURITY_BLOCK ...` 可通过 `audits(limit)` 读取。
+
+## 12.7 Embedding / Rerank / RAG 说明
+
+- `embed(...)`：调用 Provider 向量接口，返回 `List<VKAiEmbedding>`。
+- `rerank(...)`：调用 Provider 重排接口，返回按分数排序的文档索引与分数。
+- `VKAiVectorStore`：向量存储抽象，默认实现为内存版 `VKAiInMemoryVectorStore`。
+- `upsertVectorDocs/searchVector/searchKeywords/clearVectorStore`：向量与关键词（BM25）检索能力。
+- `ingestRagDocument(...)`：内置文档切片、重叠窗口、去重、版本替换（同 `documentId` 新版本会清理旧版本切片）。
+- `rag(...)`：默认检索增强链路（自动）：
+  1) 对 query 做 embedding
+  2) 混合召回：向量检索 + BM25 关键词检索
+  3) 候选去重（按文本归一化）
+  4) 调用 rerank 重排
+  5) 拼接 context 并调用 chat 生成最终回答
+- 第一阶段成本/延迟优化：
+  1) 通过 `Vostok.Cache` 缓存 embedding/rerank/rag-answer
+  2) rerank 超时自动降级，避免长尾阻塞
+- 生产建议：
+  1) 使用持久化向量库（如 pgvector/ES/Milvus 自定义实现 `VKAiVectorStore`）
+  2) 配置合理 chunk size/overlap，避免上下文断裂
+  3) 将 `topK` 与提示词模板按业务场景调优
