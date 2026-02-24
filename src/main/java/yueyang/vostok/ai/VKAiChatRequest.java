@@ -13,6 +13,7 @@ public class VKAiChatRequest {
     private Integer maxTokens;
     private String model;
     private final Set<String> allowedTools = new LinkedHashSet<>();
+    private boolean stream;
     private boolean historyTrimEnabled = true;
     private Integer historyMaxMessages;
     private Integer historyMaxChars;
@@ -86,6 +87,15 @@ public class VKAiChatRequest {
         if (toolName != null && !toolName.isBlank()) {
             this.allowedTools.add(toolName.trim());
         }
+        return this;
+    }
+
+    public boolean isStream() {
+        return stream;
+    }
+
+    public VKAiChatRequest stream(boolean stream) {
+        this.stream = stream;
         return this;
     }
 

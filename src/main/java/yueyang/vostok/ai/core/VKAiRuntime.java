@@ -33,6 +33,9 @@ import yueyang.vostok.security.VKSecurityCheckResult;
 import yueyang.vostok.util.json.VKJson;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.BufferedReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -402,8 +405,39 @@ public final class VKAiRuntime {
         }
 
         audit("CHAT_REQUEST", resolved.clientName,
-                "model=" + resolved.model + ", msgCount=" + resolved.messages.size() + ", allowedTools=" + resolved.allowedTools);
+                "model=" + resolved.model + ", msgCount=" + resolved.messages.size() + ", stream=" + request.isStream()
+                        + ", allowedTools=" + resolved.allowedTools);
 
+        if (request.isStream()) {
+            return chatStream(resolved, start);
+        }
+        return chatNonStream(resolved, start);
+    }
+
+    public <T> T chatJson(VKAiChatRequest request, Class<T> type) {
+        if (type == null) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Type is null");
+        }
+        if (request != null && request.isStream()) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "chatJson does not support stream=true");
+        }
+        VKAiChatResponse response = chat(request);
+        try {
+            return VKJson.fromJson(response.getText(), type);
+        } catch (Exception e) {
+            throw new VKAiException(VKAiErrorCode.JSON_PARSE_ERROR, "Failed to parse chat content as JSON", e);
+        }
+    }
+
+    public CompletableFuture<VKAiChatResponse> chatAsync(VKAiChatRequest request) {
+        return CompletableFuture.supplyAsync(() -> chat(request));
+    }
+
+    public <T> CompletableFuture<T> chatJsonAsync(VKAiChatRequest request, Class<T> type) {
+        return CompletableFuture.supplyAsync(() -> chatJson(request, type));
+    }
+
+    private VKAiChatResponse chatNonStream(Resolved resolved, long start) {
         int maxRetries = resolved.maxRetries;
         for (int attempt = 0; ; attempt++) {
             if (attempt > 0) {
@@ -488,24 +522,186 @@ public final class VKAiRuntime {
         }
     }
 
-    public <T> T chatJson(VKAiChatRequest request, Class<T> type) {
-        if (type == null) {
-            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Type is null");
+    private VKAiChatResponse chatStream(Resolved resolved, long start) {
+        int maxRetries = resolved.maxRetries;
+        for (int attempt = 0; ; attempt++) {
+            if (attempt > 0) {
+                retriedCalls.incrementAndGet();
+            }
+            try {
+                HttpRequest httpRequest = HttpRequest.newBuilder()
+                        .uri(URI.create(resolved.url))
+                        .timeout(Duration.ofMillis(resolved.readTimeoutMs))
+                        .header("Content-Type", "application/json")
+                        .headers(resolved.headersArray)
+                        .POST(HttpRequest.BodyPublishers.ofString(resolved.requestBody, StandardCharsets.UTF_8))
+                        .build();
+                HttpClient httpClient = getOrCreateHttpClient(resolved.connectTimeoutMs);
+                HttpResponse<InputStream> response = httpClient.send(httpRequest, HttpResponse.BodyHandlers.ofInputStream());
+                int status = response.statusCode();
+                statusCounts.computeIfAbsent(status, k -> new AtomicLong()).incrementAndGet();
+
+                if (shouldRetryByStatus(status, attempt, maxRetries)) {
+                    closeQuietly(response.body());
+                    sleepBackoff(attempt);
+                    continue;
+                }
+                if (resolved.failOnNon2xx && (status < 200 || status >= 300)) {
+                    String body = readBodySafely(response.body());
+                    recordFail(start, false, false);
+                    throw new VKAiException(VKAiErrorCode.HTTP_STATUS,
+                            "AI chat failed with status=" + status + ", body=" + abbreviate(body, 256), status);
+                }
+
+                VKAiChatDeltaStreamImpl stream = new VKAiChatDeltaStreamImpl(() -> closeQuietly(response.body()));
+                Thread reader = new Thread(() -> parseSseStream(response.body(), stream),
+                        "vostok-ai-stream-" + System.nanoTime());
+                reader.setDaemon(true);
+                reader.start();
+
+                long latency = System.currentTimeMillis() - start;
+                if (config.isMetricsEnabled()) {
+                    successCalls.incrementAndGet();
+                    totalCostMs.addAndGet(latency);
+                }
+                if (config.isLogEnabled()) {
+                    logCall(resolved, status, latency, attempt);
+                }
+                audit("CHAT_STREAM_RESPONSE", resolved.clientName, "status=" + status);
+                return new VKAiChatResponse(
+                        null,
+                        null,
+                        new VKAiUsage(0, 0, 0),
+                        latency,
+                        null,
+                        status,
+                        List.of(),
+                        true,
+                        stream
+                );
+            } catch (VKAiException e) {
+                if (e.getCode() == VKAiErrorCode.HTTP_STATUS && shouldRetryByStatus(e.getStatusCode(), attempt, maxRetries)) {
+                    sleepBackoff(attempt);
+                    continue;
+                }
+                throw e;
+            } catch (HttpTimeoutException e) {
+                if (shouldRetryByTimeout(attempt, maxRetries)) {
+                    sleepBackoff(attempt);
+                    continue;
+                }
+                recordFail(start, true, false);
+                throw new VKAiException(VKAiErrorCode.TIMEOUT, "AI chat timeout", e);
+            } catch (IOException e) {
+                if (shouldRetryByNetwork(attempt, maxRetries)) {
+                    sleepBackoff(attempt);
+                    continue;
+                }
+                recordFail(start, false, true);
+                throw new VKAiException(VKAiErrorCode.NETWORK_ERROR, "AI network error", e);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                recordFail(start, false, false);
+                throw new VKAiException(VKAiErrorCode.STATE_ERROR, "AI chat interrupted", e);
+            }
         }
-        VKAiChatResponse response = chat(request);
-        try {
-            return VKJson.fromJson(response.getText(), type);
+    }
+
+    private void parseSseStream(InputStream inputStream, VKAiChatDeltaStreamImpl stream) {
+        try (InputStream in = inputStream;
+             BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8))) {
+            String line;
+            StringBuilder eventData = new StringBuilder(256);
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) {
+                    if (eventData.length() > 0) {
+                        if (handleSseData(eventData.toString(), stream)) {
+                            stream.complete();
+                            return;
+                        }
+                        eventData.setLength(0);
+                    }
+                    continue;
+                }
+                if (line.startsWith("data:")) {
+                    String data = line.substring(5).trim();
+                    if (eventData.length() > 0) {
+                        eventData.append('\n');
+                    }
+                    eventData.append(data);
+                }
+            }
+            if (eventData.length() > 0) {
+                handleSseData(eventData.toString(), stream);
+            }
+            stream.complete();
+        } catch (VKAiException e) {
+            stream.fail(e);
         } catch (Exception e) {
-            throw new VKAiException(VKAiErrorCode.JSON_PARSE_ERROR, "Failed to parse chat content as JSON", e);
+            stream.fail(new VKAiException(VKAiErrorCode.SERIALIZATION_ERROR, "Failed to parse stream response", e));
         }
     }
 
-    public CompletableFuture<VKAiChatResponse> chatAsync(VKAiChatRequest request) {
-        return CompletableFuture.supplyAsync(() -> chat(request));
+    private boolean handleSseData(String data, VKAiChatDeltaStreamImpl stream) {
+        if (data == null || data.isBlank()) {
+            return false;
+        }
+        if ("[DONE]".equals(data)) {
+            return true;
+        }
+        Map<?, ?> root;
+        try {
+            root = VKJson.fromJson(data, Map.class);
+        } catch (Exception e) {
+            throw new VKAiException(VKAiErrorCode.SERIALIZATION_ERROR, "Invalid stream chunk JSON", e);
+        }
+        Object idObj = root.get("id");
+        if (idObj != null) {
+            stream.setProviderRequestId(String.valueOf(idObj));
+        }
+        List<?> choices = asList(root.get("choices"));
+        for (Object it : choices) {
+            Map<?, ?> choice = asMap(it);
+            Map<?, ?> delta = asMap(choice.get("delta"));
+            Object content = delta.get("content");
+            if (content != null) {
+                stream.emitDelta(String.valueOf(content));
+            }
+            Object finish = choice.get("finish_reason");
+            if (finish != null) {
+                stream.setFinishReason(String.valueOf(finish));
+            }
+        }
+        Map<?, ?> usage = asMap(root.get("usage"));
+        if (!usage.isEmpty()) {
+            stream.setFinalUsage(new VKAiUsage(
+                    asInt(usage.get("prompt_tokens")),
+                    asInt(usage.get("completion_tokens")),
+                    asInt(usage.get("total_tokens"))
+            ));
+        }
+        return false;
     }
 
-    public <T> CompletableFuture<T> chatJsonAsync(VKAiChatRequest request, Class<T> type) {
-        return CompletableFuture.supplyAsync(() -> chatJson(request, type));
+    private static void closeQuietly(InputStream in) {
+        if (in == null) {
+            return;
+        }
+        try {
+            in.close();
+        } catch (IOException ignore) {
+        }
+    }
+
+    private static String readBodySafely(InputStream in) {
+        if (in == null) {
+            return "";
+        }
+        try (InputStream input = in) {
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     public List<VKAiEmbedding> embed(VKAiEmbeddingRequest request) {
@@ -892,6 +1088,9 @@ public final class VKAiRuntime {
         }
         if (request.getMaxTokens() != null) {
             payload.put("max_tokens", request.getMaxTokens());
+        }
+        if (request.isStream()) {
+            payload.put("stream", true);
         }
 
         Set<String> allowedTools = normalizeToolAllowlist(request.getAllowedTools());

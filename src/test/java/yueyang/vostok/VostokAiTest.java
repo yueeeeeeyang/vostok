@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test;
 import yueyang.vostok.ai.VKAiAuditRecord;
 import yueyang.vostok.ai.VKAiChatRequest;
 import yueyang.vostok.ai.VKAiChatResponse;
+import yueyang.vostok.ai.VKAiChatDeltaStream;
 import yueyang.vostok.ai.provider.VKAiClientConfig;
 import yueyang.vostok.ai.VKAiConfig;
 import yueyang.vostok.ai.rag.VKAiEmbedding;
@@ -54,6 +55,7 @@ public class VostokAiTest {
     private final AtomicInteger rerankAltCounter = new AtomicInteger();
     private final AtomicInteger embeddingAltCounter = new AtomicInteger();
     private final AtomicInteger ragChatAltCounter = new AtomicInteger();
+    private final AtomicInteger streamChatCounter = new AtomicInteger();
     private final AtomicInteger chatMessageCount = new AtomicInteger();
     private final AtomicReference<String> lastEmbeddingInput = new AtomicReference<>();
     private final AtomicReference<String> lastRagUserPrompt = new AtomicReference<>();
@@ -76,6 +78,7 @@ public class VostokAiTest {
         server.createContext("/v1/chat/tool-missing", this::handleToolMissingChat);
         server.createContext("/v1/chat/rag", this::handleRagChat);
         server.createContext("/v1/chat/rag-alt", this::handleRagChatAlt);
+        server.createContext("/v1/chat/stream", this::handleStreamChat);
         server.createContext("/v1/embeddings", this::handleEmbeddings);
         server.createContext("/v1/embeddings-alt", this::handleEmbeddingsAlt);
         server.createContext("/v1/rerank", this::handleRerank);
@@ -114,6 +117,7 @@ public class VostokAiTest {
         rerankAltCounter.set(0);
         embeddingAltCounter.set(0);
         ragChatAltCounter.set(0);
+        streamChatCounter.set(0);
         chatMessageCount.set(0);
         lastEmbeddingInput.set(null);
         lastRagUserPrompt.set(null);
@@ -231,6 +235,48 @@ public class VostokAiTest {
                 .get(2, TimeUnit.SECONDS);
 
         assertEquals("hello from ai", response.getText());
+    }
+
+    @Test
+    void testChatStreamDeltaReading() {
+        Vostok.AI.registerClient("stream", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .chatPath("/v1/chat/stream"));
+
+        VKAiChatResponse response = Vostok.AI.chat(new VKAiChatRequest()
+                .client("stream")
+                .stream(true)
+                .message("user", "stream please"));
+
+        assertTrue(response.isStreaming());
+        assertNull(response.getText());
+        assertNotNull(response.stream());
+
+        StringBuilder sb = new StringBuilder();
+        VKAiChatDeltaStream stream = response.stream();
+        while (stream.hasNext(1000)) {
+            sb.append(stream.next().getContentDelta());
+        }
+        assertEquals("hello", sb.toString());
+        assertTrue(stream.isDone());
+        assertEquals("stop", stream.finishReason());
+        assertEquals("req-stream", stream.providerRequestId());
+        assertEquals(5, stream.finalUsage().getTotalTokens());
+        assertEquals(1, streamChatCounter.get());
+    }
+
+    @Test
+    void testChatJsonRejectsStream() {
+        Vostok.AI.registerClient("stream", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .chatPath("/v1/chat/stream"));
+
+        VKAiException ex = assertThrows(VKAiException.class,
+                () -> Vostok.AI.chatJson(new VKAiChatRequest()
+                        .client("stream")
+                        .stream(true)
+                        .message("user", "json"), ScoreResult.class));
+        assertEquals(VKAiErrorCode.INVALID_ARGUMENT, ex.getCode());
     }
 
     @Test
@@ -873,6 +919,21 @@ public class VostokAiTest {
         ragChatAltCounter.incrementAndGet();
         write(exchange, 200,
                 "{\"id\":\"req-rag-alt\",\"choices\":[{\"message\":{\"content\":\"java from alt provider\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":6,\"total_tokens\":14}}" );
+    }
+
+    private void handleStreamChat(HttpExchange exchange) throws IOException {
+        streamChatCounter.incrementAndGet();
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
+        exchange.sendResponseHeaders(200, 0);
+        String chunk1 = "data: {\"id\":\"req-stream\",\"choices\":[{\"delta\":{\"content\":\"hel\"}}]}\n\n";
+        String chunk2 = "data: {\"id\":\"req-stream\",\"choices\":[{\"delta\":{\"content\":\"lo\"}}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":2,\"total_tokens\":5}}\n\n";
+        String chunk3 = "data: {\"id\":\"req-stream\",\"choices\":[{\"finish_reason\":\"stop\"}]}\n\n";
+        String chunk4 = "data: [DONE]\n\n";
+        exchange.getResponseBody().write(chunk1.getBytes(StandardCharsets.UTF_8));
+        exchange.getResponseBody().write(chunk2.getBytes(StandardCharsets.UTF_8));
+        exchange.getResponseBody().write(chunk3.getBytes(StandardCharsets.UTF_8));
+        exchange.getResponseBody().write(chunk4.getBytes(StandardCharsets.UTF_8));
+        exchange.close();
     }
 
     private void write(HttpExchange exchange, int status, String body) throws IOException {

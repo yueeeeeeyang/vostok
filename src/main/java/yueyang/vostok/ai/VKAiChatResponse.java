@@ -10,6 +10,8 @@ public class VKAiChatResponse {
     private final String providerRequestId;
     private final int statusCode;
     private final java.util.List<VKAiToolCallResult> toolResults;
+    private final boolean streaming;
+    private final VKAiChatDeltaStream deltaStream;
 
     public VKAiChatResponse(String text,
                             String finishReason,
@@ -18,6 +20,18 @@ public class VKAiChatResponse {
                             String providerRequestId,
                             int statusCode,
                             java.util.List<VKAiToolCallResult> toolResults) {
+        this(text, finishReason, usage, latencyMs, providerRequestId, statusCode, toolResults, false, null);
+    }
+
+    public VKAiChatResponse(String text,
+                            String finishReason,
+                            VKAiUsage usage,
+                            long latencyMs,
+                            String providerRequestId,
+                            int statusCode,
+                            java.util.List<VKAiToolCallResult> toolResults,
+                            boolean streaming,
+                            VKAiChatDeltaStream deltaStream) {
         this.text = text;
         this.finishReason = finishReason;
         this.usage = usage;
@@ -25,6 +39,8 @@ public class VKAiChatResponse {
         this.providerRequestId = providerRequestId;
         this.statusCode = statusCode;
         this.toolResults = toolResults == null ? java.util.List.of() : java.util.List.copyOf(toolResults);
+        this.streaming = streaming;
+        this.deltaStream = deltaStream;
     }
 
     public String getText() {
@@ -53,5 +69,13 @@ public class VKAiChatResponse {
 
     public java.util.List<VKAiToolCallResult> getToolResults() {
         return toolResults;
+    }
+
+    public boolean isStreaming() {
+        return streaming;
+    }
+
+    public VKAiChatDeltaStream stream() {
+        return deltaStream;
     }
 }

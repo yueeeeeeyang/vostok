@@ -5122,6 +5122,17 @@ VKAiChatResponse r = Vostok.AI.chat(new VKAiChatRequest()
         .message("user", "Hello"));
 System.out.println(r.getText());
 
+// 3.1) Chat 流式（返回类型不变，直接消费增量）
+VKAiChatResponse sr = Vostok.AI.chat(new VKAiChatRequest()
+        .client("openai")
+        .stream(true)
+        .message("user", "stream demo"));
+try (VKAiChatDeltaStream ds = sr.stream()) {
+    while (ds.hasNext(30_000)) {
+        System.out.print(ds.next().getContentDelta());
+    }
+}
+
 // 4) ChatJson
 class Summary {
     public String title;
@@ -5247,6 +5258,7 @@ System.out.println(m.totalCalls());
 ### 12.3.2 Token 优化参数（请求级）
 
 - `VKAiChatRequest.historyTrimEnabled/historyMaxMessages/historyMaxChars`：发送到模型前自动裁剪历史消息，降低上下文 token。
+- `VKAiChatRequest.stream`：开启后 `chat(...)` 走 SSE 流式；`VKAiChatResponse` 通过 `stream()` 读取增量。
 - `VKAiRagRequest.queryRewriteEnabled`：轻量查询重写（从长文本中提炼检索 query）。
 - `VKAiRagRequest.dynamicTopKEnabled`：按问题复杂度动态调整 `topK`（简单问题减少片段数）。
 - `VKAiRagRequest.mergeSimilarChunksEnabled`：合并同文档相邻/高相似片段，减少重复上下文。
@@ -5298,6 +5310,9 @@ System.out.println(m.totalCalls());
 ## 12.6 Tool Calling / 安全 / 审计说明
 
 - `Tool Calling`：当 Provider 返回 `choices[0].message.tool_calls` 时，运行时会按顺序执行工具并写入 `VKAiChatResponse.getToolResults()`。
+- 流式说明：
+  1) `stream=true` 时 `VKAiChatResponse` 不聚合 `text`，请通过 `response.stream()` 读取 `delta`。
+  2) `chatJson(...)` 不支持 `stream=true`。
 - 工具白名单：通过 `VKAiChatRequest.allowTool(...)` 声明本次请求允许调用的工具；不在白名单会抛 `TOOL_DENIED`。
 - 安全策略：当前对 Prompt 与 Tool 参数执行 XSS/命令注入/路径穿越检测；命中后按 `blockOnSecurityRisk` 决定是否阻断。
 - 审计日志：`CHAT_REQUEST / CHAT_RESPONSE / TOOL_CALL / TOOL_DENIED / CHAT_SECURITY_BLOCK ...` 可通过 `audits(limit)` 读取。
