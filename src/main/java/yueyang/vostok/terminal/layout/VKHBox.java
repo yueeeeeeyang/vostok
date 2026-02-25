@@ -54,4 +54,9 @@ public final class VKHBox extends VKView {
         }
         return out;
     }
+
+    @Override
+    public List<VKView> children() {
+        return List.copyOf(children);
+    }
 }

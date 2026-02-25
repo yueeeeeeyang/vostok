@@ -14,7 +14,10 @@ public final class VKTerminalConfig {
     private boolean ansiEnabled = true;
     private boolean unicodeEnabled = true;
     private boolean interactive = false;
+    private boolean continuousLoop = false;
+    private boolean rawMode = false;
     private boolean forceTty = false;
+    private int inputPollIntervalMs = 10;
     private int width = 100;
     private int height = 30;
     private InputStream input = System.in;
@@ -95,6 +98,33 @@ public final class VKTerminalConfig {
         return this;
     }
 
+    public boolean isContinuousLoop() {
+        return continuousLoop;
+    }
+
+    public VKTerminalConfig continuousLoop(boolean continuousLoop) {
+        this.continuousLoop = continuousLoop;
+        return this;
+    }
+
+    public boolean isRawMode() {
+        return rawMode;
+    }
+
+    public VKTerminalConfig rawMode(boolean rawMode) {
+        this.rawMode = rawMode;
+        return this;
+    }
+
+    public int getInputPollIntervalMs() {
+        return inputPollIntervalMs;
+    }
+
+    public VKTerminalConfig inputPollIntervalMs(int inputPollIntervalMs) {
+        this.inputPollIntervalMs = Math.max(1, inputPollIntervalMs);
+        return this;
+    }
+
     public int getWidth() {
         return width;
     }
@@ -155,7 +185,10 @@ public final class VKTerminalConfig {
                 .ansiEnabled(this.ansiEnabled)
                 .unicodeEnabled(this.unicodeEnabled)
                 .interactive(this.interactive)
+                .continuousLoop(this.continuousLoop)
+                .rawMode(this.rawMode)
                 .forceTty(this.forceTty)
+                .inputPollIntervalMs(this.inputPollIntervalMs)
                 .width(this.width)
                 .height(this.height)
                 .input(this.input)

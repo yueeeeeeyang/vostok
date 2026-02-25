@@ -26,4 +26,9 @@ public final class VKForm extends VKView {
         }
         return out;
     }
+
+    @Override
+    public List<VKView> children() {
+        return new ArrayList<>(inputs);
+    }
 }

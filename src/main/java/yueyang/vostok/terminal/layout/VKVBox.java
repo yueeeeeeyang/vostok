@@ -35,4 +35,9 @@ public final class VKVBox extends VKView {
         }
         return ctx.fitLines(out);
     }
+
+    @Override
+    public List<VKView> children() {
+        return List.copyOf(children);
+    }
 }

@@ -54,4 +54,9 @@ public final class VKGrid extends VKView {
         }
         return ctx.fitLines(out);
     }
+
+    @Override
+    public List<VKView> children() {
+        return List.copyOf(children);
+    }
 }

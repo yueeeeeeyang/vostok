@@ -77,4 +77,9 @@ public final class VKPanel extends VKView {
         out.add(ctx.styleBorder(bottom));
         return out;
     }
+
+    @Override
+    public List<VKView> children() {
+        return List.copyOf(children);
+    }
 }

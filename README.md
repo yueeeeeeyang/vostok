@@ -5605,6 +5605,16 @@ Vostok.Terminal.app()
         .statusBar(new VKStatusBar("READY"))
         .toast(new VKToast("Saved").level(VKToast.Level.SUCCESS))
         .run();
+
+// 持续事件循环（推荐用于交互式应用）
+Vostok.Terminal.reinit(new VKTerminalConfig()
+        .interactive(true)
+        .continuousLoop(true)
+        .rawMode(true)
+);
+Vostok.Terminal.app()
+        .root(root)
+        .runLoop();
 ```
 
 ### 13.2.2 表格、进度条、Spinner、Prompt
@@ -5650,6 +5660,9 @@ Vostok.Terminal.console().error("task failed");
 - `ansiEnabled`：是否允许 ANSI 样式输出。
 - `unicodeEnabled`：是否启用 Unicode 边框/字符。
 - `interactive`：是否读取输入事件（默认单帧渲染）。
+- `continuousLoop`：是否开启持续事件循环（`run()` 时生效）。
+- `rawMode`：是否尝试切换终端 raw 模式（便于逐键输入）。
+- `inputPollIntervalMs`：输入轮询间隔（毫秒）。
 - `forceTty`：测试/容器环境可强制按 TTY 行为运行。
 - `width/height`：终端大小回退值（当无法探测时使用）。
 - `input/output`：输入输出流。
@@ -5673,9 +5686,38 @@ Vostok.Terminal.console().error("task failed");
 - 输入与表单：`VKInput`、`VKForm`。
 - 反馈：`VKStatusBar`、`VKToast`、`VKModal`。
 - 布局：`VKVBox`、`VKHBox`、`VKGrid`。
+- 焦点与滚动：`TAB` 切换焦点；`VKInput` 支持光标编辑；`VKListView` 支持滚动与翻页。
 
 ## 13.6 说明与边界
 
 - `Terminal` 默认适合构建轻量 TUI；复杂交互可在其基础上扩展。
 - 非 TTY 或不支持 ANSI 的场景会自动降级为纯文本输出。
 - `interactive(true)` 时会读取标准输入事件；生产运行请确保输入流可用。
+- `VKTerminalApp` 提供 `invokeLater(...)` / `requestRender()` / `streamText(...)`，可用于异步任务与逐字流式刷屏。
+
+## 13.7 终端聊天 Demo（可运行）
+
+已提供可直接运行的增强聊天界面：
+
+- `src/main/java/yueyang/vostok/terminal/demo/VostokTerminalChatDemo.java`
+
+功能：
+
+- 持续事件循环（`runLoop`）
+- 输入框编辑能力（光标移动、删除、插入）
+- 消息滚动/焦点管理（`TAB` 切焦点，`UP/DOWN/PgUp/PgDn` 滚动）
+- 流式 token 实时刷屏（`streamText` 逐字输出）
+- 内置命令：`/help`、`/clear`、`/time`、`/exit`
+- 默认规则回复（不依赖外部 AI 服务）
+
+运行方式：
+
+```bash
+mvn -f /Users/yueyang/Develop/code/codex/Vostok/pom.xml -DskipTests compile
+java -cp /Users/yueyang/Develop/code/codex/Vostok/target/classes yueyang.vostok.terminal.demo.VostokTerminalChatDemo
+```
+
+说明：
+
+- Demo 默认本地规则回复，便于离线运行。
+- 若要接入真实大模型，可在 `buildReply(...)` 处替换为 `Vostok.AI.chat(...)`，并保留 `streamText(...)` 做流式渲染。

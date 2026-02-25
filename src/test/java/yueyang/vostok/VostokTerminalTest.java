@@ -16,6 +16,7 @@ import yueyang.vostok.terminal.component.VKTextView;
 import yueyang.vostok.terminal.component.VKToast;
 import yueyang.vostok.terminal.event.VKInputDecoder;
 import yueyang.vostok.terminal.event.VKKey;
+import yueyang.vostok.terminal.event.VKKeyEvent;
 import yueyang.vostok.terminal.layout.VKGrid;
 import yueyang.vostok.terminal.layout.VKHBox;
 import yueyang.vostok.terminal.layout.VKVBox;
@@ -33,6 +34,10 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -226,6 +231,11 @@ public class VostokTerminalTest {
 
         assertEquals(VKKey.UP, decoder.decode("\u001B[A".getBytes(StandardCharsets.UTF_8)).key());
         assertEquals(VKKey.DOWN, decoder.decode("\u001B[B".getBytes(StandardCharsets.UTF_8)).key());
+        assertEquals(VKKey.HOME, decoder.decode("\u001B[H".getBytes(StandardCharsets.UTF_8)).key());
+        assertEquals(VKKey.END, decoder.decode("\u001B[F".getBytes(StandardCharsets.UTF_8)).key());
+        assertEquals(VKKey.PAGE_UP, decoder.decode("\u001B[5~".getBytes(StandardCharsets.UTF_8)).key());
+        assertEquals(VKKey.PAGE_DOWN, decoder.decode("\u001B[6~".getBytes(StandardCharsets.UTF_8)).key());
+        assertEquals(VKKey.DELETE, decoder.decode("\u001B[3~".getBytes(StandardCharsets.UTF_8)).key());
         assertEquals(VKKey.CTRL_C, decoder.decode(new byte[]{3}).key());
         assertEquals(VKKey.CHAR, decoder.decode("x".getBytes(StandardCharsets.UTF_8)).key());
         assertEquals('x', decoder.decode("x".getBytes(StandardCharsets.UTF_8)).ch());
@@ -243,5 +253,105 @@ public class VostokTerminalTest {
         assertTrue(rendered.contains("╭"));
         assertTrue(rendered.contains("neo"));
         assertTrue(rendered.contains("Score"));
+    }
+
+    @Test
+    void testInputEditAndFocus() {
+        VKInput input = new VKInput("msg").value("abc");
+        input.focused(true);
+        input.cursor(3);
+
+        assertTrue(input.onKey(VKKeyEvent.of(VKKey.LEFT)));
+        assertEquals(2, input.cursor());
+
+        assertTrue(input.onKey(VKKeyEvent.ch('X')));
+        assertEquals("abXc", input.value());
+        assertEquals(3, input.cursor());
+
+        assertTrue(input.onKey(VKKeyEvent.of(VKKey.BACKSPACE)));
+        assertEquals("abc", input.value());
+        assertEquals(2, input.cursor());
+
+        assertTrue(input.onKey(VKKeyEvent.of(VKKey.HOME)));
+        assertEquals(0, input.cursor());
+
+        assertTrue(input.onKey(VKKeyEvent.of(VKKey.DELETE)));
+        assertEquals("bc", input.value());
+    }
+
+    @Test
+    void testListScrollAndFocus() {
+        VKListView list = new VKListView()
+                .items(java.util.stream.IntStream.range(0, 20).mapToObj(i -> "m-" + i).toList())
+                .viewportHeight(5)
+                .followTail(true);
+
+        assertTrue(list.isFollowTail());
+        assertEquals(15, list.scrollOffset());
+
+        list.focused(true);
+        assertTrue(list.onKey(VKKeyEvent.of(VKKey.PAGE_UP)));
+        assertFalse(list.isFollowTail());
+        assertTrue(list.scrollOffset() < 15);
+
+        assertTrue(list.onKey(VKKeyEvent.of(VKKey.END)));
+        assertTrue(list.isFollowTail());
+        assertEquals(15, list.scrollOffset());
+    }
+
+    @Test
+    void testContinuousLoopAndStreamRender() throws Exception {
+        ByteArrayOutputStream bout = new ByteArrayOutputStream();
+        PrintStream out = new PrintStream(bout, true, StandardCharsets.UTF_8);
+
+        Vostok.Terminal.reinit(new VKTerminalConfig()
+                .ansiEnabled(false)
+                .alternateScreen(false)
+                .interactive(false)
+                .continuousLoop(true)
+                .output(out)
+                .inputPollIntervalMs(5)
+                .fps(30)
+                .width(80)
+                .height(20)
+                .forceTty(false));
+
+        AtomicReference<StringBuilder> answer = new AtomicReference<>(new StringBuilder());
+        AtomicInteger tickCount = new AtomicInteger();
+        CountDownLatch done = new CountDownLatch(1);
+
+        VKTextView dynamic = new VKTextView("");
+        VKTerminalAppHolder holder = new VKTerminalAppHolder();
+        var app = Vostok.Terminal.app()
+                .root(dynamic)
+                .onTick(tick -> {
+                    tickCount.incrementAndGet();
+                    dynamic.text("assistant> " + answer.get());
+                    if (tick == 1) {
+                        holder.app.streamText("hello", 1,
+                                token -> answer.get().append(token),
+                                done::countDown);
+                    }
+                    if (tick > 200) {
+                        holder.app.stop();
+                    }
+                });
+        holder.app = app;
+
+        Thread loop = new Thread(app::runLoop, "terminal-test-loop");
+        loop.start();
+
+        assertTrue(done.await(3, TimeUnit.SECONDS));
+        app.stop();
+        loop.join(3000);
+
+        assertFalse(loop.isAlive());
+        assertTrue(tickCount.get() > 2);
+        assertTrue(answer.get().toString().contains("hello"));
+        assertTrue(bout.toString(StandardCharsets.UTF_8).contains("assistant> hello"));
+    }
+
+    private static final class VKTerminalAppHolder {
+        private yueyang.vostok.terminal.core.VKTerminalApp app;
     }
 }
