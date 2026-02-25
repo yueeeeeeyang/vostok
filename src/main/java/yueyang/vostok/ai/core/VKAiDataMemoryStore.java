@@ -86,7 +86,7 @@ public class VKAiDataMemoryStore implements VKAiMemoryStore {
     private static VKAiDataSessionEntity toSessionEntity(VKAiSession session) {
         VKAiDataSessionEntity row = new VKAiDataSessionEntity();
         row.setSessionId(session.getSessionId());
-        row.setClientName(session.getClientName());
+        row.setProfileName(session.getProfileName());
         row.setCurrentModel(session.getCurrentModel());
         row.setCreatedAt(session.getCreatedAt());
         row.setUpdatedAt(session.getUpdatedAt());
@@ -108,7 +108,7 @@ public class VKAiDataMemoryStore implements VKAiMemoryStore {
         }
         return new VKAiSession()
                 .sessionId(row.getSessionId())
-                .clientName(row.getClientName())
+                .profileName(row.getProfileName())
                 .currentModel(row.getCurrentModel())
                 .createdAt(row.getCreatedAt() == null ? 0L : row.getCreatedAt())
                 .updatedAt(row.getUpdatedAt() == null ? 0L : row.getUpdatedAt())

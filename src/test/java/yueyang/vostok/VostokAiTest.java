@@ -344,7 +344,7 @@ public class VostokAiTest {
                 .dialect(VKDialectType.MYSQL), "yueyang.vostok");
         try (var conn = java.sql.DriverManager.getConnection(jdbcUrl, "sa", "");
              var stmt = conn.createStatement()) {
-            stmt.execute("CREATE TABLE vk_ai_session (session_id VARCHAR(64) PRIMARY KEY, client_name VARCHAR(64), current_model VARCHAR(128), created_at BIGINT, updated_at BIGINT, metadata_json VARCHAR(4000))");
+            stmt.execute("CREATE TABLE vk_ai_session (session_id VARCHAR(64) PRIMARY KEY, profile_name VARCHAR(64), current_model VARCHAR(128), created_at BIGINT, updated_at BIGINT, metadata_json VARCHAR(4000))");
             stmt.execute("CREATE TABLE vk_ai_session_message (id BIGINT AUTO_INCREMENT PRIMARY KEY, session_id VARCHAR(64), seq BIGINT, role VARCHAR(32), content VARCHAR(4000), model VARCHAR(128), created_at BIGINT)");
         }
 

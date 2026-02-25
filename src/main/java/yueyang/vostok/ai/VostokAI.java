@@ -2,6 +2,9 @@ package yueyang.vostok.ai;
 
 import yueyang.vostok.ai.core.VKAiRuntime;
 import yueyang.vostok.ai.provider.VKAiClientConfig;
+import yueyang.vostok.ai.provider.VKAiModelConfig;
+import yueyang.vostok.ai.provider.VKAiProfileConfig;
+import yueyang.vostok.ai.provider.VKAiProviderConfig;
 import yueyang.vostok.ai.rag.VKAiEmbedding;
 import yueyang.vostok.ai.rag.VKAiEmbeddingRequest;
 import yueyang.vostok.ai.rag.VKAiRagRequest;
@@ -51,20 +54,48 @@ public class VostokAI {
         RUNTIME.close();
     }
 
+    public static void registerProvider(String name, VKAiProviderConfig config) {
+        RUNTIME.registerProvider(name, config);
+    }
+
     public static void registerClient(String name, VKAiClientConfig config) {
         RUNTIME.registerClient(name, config);
+    }
+
+    public static void registerModel(String name, VKAiModelConfig config) {
+        RUNTIME.registerModel(name, config);
+    }
+
+    public static void registerProfile(String name, VKAiProfileConfig config) {
+        RUNTIME.registerProfile(name, config);
+    }
+
+    public static void withProfile(String name, Runnable action) {
+        RUNTIME.withProfile(name, action);
     }
 
     public static void withClient(String name, Runnable action) {
         RUNTIME.withClient(name, action);
     }
 
+    public static <T> T withProfile(String name, Supplier<T> supplier) {
+        return RUNTIME.withProfile(name, supplier);
+    }
+
     public static <T> T withClient(String name, Supplier<T> supplier) {
         return RUNTIME.withClient(name, supplier);
     }
 
+    public static Set<String> profileNames() {
+        return RUNTIME.profileNames();
+    }
+
     public static Set<String> clientNames() {
         return RUNTIME.clientNames();
+    }
+
+    public static String currentProfileName() {
+        return RUNTIME.currentProfileName();
     }
 
     public static String currentClientName() {
@@ -75,12 +106,12 @@ public class VostokAI {
         RUNTIME.setMemoryStore(store);
     }
 
-    public static VKAiSession createSession(String clientName) {
-        return RUNTIME.createSession(clientName, null);
+    public static VKAiSession createSession(String profileName) {
+        return RUNTIME.createSession(profileName, null);
     }
 
-    public static VKAiSession createSession(String clientName, String model) {
-        return RUNTIME.createSession(clientName, model);
+    public static VKAiSession createSession(String profileName, String model) {
+        return RUNTIME.createSession(profileName, model);
     }
 
     public static VKAiSession session(String sessionId) {
@@ -155,12 +186,12 @@ public class VostokAI {
         return RUNTIME.rag(request);
     }
 
-    public static void healthCheckRag(String clientName) {
-        RUNTIME.healthCheckRag(clientName, true);
+    public static void healthCheckRag(String profileName) {
+        RUNTIME.healthCheckRag(profileName, true);
     }
 
-    public static void healthCheckRag(String clientName, boolean includeRerank) {
-        RUNTIME.healthCheckRag(clientName, includeRerank);
+    public static void healthCheckRag(String profileName, boolean includeRerank) {
+        RUNTIME.healthCheckRag(profileName, includeRerank);
     }
 
     public static void registerTool(VKAiTool tool) {

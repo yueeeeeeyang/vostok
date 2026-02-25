@@ -4,7 +4,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class VKAiRagIngestRequest {
-    private String clientName;
+    private String profileName;
     private String model;
     private String documentId;
     private String version = "v1";
@@ -14,13 +14,21 @@ public class VKAiRagIngestRequest {
     private boolean deduplicate = true;
     private final Map<String, String> metadata = new LinkedHashMap<>();
 
+    public String getProfileName() {
+        return profileName;
+    }
+
+    public VKAiRagIngestRequest profile(String profileName) {
+        this.profileName = profileName;
+        return this;
+    }
+
     public String getClientName() {
-        return clientName;
+        return profileName;
     }
 
     public VKAiRagIngestRequest client(String clientName) {
-        this.clientName = clientName;
-        return this;
+        return profile(clientName);
     }
 
     public String getModel() {

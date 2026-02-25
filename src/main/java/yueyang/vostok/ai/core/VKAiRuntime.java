@@ -5,8 +5,12 @@ import yueyang.vostok.ai.VKAiAuditRecord;
 import yueyang.vostok.ai.VKAiChatRequest;
 import yueyang.vostok.ai.VKAiChatResponse;
 import yueyang.vostok.ai.VKAiMemoryStore;
-import yueyang.vostok.ai.provider.VKAiClientConfig;
 import yueyang.vostok.ai.VKAiConfig;
+import yueyang.vostok.ai.provider.VKAiModelConfig;
+import yueyang.vostok.ai.provider.VKAiModelType;
+import yueyang.vostok.ai.provider.VKAiProfileConfig;
+import yueyang.vostok.ai.provider.VKAiProviderConfig;
+import yueyang.vostok.ai.provider.VKAiClientConfig;
 import yueyang.vostok.ai.rag.VKAiEmbedding;
 import yueyang.vostok.ai.rag.VKAiEmbeddingRequest;
 import yueyang.vostok.ai.rag.VKAiInMemoryVectorStore;
@@ -71,11 +75,13 @@ public final class VKAiRuntime {
     private static final Object LOCK = new Object();
     private static final VKAiRuntime INSTANCE = new VKAiRuntime();
 
-    private final ConcurrentHashMap<String, VKAiClientConfig> clients = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, VKAiProviderConfig> providers = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, VKAiModelConfig> models = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, VKAiProfileConfig> profiles = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, HttpClient> httpClients = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, VKAiTool> tools = new ConcurrentHashMap<>();
     private final ArrayDeque<VKAiAuditRecord> auditRecords = new ArrayDeque<>();
-    private final ThreadLocal<String> clientContext = new ThreadLocal<>();
+    private final ThreadLocal<String> profileContext = new ThreadLocal<>();
     private volatile VKAiVectorStore vectorStore = new VKAiInMemoryVectorStore();
     private volatile VKAiMemoryStore memoryStore = new VKAiInMemoryMemoryStore();
     private final ConcurrentHashMap<String, Set<String>> docVersionChunks = new ConcurrentHashMap<>();
@@ -137,8 +143,10 @@ public final class VKAiRuntime {
 
     public void close() {
         synchronized (LOCK) {
-            clients.clear();
-            clientContext.remove();
+            providers.clear();
+            models.clear();
+            profiles.clear();
+            profileContext.remove();
             httpClients.clear();
             tools.clear();
             clearAudits();
@@ -154,62 +162,181 @@ public final class VKAiRuntime {
         }
     }
 
-    public void registerClient(String name, VKAiClientConfig cfg) {
+    public void registerProvider(String name, VKAiProviderConfig cfg) {
         ensureInit();
         if (name == null || name.isBlank()) {
-            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Client name is blank");
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Provider name is blank");
         }
+        if (cfg == null) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "VKAiProviderConfig is null");
+        }
+        if (cfg.getBaseUrl() == null || cfg.getBaseUrl().isBlank()) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Provider baseUrl is blank");
+        }
+        providers.put(name.trim(), cfg.copy());
+    }
+
+    public void registerModel(String name, VKAiModelConfig cfg) {
+        ensureInit();
+        if (name == null || name.isBlank()) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Model name is blank");
+        }
+        if (cfg == null) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "VKAiModelConfig is null");
+        }
+        if (cfg.getType() == null) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Model type is blank");
+        }
+        if (cfg.getProviderName() == null || cfg.getProviderName().isBlank()) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Model provider is blank");
+        }
+        if (cfg.getModel() == null || cfg.getModel().isBlank()) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Model value is blank");
+        }
+        if (!providers.containsKey(cfg.getProviderName().trim())) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai provider not found: " + cfg.getProviderName().trim());
+        }
+        models.put(name.trim(), cfg.copy());
+    }
+
+    public void registerProfile(String name, VKAiProfileConfig cfg) {
+        ensureInit();
+        if (name == null || name.isBlank()) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Profile name is blank");
+        }
+        if (cfg == null) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "VKAiProfileConfig is null");
+        }
+        String chatModel = cfg.getChatModel();
+        if (chatModel == null || chatModel.isBlank()) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Profile chatModel is blank");
+        }
+        ensureModelType(chatModel, VKAiModelType.CHAT, "profile.chatModel");
+        if (cfg.getEmbeddingModel() != null && !cfg.getEmbeddingModel().isBlank()) {
+            ensureModelType(cfg.getEmbeddingModel(), VKAiModelType.EMBEDDING, "profile.embeddingModel");
+        }
+        if (cfg.getRerankModel() != null && !cfg.getRerankModel().isBlank()) {
+            ensureModelType(cfg.getRerankModel(), VKAiModelType.RERANK, "profile.rerankModel");
+        }
+        profiles.put(name.trim(), cfg.copy());
+    }
+
+    public void registerClient(String name, VKAiClientConfig cfg) {
+        ensureInit();
         if (cfg == null) {
             throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "VKAiClientConfig is null");
         }
-        if (cfg.getBaseUrl() == null || cfg.getBaseUrl().isBlank()) {
-            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Client baseUrl is blank");
+        registerProvider(name, new VKAiProviderConfig()
+                .provider(cfg.getProvider())
+                .baseUrl(cfg.getBaseUrl())
+                .apiKey(cfg.getApiKey())
+                .chatPath(cfg.getChatPath())
+                .embeddingPath(cfg.getEmbeddingPath())
+                .rerankPath(cfg.getRerankPath())
+                .connectTimeoutMs(cfg.getConnectTimeoutMs())
+                .readTimeoutMs(cfg.getReadTimeoutMs())
+                .maxRetries(cfg.getMaxRetries())
+                .failOnNon2xx(cfg.getFailOnNon2xx())
+                .defaultHeaders(cfg.getDefaultHeaders()));
+
+        String chatModelValue = firstNonBlank(cfg.getModel(), config.getDefaultModel());
+        if (chatModelValue == null) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Client chat model is not configured");
         }
-        clients.put(name.trim(), cfg.copy());
+        String embeddingModelValue = firstNonBlank(
+                cfg.getEmbeddingModel(),
+                config.getDefaultEmbeddingModel(),
+                cfg.getModel(),
+                config.getDefaultModel());
+        String rerankModelValue = firstNonBlank(
+                cfg.getRerankModel(),
+                config.getDefaultRerankModel(),
+                cfg.getModel(),
+                config.getDefaultModel());
+
+        String chatModelId = name.trim() + "#chat";
+        String embeddingModelId = name.trim() + "#embedding";
+        String rerankModelId = name.trim() + "#rerank";
+        registerModel(chatModelId, new VKAiModelConfig()
+                .type(VKAiModelType.CHAT)
+                .provider(name.trim())
+                .model(chatModelValue));
+        if (embeddingModelValue != null && !embeddingModelValue.isBlank()) {
+            registerModel(embeddingModelId, new VKAiModelConfig()
+                    .type(VKAiModelType.EMBEDDING)
+                    .provider(name.trim())
+                    .model(embeddingModelValue));
+        }
+        if (rerankModelValue != null && !rerankModelValue.isBlank()) {
+            registerModel(rerankModelId, new VKAiModelConfig()
+                    .type(VKAiModelType.RERANK)
+                    .provider(name.trim())
+                    .model(rerankModelValue));
+        }
+        registerProfile(name, new VKAiProfileConfig()
+                .chatModel(chatModelId)
+                .embeddingModel(embeddingModelValue == null ? null : embeddingModelId)
+                .rerankModel(rerankModelValue == null ? null : rerankModelId));
     }
 
-    public void withClient(String name, Runnable action) {
+    public void withProfile(String name, Runnable action) {
         if (action == null) {
             throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Runnable is null");
         }
-        withClient(name, () -> {
+        withProfile(name, () -> {
             action.run();
             return null;
         });
     }
 
-    public <T> T withClient(String name, Supplier<T> supplier) {
+    public <T> T withProfile(String name, Supplier<T> supplier) {
         ensureInit();
         if (supplier == null) {
             throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Supplier is null");
         }
-        String prev = clientContext.get();
+        String prev = profileContext.get();
         if (name == null || name.isBlank()) {
-            clientContext.remove();
+            profileContext.remove();
         } else {
             String n = name.trim();
-            if (!clients.containsKey(n)) {
-                throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai client not found: " + n);
+            if (!profiles.containsKey(n)) {
+                throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai profile not found: " + n);
             }
-            clientContext.set(n);
+            profileContext.set(n);
         }
         try {
             return supplier.get();
         } finally {
             if (prev == null) {
-                clientContext.remove();
+                profileContext.remove();
             } else {
-                clientContext.set(prev);
+                profileContext.set(prev);
             }
         }
     }
 
+    public void withClient(String name, Runnable action) {
+        withProfile(name, action);
+    }
+
+    public <T> T withClient(String name, Supplier<T> supplier) {
+        return withProfile(name, supplier);
+    }
+
+    public Set<String> profileNames() {
+        return Set.copyOf(profiles.keySet());
+    }
+
+    public String currentProfileName() {
+        return profileContext.get();
+    }
+
     public Set<String> clientNames() {
-        return Set.copyOf(clients.keySet());
+        return profileNames();
     }
 
     public String currentClientName() {
-        return clientContext.get();
+        return currentProfileName();
     }
 
     public void setMemoryStore(VKAiMemoryStore store) {
@@ -220,14 +347,15 @@ public final class VKAiRuntime {
         this.memoryStore = store;
     }
 
-    public VKAiSession createSession(String clientName, String model) {
+    public VKAiSession createSession(String profileName, String model) {
         ensureInit();
-        ClientResolved cr = resolveClient(clientName);
-        String nowModel = firstNonBlank(model, cr.client().getModel(), config.getDefaultModel());
+        String resolvedProfile = resolveProfileName(profileName);
+        ModelResolved chatModel = resolveModel(resolvedProfile, model, VKAiModelType.CHAT, "chat");
+        String nowModel = chatModel.modelName;
         long now = System.currentTimeMillis();
         VKAiSession session = new VKAiSession()
                 .sessionId(UUID.randomUUID().toString().replace("-", ""))
-                .clientName(cr.name())
+                .profileName(resolvedProfile)
                 .currentModel(nowModel)
                 .createdAt(now)
                 .updatedAt(now);
@@ -283,7 +411,7 @@ public final class VKAiRuntime {
         memoryStore.appendMessage(userMsg);
 
         VKAiChatRequest request = new VKAiChatRequest()
-                .client(session.getClientName())
+                .profile(session.getProfileName())
                 .model(session.getCurrentModel())
                 .historyTrimEnabled(false);
         for (VKAiSessionMessage msg : history) {
@@ -374,7 +502,7 @@ public final class VKAiRuntime {
         }
 
         List<VKAiEmbedding> embeddings = embed(new VKAiEmbeddingRequest()
-                .client(request.getClientName())
+                .profile(request.getProfileName())
                 .model(request.getModel())
                 .inputs(chunks));
         if (embeddings.size() != chunks.size()) {
@@ -822,39 +950,41 @@ public final class VKAiRuntime {
             throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Embedding inputs are empty");
         }
 
-        ClientResolved cr = resolveClient(request.getClientName());
-        String model = resolveEmbeddingModel(request.getModel(), cr.client());
+        String profileName = resolveProfileName(request.getProfileName());
+        ModelResolved modelResolved = resolveModel(profileName, request.getModel(), VKAiModelType.EMBEDDING, "embedding");
+        VKAiProviderConfig provider = modelResolved.provider;
+        String providerModel = modelResolved.providerModel();
 
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("model", model);
+        payload.put("model", providerModel);
         payload.put("input", request.getInputs());
         String payloadJson = VKJson.toJson(payload);
-        String cacheKey = "vk:ai:embed:" + shortHash(cr.name() + "|" + model + "|" + payloadJson);
+        String cacheKey = "vk:ai:embed:" + shortHash(profileName + "|" + modelResolved.modelName + "|" + payloadJson);
 
         String responseBody = null;
         if (config.isRagCacheEnabled() && config.getEmbeddingCacheTtlMs() > 0) {
             responseBody = cacheGetString(cacheKey);
             if (responseBody != null) {
-                audit("EMBED_CACHE_HIT", cr.name(), "key=" + cacheKey);
+                audit("EMBED_CACHE_HIT", profileName, "key=" + cacheKey);
             }
         }
         if (responseBody == null) {
             HttpResponse<String> response = executeWithRetry(
-                    cr.name(),
-                    joinBaseAndPath(cr.client().getBaseUrl(), cr.client().getEmbeddingPath()),
-                    buildHeaders(cr.client()),
+                    profileName,
+                    joinBaseAndPath(provider.getBaseUrl(), provider.getEmbeddingPath()),
+                    buildHeaders(provider),
                     payloadJson,
-                    cr.client().getConnectTimeoutMs() > 0 ? cr.client().getConnectTimeoutMs() : config.getConnectTimeoutMs(),
-                    cr.client().getReadTimeoutMs() > 0 ? cr.client().getReadTimeoutMs() : config.getReadTimeoutMs(),
-                    cr.client().getMaxRetries() >= 0 ? cr.client().getMaxRetries() : config.getMaxRetries(),
-                    cr.client().getFailOnNon2xx() == null ? config.isFailOnNon2xx() : cr.client().getFailOnNon2xx(),
+                    provider.getConnectTimeoutMs() > 0 ? provider.getConnectTimeoutMs() : config.getConnectTimeoutMs(),
+                    provider.getReadTimeoutMs() > 0 ? provider.getReadTimeoutMs() : config.getReadTimeoutMs(),
+                    provider.getMaxRetries() >= 0 ? provider.getMaxRetries() : config.getMaxRetries(),
+                    provider.getFailOnNon2xx() == null ? config.isFailOnNon2xx() : provider.getFailOnNon2xx(),
                     "EMBED_REQUEST"
             );
             responseBody = response.body();
             if (config.isRagCacheEnabled() && config.getEmbeddingCacheTtlMs() > 0) {
                 cacheSetString(cacheKey, responseBody, config.getEmbeddingCacheTtlMs());
             }
-            audit("EMBED_RESPONSE", cr.name(), "status=" + response.statusCode());
+            audit("EMBED_RESPONSE", profileName, "status=" + response.statusCode());
         }
 
         Map<?, ?> root;
@@ -871,7 +1001,7 @@ public final class VKAiRuntime {
             List<Double> vec = toDoubleList(asList(m.get("embedding")));
             out.add(new VKAiEmbedding(index, vec));
         }
-        audit("EMBED_RESPONSE", cr.name(), "vectors=" + out.size());
+        audit("EMBED_RESPONSE", profileName, "vectors=" + out.size());
         return out;
     }
 
@@ -887,37 +1017,39 @@ public final class VKAiRuntime {
             throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Rerank documents are empty");
         }
 
-        ClientResolved cr = resolveClient(request.getClientName());
-        String model = resolveRerankModel(request.getModel(), cr.client());
+        String profileName = resolveProfileName(request.getProfileName());
+        ModelResolved modelResolved = resolveModel(profileName, request.getModel(), VKAiModelType.RERANK, "rerank");
+        VKAiProviderConfig provider = modelResolved.provider;
+        String providerModel = modelResolved.providerModel();
 
         long start = System.currentTimeMillis();
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("model", model);
+        payload.put("model", providerModel);
         payload.put("query", request.getQuery());
         payload.put("documents", request.getDocuments());
         if (request.getTopK() != null) {
             payload.put("top_k", request.getTopK());
         }
         String payloadJson = VKJson.toJson(payload);
-        String cacheKey = "vk:ai:rerank:" + shortHash(cr.name() + "|" + model + "|" + payloadJson);
+        String cacheKey = "vk:ai:rerank:" + shortHash(profileName + "|" + modelResolved.modelName + "|" + payloadJson);
 
         String responseBody = null;
         if (config.isRagCacheEnabled() && config.getRerankCacheTtlMs() > 0) {
             responseBody = cacheGetString(cacheKey);
             if (responseBody != null) {
-                audit("RERANK_CACHE_HIT", cr.name(), "key=" + cacheKey);
+                audit("RERANK_CACHE_HIT", profileName, "key=" + cacheKey);
             }
         }
         if (responseBody == null) {
             HttpResponse<String> response = executeWithRetry(
-                    cr.name(),
-                    joinBaseAndPath(cr.client().getBaseUrl(), cr.client().getRerankPath()),
-                    buildHeaders(cr.client()),
+                    profileName,
+                    joinBaseAndPath(provider.getBaseUrl(), provider.getRerankPath()),
+                    buildHeaders(provider),
                     payloadJson,
-                    cr.client().getConnectTimeoutMs() > 0 ? cr.client().getConnectTimeoutMs() : config.getConnectTimeoutMs(),
-                    cr.client().getReadTimeoutMs() > 0 ? cr.client().getReadTimeoutMs() : config.getReadTimeoutMs(),
-                    cr.client().getMaxRetries() >= 0 ? cr.client().getMaxRetries() : config.getMaxRetries(),
-                    cr.client().getFailOnNon2xx() == null ? config.isFailOnNon2xx() : cr.client().getFailOnNon2xx(),
+                    provider.getConnectTimeoutMs() > 0 ? provider.getConnectTimeoutMs() : config.getConnectTimeoutMs(),
+                    provider.getReadTimeoutMs() > 0 ? provider.getReadTimeoutMs() : config.getReadTimeoutMs(),
+                    provider.getMaxRetries() >= 0 ? provider.getMaxRetries() : config.getMaxRetries(),
+                    provider.getFailOnNon2xx() == null ? config.isFailOnNon2xx() : provider.getFailOnNon2xx(),
                     "RERANK_REQUEST"
             );
             responseBody = response.body();
@@ -950,9 +1082,10 @@ public final class VKAiRuntime {
         if (request == null || request.getQuery() == null || request.getQuery().isBlank()) {
             throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "RAG query is blank");
         }
-        String chatClientName = resolveRagClientName(request.getChatClientName(), request.getClientName());
-        String embeddingClientName = resolveRagClientName(request.getEmbeddingClientName(), request.getClientName());
-        String rerankClientName = resolveRagClientName(request.getRerankClientName(), request.getClientName());
+        String profileName = resolveProfileName(request.getProfileName());
+        String chatProfileName = resolveRagProfileName(request.getChatProfileName(), request.getChatClientName(), profileName);
+        String embeddingProfileName = resolveRagProfileName(request.getEmbeddingProfileName(), request.getEmbeddingClientName(), profileName);
+        String rerankProfileName = resolveRagProfileName(request.getRerankProfileName(), request.getRerankClientName(), profileName);
 
         String retrievalQuery = request.isQueryRewriteEnabled()
                 ? rewriteRagQueryLight(request.getQuery())
@@ -968,7 +1101,7 @@ public final class VKAiRuntime {
                 : Math.max(request.getTopK(), request.getKeywordTopK());
 
         List<VKAiEmbedding> queryEmbeddings = embed(new VKAiEmbeddingRequest()
-                .client(embeddingClientName)
+                .profile(embeddingProfileName)
                 .model(request.getEmbeddingModel())
                 .input(retrievalQuery));
         if (queryEmbeddings.isEmpty()) {
@@ -982,7 +1115,7 @@ public final class VKAiRuntime {
             merged = mergeSimilarChunks(merged);
         }
         List<VKAiVectorHit> hits = request.isRerankEnabled()
-                ? rerankHits(request, rerankClientName, merged, retrievalQuery, effectiveTopK)
+                ? rerankHits(request, rerankProfileName, merged, retrievalQuery, effectiveTopK)
                 : merged;
         if (request.isContextCompressionEnabled()) {
             hits = compressContextHits(hits, effectiveTopK, request.getContextMaxCharsPerChunk(), request.getContextMaxChars());
@@ -1004,9 +1137,9 @@ public final class VKAiRuntime {
 
         String answerCacheKey = "vk:ai:rag-answer:" + shortHash(buildRagAnswerCacheMaterial(
                 request,
-                chatClientName,
-                embeddingClientName,
-                rerankClientName,
+                chatProfileName,
+                embeddingProfileName,
+                rerankProfileName,
                 systemPrompt,
                 hits));
         if (config.isRagCacheEnabled() && config.getRagAnswerCacheTtlMs() > 0) {
@@ -1014,14 +1147,14 @@ public final class VKAiRuntime {
             if (cachedAnswer != null) {
                 VKAiChatResponse cached = decodeCachedChatResponse(cachedAnswer);
                 if (cached != null) {
-                    audit("RAG_ANSWER_CACHE_HIT", chatClientName, "key=" + answerCacheKey);
+                    audit("RAG_ANSWER_CACHE_HIT", chatProfileName, "key=" + answerCacheKey);
                     return new VKAiRagResponse(cached, hits);
                 }
             }
         }
 
         VKAiChatResponse answer = chat(new VKAiChatRequest()
-                .client(chatClientName)
+                .profile(chatProfileName)
                 .model(request.getModel())
                 .system(systemPrompt)
                 .message("user", "Question:\n" + request.getQuery() + "\n\nContext:\n" + context));
@@ -1031,33 +1164,33 @@ public final class VKAiRuntime {
         return new VKAiRagResponse(answer, hits);
     }
 
-    public void healthCheckRag(String clientName, boolean includeRerank) {
+    public void healthCheckRag(String profileName, boolean includeRerank) {
         ensureInit();
-        ClientResolved cr = resolveClient(clientName);
-        String embeddingModel = resolveEmbeddingModel(null, cr.client());
+        String resolvedProfile = resolveProfileName(profileName);
+        ModelResolved embeddingModel = resolveModel(resolvedProfile, null, VKAiModelType.EMBEDDING, "embedding");
         try {
             embed(new VKAiEmbeddingRequest()
-                    .client(cr.name())
-                    .model(embeddingModel)
+                    .profile(resolvedProfile)
+                    .model(embeddingModel.modelName)
                     .input("health check"));
         } catch (VKAiException e) {
-            throw mapRagPrecheckException("embedding", cr.name(), embeddingModel, e);
+            throw mapRagPrecheckException("embedding", resolvedProfile, embeddingModel.modelName, e);
         }
 
         if (!includeRerank) {
             return;
         }
-        String rerankModel = resolveRerankModel(null, cr.client());
+        ModelResolved rerankModel = resolveModel(resolvedProfile, null, VKAiModelType.RERANK, "rerank");
         try {
             rerank(new VKAiRerankRequest()
-                    .client(cr.name())
-                    .model(rerankModel)
+                    .profile(resolvedProfile)
+                    .model(rerankModel.modelName)
                     .query("health check")
                     .document("doc one")
                     .document("doc two")
                     .topK(1));
         } catch (VKAiException e) {
-            throw mapRagPrecheckException("rerank", cr.name(), rerankModel, e);
+            throw mapRagPrecheckException("rerank", resolvedProfile, rerankModel.modelName, e);
         }
     }
 
@@ -1167,11 +1300,10 @@ public final class VKAiRuntime {
     }
 
     private Resolved resolve(VKAiChatRequest request) {
-        ClientResolved clientResolved = resolveClient(request.getClientName());
-        String clientName = clientResolved.name();
-        VKAiClientConfig client = clientResolved.client();
-
-        String model = resolveChatModel(request.getModel(), client);
+        String profileName = resolveProfileName(request.getProfileName());
+        ModelResolved modelResolved = resolveModel(profileName, request.getModel(), VKAiModelType.CHAT, "chat");
+        VKAiProviderConfig provider = modelResolved.provider;
+        String providerModel = modelResolved.providerModel();
 
         List<VKAiMessage> preparedMessages = trimHistoryMessages(request);
         List<Map<String, Object>> messages = new ArrayList<>();
@@ -1190,7 +1322,7 @@ public final class VKAiRuntime {
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("model", model);
+        payload.put("model", providerModel);
         payload.put("messages", messages);
         if (request.getTemperature() != null) {
             payload.put("temperature", request.getTemperature());
@@ -1221,17 +1353,17 @@ public final class VKAiRuntime {
             }
         }
 
-        long connectTimeoutMs = client.getConnectTimeoutMs() > 0 ? client.getConnectTimeoutMs() : config.getConnectTimeoutMs();
-        long readTimeoutMs = client.getReadTimeoutMs() > 0 ? client.getReadTimeoutMs() : config.getReadTimeoutMs();
-        int maxRetries = client.getMaxRetries() >= 0 ? client.getMaxRetries() : config.getMaxRetries();
-        boolean failOnNon2xx = client.getFailOnNon2xx() == null ? config.isFailOnNon2xx() : client.getFailOnNon2xx();
+        long connectTimeoutMs = provider.getConnectTimeoutMs() > 0 ? provider.getConnectTimeoutMs() : config.getConnectTimeoutMs();
+        long readTimeoutMs = provider.getReadTimeoutMs() > 0 ? provider.getReadTimeoutMs() : config.getReadTimeoutMs();
+        int maxRetries = provider.getMaxRetries() >= 0 ? provider.getMaxRetries() : config.getMaxRetries();
+        boolean failOnNon2xx = provider.getFailOnNon2xx() == null ? config.isFailOnNon2xx() : provider.getFailOnNon2xx();
 
-        Map<String, String> headers = buildHeaders(client);
+        Map<String, String> headers = buildHeaders(provider);
 
-        String url = joinBaseAndPath(client.getBaseUrl(), client.getChatPath());
+        String url = joinBaseAndPath(provider.getBaseUrl(), provider.getChatPath());
         return new Resolved(
-                clientName,
-                model,
+                profileName,
+                modelResolved.modelName,
                 url,
                 request.getSystemPrompt(),
                 preparedMessages,
@@ -1316,67 +1448,95 @@ public final class VKAiRuntime {
                 timeout -> HttpClient.newBuilder().connectTimeout(Duration.ofMillis(Math.max(1, timeout))).build());
     }
 
-    private ClientResolved resolveClient(String rawClientName) {
-        String clientName = rawClientName;
-        if ((clientName == null || clientName.isBlank()) && clientContext.get() != null) {
-            clientName = clientContext.get();
+    private String resolveProfileName(String rawProfileName) {
+        String profileName = rawProfileName;
+        if ((profileName == null || profileName.isBlank()) && profileContext.get() != null) {
+            profileName = profileContext.get();
         }
-        if (clientName == null || clientName.isBlank()) {
-            if (clients.size() == 1) {
-                String only = clients.keySet().iterator().next();
-                return new ClientResolved(only, clients.values().iterator().next());
+        if (profileName == null || profileName.isBlank()) {
+            if (profiles.size() == 1) {
+                return profiles.keySet().iterator().next();
             }
             throw new VKAiException(VKAiErrorCode.CONFIG_ERROR,
-                    "AI client is not selected. Use request.client(name) or withClient(name, ...)");
+                    "AI profile is not selected. Use request.profile(name) or withProfile(name, ...)");
         }
-        String normalized = clientName.trim();
-        VKAiClientConfig client = clients.get(normalized);
-        if (client == null) {
-            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai client not found: " + normalized);
+        String normalized = profileName.trim();
+        if (!profiles.containsKey(normalized)) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai profile not found: " + normalized);
         }
-        return new ClientResolved(normalized, client);
+        return normalized;
     }
 
-    private String resolveRagClientName(String specificClientName, String fallbackClientName) {
-        return firstNonBlank(specificClientName, fallbackClientName);
+    private String resolveRagProfileName(String preferred, String legacyPreferred, String fallback) {
+        String raw = firstNonBlank(preferred, legacyPreferred, fallback);
+        return resolveProfileName(raw);
     }
 
-    private String resolveChatModel(String requestModel, VKAiClientConfig client) {
-        String model = firstNonBlank(requestModel, client.getModel(), config.getDefaultModel());
-        if (model == null) {
-            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Chat model is not configured");
-        }
-        return model;
-    }
-
-    private String resolveEmbeddingModel(String requestModel, VKAiClientConfig client) {
-        String model = firstNonBlank(
-                requestModel,
-                client.getEmbeddingModel(),
-                config.getDefaultEmbeddingModel(),
-                client.getModel(),
-                config.getDefaultModel()
-        );
+    private void ensureModelType(String modelName, VKAiModelType expected, String from) {
+        VKAiModelConfig model = models.get(modelName == null ? null : modelName.trim());
         if (model == null) {
             throw new VKAiException(VKAiErrorCode.CONFIG_ERROR,
-                    "Embedding model is not configured. Set request.embeddingModel / client.embeddingModel / ai.defaultEmbeddingModel");
+                    "Ai model not found: " + modelName + " (" + from + ")");
         }
-        return model;
+        if (model.getType() != expected) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR,
+                    "Ai model type mismatch: " + modelName + ", expected=" + expected + ", actual=" + model.getType());
+        }
+        String providerName = model.getProviderName() == null ? null : model.getProviderName().trim();
+        if (providerName == null || providerName.isBlank() || !providers.containsKey(providerName)) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai provider not found: " + providerName + ", model=" + modelName);
+        }
     }
 
-    private String resolveRerankModel(String requestModel, VKAiClientConfig client) {
-        String model = firstNonBlank(
-                requestModel,
-                client.getRerankModel(),
-                config.getDefaultRerankModel(),
-                client.getModel(),
-                config.getDefaultModel()
-        );
-        if (model == null) {
-            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR,
-                    "Rerank model is not configured. Set request.rerankModel / client.rerankModel / ai.defaultRerankModel");
+    private ModelResolved resolveModel(String profileName, String requestModel, VKAiModelType expected, String stage) {
+        VKAiProfileConfig profile = profiles.get(profileName);
+        if (profile == null) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai profile not found: " + profileName);
         }
-        return model;
+        String defaultModelName = switch (expected) {
+            case CHAT -> profile.getChatModel();
+            case EMBEDDING -> firstNonBlank(profile.getEmbeddingModel(), config.getDefaultEmbeddingModel());
+            case RERANK -> firstNonBlank(profile.getRerankModel(), config.getDefaultRerankModel());
+        };
+        if (defaultModelName == null || defaultModelName.isBlank()) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Model is not configured for stage: " + stage);
+        }
+        VKAiModelConfig defaultModel = models.get(defaultModelName.trim());
+        if (defaultModel == null || defaultModel.getType() != expected) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR,
+                    "Default model is invalid for stage " + stage + ": " + defaultModelName);
+        }
+        String defaultProviderName = defaultModel.getProviderName() == null ? null : defaultModel.getProviderName().trim();
+        VKAiProviderConfig defaultProviderCfg = defaultProviderName == null ? null : providers.get(defaultProviderName);
+        if (defaultProviderCfg == null) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai provider not found: " + defaultProviderName + ", model=" + defaultModelName);
+        }
+
+        if (requestModel != null && !requestModel.isBlank()) {
+            String requested = requestModel.trim();
+            VKAiModelConfig named = models.get(requested);
+            if (named == null) {
+                return new ModelResolved(
+                        requested,
+                        new VKAiModelConfig().type(expected).provider(defaultProviderName).model(requested),
+                        defaultProviderCfg.copy()
+                );
+            }
+            if (named.getType() != expected) {
+                throw new VKAiException(VKAiErrorCode.CONFIG_ERROR,
+                        "Ai model type mismatch: " + requested + ", expected=" + expected + ", actual=" + named.getType());
+            }
+            String providerName = named.getProviderName() == null ? null : named.getProviderName().trim();
+            VKAiProviderConfig providerCfg = providerName == null ? null : providers.get(providerName);
+            if (providerCfg == null) {
+                throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai provider not found: " + providerName + ", model=" + requested);
+            }
+            return new ModelResolved(requested, named.copy(), providerCfg.copy());
+        }
+
+        String normalizedModel = defaultModelName.trim();
+        VKAiModelConfig modelCfg = models.get(normalizedModel);
+        return new ModelResolved(normalizedModel, modelCfg.copy(), defaultProviderCfg.copy());
     }
 
     private static String firstNonBlank(String... values) {
@@ -1391,22 +1551,22 @@ public final class VKAiRuntime {
         return null;
     }
 
-    private VKAiException mapRagPrecheckException(String stage, String clientName, String model, VKAiException e) {
+    private VKAiException mapRagPrecheckException(String stage, String profileName, String model, VKAiException e) {
         if (e.getCode() == VKAiErrorCode.HTTP_STATUS && e.getStatusCode() != null && e.getStatusCode() == 404) {
             return new VKAiException(VKAiErrorCode.CONFIG_ERROR,
-                    "RAG precheck failed at " + stage + " (404). client=" + clientName + ", model=" + model
+                    "RAG precheck failed at " + stage + " (404). profile=" + profileName + ", model=" + model
                             + ". Check " + stage + " endpoint path and model layering config.", e);
         }
         return new VKAiException(e.getCode(),
-                "RAG precheck failed at " + stage + ". client=" + clientName + ", model=" + model + ", cause=" + e.getMessage(), e);
+                "RAG precheck failed at " + stage + ". profile=" + profileName + ", model=" + model + ", cause=" + e.getMessage(), e);
     }
 
-    private Map<String, String> buildHeaders(VKAiClientConfig client) {
-        Map<String, String> headers = new LinkedHashMap<>(client.getDefaultHeaders());
-        if (client.getApiKey() != null && !client.getApiKey().isBlank()) {
-            headers.putIfAbsent("Authorization", "Bearer " + client.getApiKey().trim());
+    private Map<String, String> buildHeaders(VKAiProviderConfig provider) {
+        Map<String, String> headers = new LinkedHashMap<>(provider.getDefaultHeaders());
+        if (provider.getApiKey() != null && !provider.getApiKey().isBlank()) {
+            headers.putIfAbsent("Authorization", "Bearer " + provider.getApiKey().trim());
         }
-        headers.putIfAbsent("X-Vostok-AI-Provider", client.getProvider());
+        headers.putIfAbsent("X-Vostok-AI-Provider", provider.getProvider());
         return headers;
     }
 
@@ -1979,7 +2139,7 @@ public final class VKAiRuntime {
             docs.add(hit.getText());
         }
         VKAiRerankRequest rerankRequest = new VKAiRerankRequest()
-                .client(rerankClientName)
+                .profile(rerankClientName)
                 .model(request.getRerankModel())
                 .query(retrievalQuery)
                 .documents(docs)
@@ -2257,6 +2417,13 @@ public final class VKAiRuntime {
     ) {
     }
 
-    private record ClientResolved(String name, VKAiClientConfig client) {
+    private record ModelResolved(
+            String modelName,
+            VKAiModelConfig model,
+            VKAiProviderConfig provider
+    ) {
+        String providerModel() {
+            return model == null ? null : model.getModel();
+        }
     }
 }

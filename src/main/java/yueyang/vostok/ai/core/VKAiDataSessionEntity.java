@@ -10,8 +10,8 @@ public class VKAiDataSessionEntity {
     @VKColumn(name = "session_id")
     private String sessionId;
 
-    @VKColumn(name = "client_name")
-    private String clientName;
+    @VKColumn(name = "profile_name")
+    private String profileName;
 
     @VKColumn(name = "current_model")
     private String currentModel;
@@ -33,12 +33,20 @@ public class VKAiDataSessionEntity {
         this.sessionId = sessionId;
     }
 
+    public String getProfileName() {
+        return profileName;
+    }
+
+    public void setProfileName(String profileName) {
+        this.profileName = profileName;
+    }
+
     public String getClientName() {
-        return clientName;
+        return profileName;
     }
 
     public void setClientName(String clientName) {
-        this.clientName = clientName;
+        this.profileName = clientName;
     }
 
     public String getCurrentModel() {

@@ -5,7 +5,7 @@ import java.util.Map;
 
 public class VKAiSession {
     private String sessionId;
-    private String clientName;
+    private String profileName;
     private String currentModel;
     private long createdAt;
     private long updatedAt;
@@ -20,13 +20,21 @@ public class VKAiSession {
         return this;
     }
 
+    public String getProfileName() {
+        return profileName;
+    }
+
+    public VKAiSession profileName(String profileName) {
+        this.profileName = profileName;
+        return this;
+    }
+
     public String getClientName() {
-        return clientName;
+        return profileName;
     }
 
     public VKAiSession clientName(String clientName) {
-        this.clientName = clientName;
-        return this;
+        return profileName(clientName);
     }
 
     public String getCurrentModel() {
@@ -78,7 +86,7 @@ public class VKAiSession {
     public VKAiSession copy() {
         return new VKAiSession()
                 .sessionId(sessionId)
-                .clientName(clientName)
+                .profileName(profileName)
                 .currentModel(currentModel)
                 .createdAt(createdAt)
                 .updatedAt(updatedAt)

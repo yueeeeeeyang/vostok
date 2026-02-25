@@ -1,10 +1,10 @@
 package yueyang.vostok.ai.rag;
 
 public class VKAiRagRequest {
-    private String clientName;
-    private String chatClientName;
-    private String embeddingClientName;
-    private String rerankClientName;
+    private String profileName;
+    private String chatProfileName;
+    private String embeddingProfileName;
+    private String rerankProfileName;
     private String model;
     private String embeddingModel;
     private String rerankModel;
@@ -23,40 +23,72 @@ public class VKAiRagRequest {
     private int contextMaxChars = 1800;
     private String systemPrompt;
 
+    public String getProfileName() {
+        return profileName;
+    }
+
+    public VKAiRagRequest profile(String profileName) {
+        this.profileName = profileName;
+        return this;
+    }
+
     public String getClientName() {
-        return clientName;
+        return profileName;
     }
 
     public VKAiRagRequest client(String clientName) {
-        this.clientName = clientName;
+        return profile(clientName);
+    }
+
+    public String getChatProfileName() {
+        return chatProfileName;
+    }
+
+    public VKAiRagRequest chatProfile(String chatProfileName) {
+        this.chatProfileName = chatProfileName;
+        return this;
+    }
+
+    public String getEmbeddingProfileName() {
+        return embeddingProfileName;
+    }
+
+    public VKAiRagRequest embeddingProfile(String embeddingProfileName) {
+        this.embeddingProfileName = embeddingProfileName;
+        return this;
+    }
+
+    public String getRerankProfileName() {
+        return rerankProfileName;
+    }
+
+    public VKAiRagRequest rerankProfile(String rerankProfileName) {
+        this.rerankProfileName = rerankProfileName;
         return this;
     }
 
     public String getChatClientName() {
-        return chatClientName;
+        return chatProfileName;
     }
 
     public VKAiRagRequest chatClient(String chatClientName) {
-        this.chatClientName = chatClientName;
-        return this;
+        return chatProfile(chatClientName);
     }
 
     public String getEmbeddingClientName() {
-        return embeddingClientName;
+        return embeddingProfileName;
     }
 
     public VKAiRagRequest embeddingClient(String embeddingClientName) {
-        this.embeddingClientName = embeddingClientName;
-        return this;
+        return embeddingProfile(embeddingClientName);
     }
 
     public String getRerankClientName() {
-        return rerankClientName;
+        return rerankProfileName;
     }
 
     public VKAiRagRequest rerankClient(String rerankClientName) {
-        this.rerankClientName = rerankClientName;
-        return this;
+        return rerankProfile(rerankClientName);
     }
 
     public String getModel() {
