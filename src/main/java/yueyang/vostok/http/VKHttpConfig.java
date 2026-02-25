@@ -40,6 +40,13 @@ public class VKHttpConfig {
     private int bulkheadMaxConcurrent = 100;
     private int bulkheadQueueSize = 0;
     private long bulkheadAcquireTimeoutMs = 0;
+    private boolean streamEnabled = true;
+    private long streamIdleTimeoutMs = 60_000;
+    private long streamTotalTimeoutMs = 0;
+    private int sseMaxEventBytes = 1024 * 1024;
+    private boolean sseEmitDoneEvent = false;
+    private int streamExecutorThreads = 4;
+    private int streamQueueCapacity = 1024;
     private String userAgent = "VostokHttp/1.0";
     private Map<String, String> defaultHeaders = new LinkedHashMap<>();
 
@@ -79,6 +86,13 @@ public class VKHttpConfig {
         c.bulkheadMaxConcurrent = this.bulkheadMaxConcurrent;
         c.bulkheadQueueSize = this.bulkheadQueueSize;
         c.bulkheadAcquireTimeoutMs = this.bulkheadAcquireTimeoutMs;
+        c.streamEnabled = this.streamEnabled;
+        c.streamIdleTimeoutMs = this.streamIdleTimeoutMs;
+        c.streamTotalTimeoutMs = this.streamTotalTimeoutMs;
+        c.sseMaxEventBytes = this.sseMaxEventBytes;
+        c.sseEmitDoneEvent = this.sseEmitDoneEvent;
+        c.streamExecutorThreads = this.streamExecutorThreads;
+        c.streamQueueCapacity = this.streamQueueCapacity;
         c.userAgent = this.userAgent;
         c.defaultHeaders = new LinkedHashMap<>(this.defaultHeaders);
         return c;
@@ -436,6 +450,69 @@ public class VKHttpConfig {
 
     public VKHttpConfig bulkheadAcquireTimeoutMs(long bulkheadAcquireTimeoutMs) {
         this.bulkheadAcquireTimeoutMs = Math.max(0, bulkheadAcquireTimeoutMs);
+        return this;
+    }
+
+    public boolean isStreamEnabled() {
+        return streamEnabled;
+    }
+
+    public VKHttpConfig streamEnabled(boolean streamEnabled) {
+        this.streamEnabled = streamEnabled;
+        return this;
+    }
+
+    public long getStreamIdleTimeoutMs() {
+        return streamIdleTimeoutMs;
+    }
+
+    public VKHttpConfig streamIdleTimeoutMs(long streamIdleTimeoutMs) {
+        this.streamIdleTimeoutMs = Math.max(0, streamIdleTimeoutMs);
+        return this;
+    }
+
+    public long getStreamTotalTimeoutMs() {
+        return streamTotalTimeoutMs;
+    }
+
+    public VKHttpConfig streamTotalTimeoutMs(long streamTotalTimeoutMs) {
+        this.streamTotalTimeoutMs = Math.max(0, streamTotalTimeoutMs);
+        return this;
+    }
+
+    public int getSseMaxEventBytes() {
+        return sseMaxEventBytes;
+    }
+
+    public VKHttpConfig sseMaxEventBytes(int sseMaxEventBytes) {
+        this.sseMaxEventBytes = Math.max(1024, sseMaxEventBytes);
+        return this;
+    }
+
+    public boolean isSseEmitDoneEvent() {
+        return sseEmitDoneEvent;
+    }
+
+    public VKHttpConfig sseEmitDoneEvent(boolean sseEmitDoneEvent) {
+        this.sseEmitDoneEvent = sseEmitDoneEvent;
+        return this;
+    }
+
+    public int getStreamExecutorThreads() {
+        return streamExecutorThreads;
+    }
+
+    public VKHttpConfig streamExecutorThreads(int streamExecutorThreads) {
+        this.streamExecutorThreads = Math.max(1, streamExecutorThreads);
+        return this;
+    }
+
+    public int getStreamQueueCapacity() {
+        return streamQueueCapacity;
+    }
+
+    public VKHttpConfig streamQueueCapacity(int streamQueueCapacity) {
+        this.streamQueueCapacity = Math.max(1, streamQueueCapacity);
         return this;
     }
 

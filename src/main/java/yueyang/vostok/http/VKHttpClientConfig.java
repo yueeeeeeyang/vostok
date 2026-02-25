@@ -36,6 +36,12 @@ public class VKHttpClientConfig {
     private Integer bulkheadMaxConcurrent;
     private Integer bulkheadQueueSize;
     private Long bulkheadAcquireTimeoutMs;
+    private Boolean streamEnabled;
+    private Long streamIdleTimeoutMs;
+    private Long streamTotalTimeoutMs;
+    private Integer sseMaxEventBytes;
+    private Boolean sseEmitDoneEvent;
+    private Integer streamQueueCapacity;
     private String userAgent;
     private Set<Integer> retryOnStatuses = new LinkedHashSet<>();
     private Set<String> retryMethods = new LinkedHashSet<>();
@@ -79,6 +85,12 @@ public class VKHttpClientConfig {
         c.bulkheadMaxConcurrent = this.bulkheadMaxConcurrent;
         c.bulkheadQueueSize = this.bulkheadQueueSize;
         c.bulkheadAcquireTimeoutMs = this.bulkheadAcquireTimeoutMs;
+        c.streamEnabled = this.streamEnabled;
+        c.streamIdleTimeoutMs = this.streamIdleTimeoutMs;
+        c.streamTotalTimeoutMs = this.streamTotalTimeoutMs;
+        c.sseMaxEventBytes = this.sseMaxEventBytes;
+        c.sseEmitDoneEvent = this.sseEmitDoneEvent;
+        c.streamQueueCapacity = this.streamQueueCapacity;
         c.userAgent = this.userAgent;
         c.retryOnStatuses = new LinkedHashSet<>(this.retryOnStatuses);
         c.retryMethods = new LinkedHashSet<>(this.retryMethods);
@@ -357,6 +369,60 @@ public class VKHttpClientConfig {
 
     public VKHttpClientConfig bulkheadAcquireTimeoutMs(Long bulkheadAcquireTimeoutMs) {
         this.bulkheadAcquireTimeoutMs = bulkheadAcquireTimeoutMs;
+        return this;
+    }
+
+    public Boolean getStreamEnabled() {
+        return streamEnabled;
+    }
+
+    public VKHttpClientConfig streamEnabled(Boolean streamEnabled) {
+        this.streamEnabled = streamEnabled;
+        return this;
+    }
+
+    public Long getStreamIdleTimeoutMs() {
+        return streamIdleTimeoutMs;
+    }
+
+    public VKHttpClientConfig streamIdleTimeoutMs(Long streamIdleTimeoutMs) {
+        this.streamIdleTimeoutMs = streamIdleTimeoutMs;
+        return this;
+    }
+
+    public Long getStreamTotalTimeoutMs() {
+        return streamTotalTimeoutMs;
+    }
+
+    public VKHttpClientConfig streamTotalTimeoutMs(Long streamTotalTimeoutMs) {
+        this.streamTotalTimeoutMs = streamTotalTimeoutMs;
+        return this;
+    }
+
+    public Integer getSseMaxEventBytes() {
+        return sseMaxEventBytes;
+    }
+
+    public VKHttpClientConfig sseMaxEventBytes(Integer sseMaxEventBytes) {
+        this.sseMaxEventBytes = sseMaxEventBytes;
+        return this;
+    }
+
+    public Boolean getSseEmitDoneEvent() {
+        return sseEmitDoneEvent;
+    }
+
+    public VKHttpClientConfig sseEmitDoneEvent(Boolean sseEmitDoneEvent) {
+        this.sseEmitDoneEvent = sseEmitDoneEvent;
+        return this;
+    }
+
+    public Integer getStreamQueueCapacity() {
+        return streamQueueCapacity;
+    }
+
+    public VKHttpClientConfig streamQueueCapacity(Integer streamQueueCapacity) {
+        this.streamQueueCapacity = streamQueueCapacity;
         return this;
     }
 

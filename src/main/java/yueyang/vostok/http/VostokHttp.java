@@ -100,6 +100,30 @@ public class VostokHttp {
         return RUNTIME.executeJsonAsync(request, type);
     }
 
+    public static VKHttpStreamSession openSse(VKHttpRequest request, VKHttpSseListener listener) {
+        return RUNTIME.openSse(request, listener);
+    }
+
+    public static void executeSse(VKHttpRequest request, VKHttpSseListener listener) {
+        RUNTIME.executeSse(request, listener);
+    }
+
+    public static CompletableFuture<Void> executeSseAsync(VKHttpRequest request, VKHttpSseListener listener) {
+        return RUNTIME.executeSseAsync(request, listener);
+    }
+
+    public static VKHttpStreamSession openStream(VKHttpRequest request, VKHttpChunkListener listener) {
+        return RUNTIME.openStream(request, listener);
+    }
+
+    public static void executeStream(VKHttpRequest request, VKHttpChunkListener listener) {
+        RUNTIME.executeStream(request, listener);
+    }
+
+    public static CompletableFuture<Void> executeStreamAsync(VKHttpRequest request, VKHttpChunkListener listener) {
+        return RUNTIME.executeStreamAsync(request, listener);
+    }
+
     public static VKHttpMetrics metrics() {
         return RUNTIME.metrics();
     }

@@ -9,22 +9,28 @@ import yueyang.vostok.http.VKHttpClientConfig;
 import yueyang.vostok.http.VKHttpConfig;
 import yueyang.vostok.http.VKHttpMetrics;
 import yueyang.vostok.http.VKHttpResponse;
+import yueyang.vostok.http.VKHttpSseEvent;
+import yueyang.vostok.http.VKHttpSseListener;
 import yueyang.vostok.http.auth.VKApiKeyAuth;
 import yueyang.vostok.http.auth.VKBearerAuth;
 import yueyang.vostok.http.exception.VKHttpErrorCode;
 import yueyang.vostok.http.exception.VKHttpException;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -49,6 +55,9 @@ public class VostokHttpTest {
         server.createContext("/circuit", this::handleCircuit);
         server.createContext("/bulkhead", this::handleBulkhead);
         server.createContext("/timeout", this::handleTimeout);
+        server.createContext("/sse", this::handleSse);
+        server.createContext("/sse-idle", this::handleSseIdle);
+        server.createContext("/chunk", this::handleChunk);
         server.createContext("/status404", this::handleStatus404);
         server.createContext("/form", this::handleForm);
         server.createContext("/multipart", this::handleMultipart);
@@ -333,6 +342,63 @@ public class VostokHttpTest {
         assertEquals("GET", resp.method);
     }
 
+    @Test
+    void testSseExecute() {
+        List<VKHttpSseEvent> events = new ArrayList<>();
+        Vostok.Http.get("/sse")
+                .client("demo")
+                .executeSse(new VKHttpSseListener() {
+                    @Override
+                    public void onEvent(VKHttpSseEvent event) {
+                        events.add(event);
+                    }
+                });
+
+        assertEquals(2, events.size());
+        assertEquals("1", events.get(0).getId());
+        assertEquals("message", events.get(0).getEvent());
+        assertEquals("hello", events.get(0).getData());
+        assertEquals("world", events.get(1).getData());
+
+        VKHttpMetrics metrics = Vostok.Http.metrics();
+        assertEquals(1, metrics.streamOpens());
+        assertEquals(1, metrics.streamCloses());
+        assertEquals(0, metrics.streamErrors());
+        assertEquals(2, metrics.sseEvents());
+    }
+
+    @Test
+    void testSseIdleTimeout() {
+        Vostok.Http.registerClient("sse-idle", new VKHttpClientConfig()
+                .baseUrl(baseUrl)
+                .streamIdleTimeoutMs(120L));
+
+        AtomicReference<Throwable> onError = new AtomicReference<>();
+        VKHttpException ex = assertThrows(VKHttpException.class, () -> Vostok.Http.get("/sse-idle")
+                .client("sse-idle")
+                .executeSse(new VKHttpSseListener() {
+                    @Override
+                    public void onEvent(VKHttpSseEvent event) {
+                    }
+
+                    @Override
+                    public void onError(Throwable t) {
+                        onError.set(t);
+                    }
+                }));
+        assertEquals(VKHttpErrorCode.STREAM_IDLE_TIMEOUT, ex.getCode());
+        assertNotNull(onError.get());
+    }
+
+    @Test
+    void testChunkStreamExecute() {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Vostok.Http.get("/chunk")
+                .client("demo")
+                .executeStream(out::writeBytes);
+        assertEquals("abcd", out.toString(StandardCharsets.UTF_8));
+    }
+
     private void handleEcho(HttpExchange exchange) throws IOException {
         String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
         Map<String, String> queryMap = parseQuery(exchange.getRequestURI().getRawQuery());
@@ -405,6 +471,52 @@ public class VostokHttpTest {
             Thread.currentThread().interrupt();
         }
         writeText(exchange, 200, "late");
+    }
+
+    private void handleSse(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=UTF-8");
+        exchange.sendResponseHeaders(200, 0);
+        try {
+            exchange.getResponseBody().write("id: 1\n".getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().write("event: message\n".getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().write("data: hello\n\n".getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
+            exchange.getResponseBody().write("data: world\n\n".getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().write("data: [DONE]\n\n".getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private void handleSseIdle(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=UTF-8");
+        exchange.sendResponseHeaders(200, 0);
+        try {
+            Thread.sleep(500);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } finally {
+            exchange.close();
+        }
+    }
+
+    private void handleChunk(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=UTF-8");
+        exchange.sendResponseHeaders(200, 0);
+        try {
+            exchange.getResponseBody().write("ab".getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
+            try {
+                Thread.sleep(30);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.getResponseBody().write("cd".getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
+        } finally {
+            exchange.close();
+        }
     }
 
     private void handleStatus404(HttpExchange exchange) throws IOException {

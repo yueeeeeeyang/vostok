@@ -3983,7 +3983,7 @@ var fromProperties = VKCacheConfigFactory.fromProperties(Path.of("./cache.proper
 
 # 10. Http 模块
 
-`Vostok.Http` 提供面向第三方 API 的统一调用能力，支持命名 Client、鉴权、重试、超时、表单/文件上传、JSON 序列化与指标。
+`Vostok.Http` 提供面向第三方 API 的统一调用能力，支持命名 Client、鉴权、重试、超时、表单/文件上传、JSON 序列化、SSE/增量流与指标。
 
 ## 10.0 说明与注意事项
 
@@ -3992,6 +3992,7 @@ var fromProperties = VKCacheConfigFactory.fromProperties(Path.of("./cache.proper
 - 当使用相对路径（如 `/users/{id}`）时，必须通过 `.client(\"name\")` 指定已注册且包含 `baseUrl` 的命名 Client。
 - 默认 `failOnNon2xx=true`，非 `2xx` 会抛出 `VKHttpException(HTTP_STATUS)`；如需手动处理响应可在请求级关闭。
 - 重试默认只覆盖幂等方法（`GET/HEAD/OPTIONS/PUT/DELETE`）；若对 `POST` 重试，请配合业务幂等键。
+- 流式（SSE/Chunk）默认不建议开启重试；若强制开启，仅保证建连阶段有效，消费中断需业务侧自行兜底。
 - JSON 能力通过 `Vostok.Util` 提供，复杂泛型响应建议业务侧自行解析/转换。
 
 ## 10.1 接口定义
@@ -4008,10 +4009,10 @@ public interface Vostok.Http {
 
     // 命名 Client
     public static void registerClient(String name, VKHttpClientConfig config);
-    public static void withProfile(String name, Runnable action);
-    public static <T> T withProfile(String name, Supplier<T> supplier);
-    public static Set<String> profileNames();
-    public static String currentProfileName();
+    public static void withClient(String name, Runnable action);
+    public static <T> T withClient(String name, Supplier<T> supplier);
+    public static Set<String> clientNames();
+    public static String currentClientName();
 
     // 请求构建
     public static VKHttpRequestBuilder request();
@@ -4027,6 +4028,14 @@ public interface Vostok.Http {
     public static <T> T executeJson(VKHttpRequest request, Class<T> type);
     public static CompletableFuture<VKHttpResponse> executeAsync(VKHttpRequest request);
     public static <T> CompletableFuture<T> executeJsonAsync(VKHttpRequest request, Class<T> type);
+
+    // 流式执行（SSE / Chunk）
+    public static VKHttpStreamSession openSse(VKHttpRequest request, VKHttpSseListener listener);
+    public static void executeSse(VKHttpRequest request, VKHttpSseListener listener);
+    public static CompletableFuture<Void> executeSseAsync(VKHttpRequest request, VKHttpSseListener listener);
+    public static VKHttpStreamSession openStream(VKHttpRequest request, VKHttpChunkListener listener);
+    public static void executeStream(VKHttpRequest request, VKHttpChunkListener listener);
+    public static CompletableFuture<Void> executeStreamAsync(VKHttpRequest request, VKHttpChunkListener listener);
 
     // 指标
     public static VKHttpMetrics metrics();
@@ -4133,6 +4142,30 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
         .sslContext(ssl));
 ```
 
+### 10.2.7 SSE / 增量流消费
+
+```java
+// SSE（text/event-stream）
+Vostok.Http.get("/v1/chat/completions")
+        .client("openai")
+        .bodyJson(Map.of("stream", true))
+        .executeSse(new VKHttpSseListener() {
+            @Override
+            public void onEvent(VKHttpSseEvent event) {
+                // OpenAI 常见 data: {...} / data: [DONE]
+                System.out.println(event.getData());
+            }
+        });
+
+// 原始字节流（chunk）
+Vostok.Http.get("/stream/raw")
+        .client("demo")
+        .executeStream(chunk -> {
+            String part = new String(chunk, StandardCharsets.UTF_8);
+            System.out.println(part);
+        });
+```
+
 ## 10.3 配置详解
 
 ### 10.3.1 VKHttpConfig（全局）
@@ -4162,6 +4195,12 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 - `circuitRecordStatuses`：计入熔断失败统计的状态码（默认 `429,500,502,503,504`）
 - `bulkheadEnabled`：是否启用并发隔离
 - `bulkheadMaxConcurrent/bulkheadQueueSize/bulkheadAcquireTimeoutMs`：并发槽、排队长度、排队等待时间
+- `streamEnabled`：是否启用流式能力（默认 `true`）
+- `streamIdleTimeoutMs`：流空闲超时（默认 `60000`，`0` 表示不限制）
+- `streamTotalTimeoutMs`：流总超时（默认 `0`，仅流式请求生效）
+- `sseMaxEventBytes`：单条 SSE 事件 `data` 最大字节数（默认 `1MB`）
+- `sseEmitDoneEvent`：是否下发 `data: [DONE]` 事件（默认 `false`）
+- `streamExecutorThreads/streamQueueCapacity`：流消费线程数与消费队列容量
 - `logEnabled`：是否输出调用日志
 - `metricsEnabled`：是否启用指标采集
 - `userAgent/defaultHeaders`：全局请求头
@@ -4179,6 +4218,7 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 - `rateLimitQps/rateLimitBurst`：覆盖全局限流策略
 - `circuitEnabled/circuitWindowSize/circuitMinCalls/circuitFailureRateThreshold/circuitOpenWaitMs/circuitHalfOpenMaxCalls/circuitRecordStatuses`：覆盖全局熔断策略
 - `bulkheadEnabled/bulkheadMaxConcurrent/bulkheadQueueSize/bulkheadAcquireTimeoutMs`：覆盖全局并发隔离策略
+- `streamEnabled/streamIdleTimeoutMs/streamTotalTimeoutMs/sseMaxEventBytes/sseEmitDoneEvent/streamQueueCapacity`：覆盖全局流式策略
 - `maxResponseBodyBytes`：覆盖全局响应上限
 - `defaultHeaders/userAgent`：Client 级请求头
 - `auth`：Client 级鉴权策略
@@ -4200,6 +4240,11 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 - `RATE_LIMITED`：客户端限流拒绝
 - `BULKHEAD_REJECTED`：并发隔离拒绝
 - `CIRCUIT_OPEN`：熔断器打开拒绝
+- `STREAM_OPEN_FAILED`：流连接建立失败
+- `STREAM_IDLE_TIMEOUT`：流空闲超时
+- `SSE_PARSE_ERROR`：SSE 事件解析失败
+- `STREAM_CONSUMER_BACKPRESSURE`：消费者回调异常
+- `STREAM_CLOSED`：流会话被关闭/中断
 - `HTTP_STATUS`：非 2xx（在 `failOnNon2xx=true` 时）
 - `RESPONSE_TOO_LARGE`：响应体超限
 - `SERIALIZATION_ERROR`：JSON 序列化/反序列化失败
@@ -4211,6 +4256,8 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 - `totalCalls/successCalls/failedCalls`
 - `retriedCalls`
 - `timeoutCalls/networkErrorCalls`
+- `streamOpens/streamCloses/streamErrors`
+- `sseEvents`
 - `totalCostMs`
 - `statusCounts`（按状态码聚合）
 
@@ -4225,6 +4272,7 @@ Vostok.Http.registerClient("secure-api", new VKHttpClientConfig()
 - HTTPS 可通过 `VKHttpClientConfig` 代码内配置 `trustStore/keyStore`，无需 JVM 全局 `-Djavax.net.ssl.*` 参数。
 - 命名 Client 会复用底层 `HttpClient`；配置变更（`registerClient/reinit/close`）会触发复用缓存刷新。
 - 默认执行顺序为：`RateLimit -> CircuitBreaker -> Bulkhead -> Execute`。
+- SSE 解析遵循 `text/event-stream`；默认把 `data: [DONE]` 作为结束信号且不下发事件（可通过 `sseEmitDoneEvent(true)` 调整）。
 
 ---
 

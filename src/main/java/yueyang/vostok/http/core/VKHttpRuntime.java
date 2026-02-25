@@ -1,19 +1,26 @@
 package yueyang.vostok.http.core;
 
 import yueyang.vostok.Vostok;
+import yueyang.vostok.http.VKHttpChunkListener;
 import yueyang.vostok.http.VKHttpClientConfig;
 import yueyang.vostok.http.VKHttpConfig;
 import yueyang.vostok.http.VKHttpMetrics;
 import yueyang.vostok.http.VKHttpRequest;
 import yueyang.vostok.http.VKHttpResponse;
+import yueyang.vostok.http.VKHttpResponseMeta;
+import yueyang.vostok.http.VKHttpSseEvent;
+import yueyang.vostok.http.VKHttpSseListener;
+import yueyang.vostok.http.VKHttpStreamSession;
 import yueyang.vostok.http.exception.VKHttpErrorCode;
 import yueyang.vostok.http.exception.VKHttpException;
 
 import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
+import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -28,8 +35,6 @@ import java.security.KeyStore;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayDeque;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -38,12 +43,13 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Semaphore;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 public final class VKHttpRuntime {
@@ -61,6 +67,7 @@ public final class VKHttpRuntime {
     private final ConcurrentHashMap<String, ResilienceRuntime> resilienceCache = new ConcurrentHashMap<>();
     private final AtomicLong executeSeq = new AtomicLong();
     private final AtomicLong clientBuilds = new AtomicLong();
+    private volatile ExecutorService streamExecutor;
 
     private volatile VKHttpConfig config = new VKHttpConfig();
     private volatile boolean initialized;
@@ -80,6 +87,7 @@ public final class VKHttpRuntime {
             config = (cfg == null ? new VKHttpConfig() : cfg.copy());
             initialized = true;
             clearClientRuntimes();
+            refreshStreamExecutor();
         }
     }
 
@@ -88,6 +96,7 @@ public final class VKHttpRuntime {
             config = (cfg == null ? new VKHttpConfig() : cfg.copy());
             initialized = true;
             clearClientRuntimes();
+            refreshStreamExecutor();
         }
     }
 
@@ -107,6 +116,7 @@ public final class VKHttpRuntime {
             clearClientRuntimes();
             clientBuilds.set(0);
             executeSeq.set(0);
+            closeStreamExecutor();
             config = new VKHttpConfig();
             initialized = false;
         }
@@ -177,7 +187,7 @@ public final class VKHttpRuntime {
         maybeEvictIdleRuntimes();
 
         long start = System.currentTimeMillis();
-        ResolvedRequest resolved = resolveRequest(request);
+        ResolvedRequest resolved = resolveRequest(request, false);
 
         int attempts = 0;
         while (true) {
@@ -185,31 +195,31 @@ public final class VKHttpRuntime {
             long retryIndex = attempts - 1L;
             boolean bulkheadAcquired = false;
             try {
-                if (resolved.policy.rateLimitEnabled && resolved.resilience.rateLimiter != null
-                        && !resolved.resilience.rateLimiter.tryAcquire()) {
+                if (resolved.policy().rateLimitEnabled() && resolved.resilience().rateLimiter != null
+                        && !resolved.resilience().rateLimiter.tryAcquire()) {
                     throw new VKHttpException(VKHttpErrorCode.RATE_LIMITED, "Http rate limit exceeded");
                 }
-                if (resolved.policy.circuitEnabled && resolved.resilience.circuitBreaker != null) {
-                    resolved.resilience.circuitBreaker.beforeCall();
+                if (resolved.policy().circuitEnabled() && resolved.resilience().circuitBreaker != null) {
+                    resolved.resilience().circuitBreaker.beforeCall();
                 }
-                if (resolved.policy.bulkheadEnabled && resolved.resilience.bulkhead != null) {
-                    resolved.resilience.bulkhead.acquire();
+                if (resolved.policy().bulkheadEnabled() && resolved.resilience().bulkhead != null) {
+                    resolved.resilience().bulkhead.acquire();
                     bulkheadAcquired = true;
                 }
 
                 HttpResponse<byte[]> raw = executeOnce(resolved);
                 byte[] body = raw.body() == null ? new byte[0] : raw.body();
-                if (body.length > resolved.policy.maxResponseBodyBytes) {
+                if (body.length > resolved.policy().maxResponseBodyBytes()) {
                     throw new VKHttpException(VKHttpErrorCode.RESPONSE_TOO_LARGE,
-                            "Response body exceeds limit: " + body.length + " > " + resolved.policy.maxResponseBodyBytes);
+                            "Response body exceeds limit: " + body.length + " > " + resolved.policy().maxResponseBodyBytes());
                 }
 
                 int status = raw.statusCode();
-                if (resolved.policy.circuitEnabled && resolved.resilience.circuitBreaker != null) {
-                    if (resolved.policy.circuitRecordStatuses.contains(status)) {
-                        resolved.resilience.circuitBreaker.onFailure();
+                if (resolved.policy().circuitEnabled() && resolved.resilience().circuitBreaker != null) {
+                    if (resolved.policy().circuitRecordStatuses().contains(status)) {
+                        resolved.resilience().circuitBreaker.onFailure();
                     } else {
-                        resolved.resilience.circuitBreaker.onSuccess();
+                        resolved.resilience().circuitBreaker.onSuccess();
                     }
                 }
                 if (shouldRetryByStatus(resolved, status, retryIndex)) {
@@ -228,15 +238,15 @@ public final class VKHttpRuntime {
                 }
                 logCall(resolved, response.statusCode(), costMs, retryIndex);
 
-                if (resolved.policy.failOnNon2xx && !response.is2xx()) {
+                if (resolved.policy().failOnNon2xx() && !response.is2xx()) {
                     throw new VKHttpException(VKHttpErrorCode.HTTP_STATUS,
                             "HTTP call failed with status=" + response.statusCode(), response.statusCode());
                 }
                 return response;
             } catch (VKHttpException e) {
-                if (resolved.policy.circuitEnabled && resolved.resilience.circuitBreaker != null
+                if (resolved.policy().circuitEnabled() && resolved.resilience().circuitBreaker != null
                         && shouldRecordCircuitFailure(e)) {
-                    resolved.resilience.circuitBreaker.onFailure();
+                    resolved.resilience().circuitBreaker.onFailure();
                 }
                 if (shouldRetryByError(resolved, e, retryIndex)) {
                     if (config.isMetricsEnabled()) {
@@ -252,8 +262,8 @@ public final class VKHttpRuntime {
                 }
                 throw e;
             } finally {
-                if (bulkheadAcquired && resolved.resilience.bulkhead != null) {
-                    resolved.resilience.bulkhead.release();
+                if (bulkheadAcquired && resolved.resilience().bulkhead != null) {
+                    resolved.resilience().bulkhead.release();
                 }
             }
         }
@@ -274,6 +284,155 @@ public final class VKHttpRuntime {
         return CompletableFuture.supplyAsync(() -> executeJson(request, type));
     }
 
+    public VKHttpStreamSession openSse(VKHttpRequest request, VKHttpSseListener listener) {
+        return openStreamInternal(request, listener, null);
+    }
+
+    public void executeSse(VKHttpRequest request, VKHttpSseListener listener) {
+        StreamSessionImpl session = requireSession(openSse(request, listener));
+        session.await();
+    }
+
+    public CompletableFuture<Void> executeSseAsync(VKHttpRequest request, VKHttpSseListener listener) {
+        return CompletableFuture.runAsync(() -> executeSse(request, listener));
+    }
+
+    public VKHttpStreamSession openStream(VKHttpRequest request, VKHttpChunkListener listener) {
+        return openStreamInternal(request, null, listener);
+    }
+
+    public void executeStream(VKHttpRequest request, VKHttpChunkListener listener) {
+        StreamSessionImpl session = requireSession(openStream(request, listener));
+        session.await();
+    }
+
+    public CompletableFuture<Void> executeStreamAsync(VKHttpRequest request, VKHttpChunkListener listener) {
+        return CompletableFuture.runAsync(() -> executeStream(request, listener));
+    }
+
+    private VKHttpStreamSession openStreamInternal(VKHttpRequest request, VKHttpSseListener sseListener, VKHttpChunkListener chunkListener) {
+        ensureInit();
+        if (request == null) {
+            throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "VKHttpRequest is null");
+        }
+        if (sseListener == null && chunkListener == null) {
+            throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "Stream listener is null");
+        }
+        if (sseListener != null && chunkListener != null) {
+            throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "Only one stream listener type is allowed");
+        }
+
+        maybeEvictIdleRuntimes();
+        long start = System.currentTimeMillis();
+        ResolvedRequest resolved = resolveRequest(request, true);
+        if (!resolved.policy().streamEnabled()) {
+            throw new VKHttpException(VKHttpErrorCode.CONFIG_ERROR, "Http stream is disabled");
+        }
+
+        boolean bulkheadAcquired = false;
+        try {
+            if (resolved.policy().rateLimitEnabled() && resolved.resilience().rateLimiter != null
+                    && !resolved.resilience().rateLimiter.tryAcquire()) {
+                throw new VKHttpException(VKHttpErrorCode.RATE_LIMITED, "Http rate limit exceeded");
+            }
+            if (resolved.policy().circuitEnabled() && resolved.resilience().circuitBreaker != null) {
+                resolved.resilience().circuitBreaker.beforeCall();
+            }
+            if (resolved.policy().bulkheadEnabled() && resolved.resilience().bulkhead != null) {
+                resolved.resilience().bulkhead.acquire();
+                bulkheadAcquired = true;
+            }
+
+            HttpResponse<InputStream> raw = executeOnceStream(resolved);
+            int status = raw.statusCode();
+            if (resolved.policy().failOnNon2xx() && (status < 200 || status >= 300)) {
+                String body = readBodySafely(raw.body(), resolved.policy().maxResponseBodyBytes());
+                closeQuietly(raw.body());
+                if (resolved.policy().circuitEnabled() && resolved.resilience().circuitBreaker != null) {
+                    if (resolved.policy().circuitRecordStatuses().contains(status)) {
+                        resolved.resilience().circuitBreaker.onFailure();
+                    } else {
+                        resolved.resilience().circuitBreaker.onSuccess();
+                    }
+                }
+                if (config.isMetricsEnabled()) {
+                    metrics.recordResponse(status, System.currentTimeMillis() - start);
+                }
+                logCall(resolved, status, System.currentTimeMillis() - start, 0);
+                throw new VKHttpException(VKHttpErrorCode.HTTP_STATUS,
+                        "HTTP stream failed with status=" + status + ", body=" + abbreviate(body, 256),
+                        status);
+            }
+
+            String contentType = firstHeader(raw.headers().map(), "Content-Type");
+            if (sseListener != null && (contentType == null || !contentType.toLowerCase().contains("text/event-stream"))) {
+                closeQuietly(raw.body());
+                if (resolved.policy().circuitEnabled() && resolved.resilience().circuitBreaker != null) {
+                    resolved.resilience().circuitBreaker.onFailure();
+                }
+                throw new VKHttpException(VKHttpErrorCode.STREAM_OPEN_FAILED,
+                        "SSE requires content-type text/event-stream, actual=" + contentType);
+            }
+
+            StreamSessionImpl session = new StreamSessionImpl(
+                    raw.body(),
+                    bulkheadAcquired ? resolved.resilience().bulkhead : null,
+                    resolved.policy().circuitEnabled() ? resolved.resilience().circuitBreaker : null,
+                    resolved.policy().circuitRecordStatuses().contains(status)
+            );
+
+            if (config.isMetricsEnabled()) {
+                metrics.recordResponse(status, System.currentTimeMillis() - start);
+                metrics.recordStreamOpen();
+            }
+            if (config.isLogEnabled()) {
+                Vostok.Log.info("Vostok.Http stream-open {} {} status={} client={}",
+                        resolved.method(), resolved.url(), status, resolved.clientName());
+            }
+            VKHttpResponseMeta meta = new VKHttpResponseMeta(status, raw.headers().map());
+            ExecutorService executor = streamExecutor;
+            if (executor == null) {
+                throw new VKHttpException(VKHttpErrorCode.STATE_ERROR, "Http stream executor not initialized");
+            }
+            try {
+                executor.execute(() -> {
+                    if (sseListener != null) {
+                        consumeSse(meta, resolved, sseListener, session);
+                    } else {
+                        consumeChunks(meta, resolved.policy().streamIdleTimeoutMs(), chunkListener, session);
+                    }
+                });
+            } catch (RuntimeException e) {
+                VKHttpException ex = new VKHttpException(VKHttpErrorCode.STATE_ERROR, "Http stream task rejected", e);
+                if (config.isMetricsEnabled()) {
+                    metrics.recordStreamError();
+                }
+                closeQuietly(raw.body());
+                throw ex;
+            }
+            return session;
+        } catch (VKHttpException e) {
+            if (bulkheadAcquired && resolved.resilience().bulkhead != null) {
+                resolved.resilience().bulkhead.release();
+            }
+            if (resolved.policy().circuitEnabled() && resolved.resilience().circuitBreaker != null
+                    && shouldRecordCircuitFailure(e)) {
+                resolved.resilience().circuitBreaker.onFailure();
+            }
+            if (config.isMetricsEnabled() && e.getCode() != VKHttpErrorCode.HTTP_STATUS) {
+                metrics.recordFailure(e.getCode(), System.currentTimeMillis() - start);
+            }
+            throw e;
+        }
+    }
+
+    private static StreamSessionImpl requireSession(VKHttpStreamSession session) {
+        if (session instanceof StreamSessionImpl impl) {
+            return impl;
+        }
+        throw new VKHttpException(VKHttpErrorCode.STATE_ERROR, "Unexpected stream session implementation");
+    }
+
     public VKHttpMetrics metrics() {
         return metrics.snapshot();
     }
@@ -292,17 +451,17 @@ public final class VKHttpRuntime {
 
     private HttpResponse<byte[]> executeOnce(ResolvedRequest resolved) {
         try {
-            CompletableFuture<HttpResponse<byte[]>> cf = resolved.runtime.client.sendAsync(
-                    resolved.httpRequest,
+            CompletableFuture<HttpResponse<byte[]>> cf = resolved.runtime().client.sendAsync(
+                    resolved.httpRequest(),
                     HttpResponse.BodyHandlers.ofByteArray()
             );
-            if (resolved.policy.readTimeoutMs > 0) {
+            if (resolved.policy().readTimeoutMs() > 0) {
                 try {
-                    return cf.get(resolved.policy.readTimeoutMs, TimeUnit.MILLISECONDS);
+                    return cf.get(resolved.policy().readTimeoutMs(), TimeUnit.MILLISECONDS);
                 } catch (TimeoutException e) {
                     cf.cancel(true);
                     throw new VKHttpException(VKHttpErrorCode.READ_TIMEOUT,
-                            "HTTP read timeout exceeded: " + resolved.policy.readTimeoutMs + "ms", e);
+                            "HTTP read timeout exceeded: " + resolved.policy().readTimeoutMs() + "ms", e);
                 }
             }
             return cf.get();
@@ -327,18 +486,68 @@ public final class VKHttpRuntime {
         }
     }
 
+    private HttpResponse<InputStream> executeOnceStream(ResolvedRequest resolved) {
+        try {
+            return resolved.runtime().client.send(resolved.httpRequest(), HttpResponse.BodyHandlers.ofInputStream());
+        } catch (HttpConnectTimeoutException e) {
+            throw new VKHttpException(VKHttpErrorCode.CONNECT_TIMEOUT, "HTTP connect timeout", e);
+        } catch (HttpTimeoutException e) {
+            throw new VKHttpException(VKHttpErrorCode.TOTAL_TIMEOUT, "HTTP total timeout", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new VKHttpException(VKHttpErrorCode.NETWORK_ERROR, "HTTP stream interrupted", e);
+        } catch (IOException e) {
+            throw new VKHttpException(VKHttpErrorCode.STREAM_OPEN_FAILED, "HTTP stream open failed", e);
+        }
+    }
+
+    private static String readBodySafely(InputStream in, long maxBytes) {
+        if (in == null) {
+            return "";
+        }
+        long limit = Math.max(1024, maxBytes);
+        try (InputStream input = in) {
+            byte[] all = input.readNBytes((int) Math.min(Integer.MAX_VALUE, limit));
+            return new String(all, StandardCharsets.UTF_8);
+        } catch (Exception ignore) {
+            return "";
+        }
+    }
+
+    private static String firstHeader(Map<String, List<String>> headers, String name) {
+        if (headers == null || headers.isEmpty() || name == null) {
+            return null;
+        }
+        for (Map.Entry<String, List<String>> e : headers.entrySet()) {
+            if (e.getKey() != null && e.getKey().equalsIgnoreCase(name) && e.getValue() != null && !e.getValue().isEmpty()) {
+                return e.getValue().get(0);
+            }
+        }
+        return null;
+    }
+
+    private static String abbreviate(String value, int maxLen) {
+        if (value == null) {
+            return "";
+        }
+        if (value.length() <= maxLen) {
+            return value;
+        }
+        return value.substring(0, Math.max(0, maxLen)) + "...";
+    }
+
     private boolean shouldRetryByStatus(ResolvedRequest resolved, int status, long retryIndex) {
-        if (retryIndex >= resolved.policy.maxRetries) {
+        if (retryIndex >= resolved.policy().maxRetries()) {
             return false;
         }
-        if (!resolved.policy.retryOnStatuses.contains(status)) {
+        if (!resolved.policy().retryOnStatuses().contains(status)) {
             return false;
         }
         return isRetryMethodAllowed(resolved);
     }
 
     private boolean shouldRetryByError(ResolvedRequest resolved, VKHttpException e, long retryIndex) {
-        if (retryIndex >= resolved.policy.maxRetries) {
+        if (retryIndex >= resolved.policy().maxRetries()) {
             return false;
         }
         if (!isRetryMethodAllowed(resolved)) {
@@ -347,50 +556,50 @@ public final class VKHttpRuntime {
 
         VKHttpErrorCode code = e.getCode();
         if (code == VKHttpErrorCode.NETWORK_ERROR) {
-            return resolved.policy.retryOnNetworkError;
+            return resolved.policy().retryOnNetworkError();
         }
         if (code == VKHttpErrorCode.CONNECT_TIMEOUT
                 || code == VKHttpErrorCode.READ_TIMEOUT
                 || code == VKHttpErrorCode.TOTAL_TIMEOUT
                 || code == VKHttpErrorCode.TIMEOUT) {
-            return resolved.policy.retryOnTimeout;
+            return resolved.policy().retryOnTimeout();
         }
         return false;
     }
 
     private boolean isRetryMethodAllowed(ResolvedRequest resolved) {
-        if (!resolved.policy.retryMethods.contains(resolved.method)) {
+        if (!resolved.policy().retryMethods().contains(resolved.method())) {
             return false;
         }
-        if (SAFE_METHODS.contains(resolved.method)) {
+        if (SAFE_METHODS.contains(resolved.method())) {
             return true;
         }
-        if (!resolved.policy.requireIdempotencyKeyForUnsafeRetry) {
+        if (!resolved.policy().requireIdempotencyKeyForUnsafeRetry()) {
             return true;
         }
-        String key = resolved.policy.idempotencyKeyHeader;
+        String key = resolved.policy().idempotencyKeyHeader();
         if (key == null || key.isBlank()) {
             return false;
         }
-        String value = resolved.headers.get(key);
+        String value = resolved.headers().get(key);
         return value != null && !value.isBlank();
     }
 
     private long computeRetryDelayMs(ResolvedRequest resolved, long retryIndex, String retryAfterHeader) {
-        if (resolved.policy.respectRetryAfter && retryAfterHeader != null && !retryAfterHeader.isBlank()) {
+        if (resolved.policy().respectRetryAfter() && retryAfterHeader != null && !retryAfterHeader.isBlank()) {
             Long fromHeader = parseRetryAfterMs(retryAfterHeader);
             if (fromHeader != null && fromHeader > 0) {
-                return Math.min(fromHeader, resolved.policy.maxRetryDelayMs);
+                return Math.min(fromHeader, resolved.policy().maxRetryDelayMs());
             }
         }
 
-        long wait = resolved.policy.retryBackoffBaseMs << Math.min(20, retryIndex);
-        wait = Math.min(wait, resolved.policy.retryBackoffMaxMs);
-        if (resolved.policy.retryJitterEnabled) {
+        long wait = resolved.policy().retryBackoffBaseMs() << Math.min(20, retryIndex);
+        wait = Math.min(wait, resolved.policy().retryBackoffMaxMs());
+        if (resolved.policy().retryJitterEnabled()) {
             long jitter = ThreadLocalRandom.current().nextLong(Math.max(1, wait / 3));
             wait += jitter;
         }
-        return Math.min(wait, resolved.policy.maxRetryDelayMs);
+        return Math.min(wait, resolved.policy().maxRetryDelayMs());
     }
 
     private static Long parseRetryAfterMs(String headerValue) {
@@ -429,18 +638,211 @@ public final class VKHttpRuntime {
                 && code != VKHttpErrorCode.CIRCUIT_OPEN;
     }
 
+    private void consumeSse(VKHttpResponseMeta meta,
+                            ResolvedRequest resolved,
+                            VKHttpSseListener listener,
+                            StreamSessionImpl session) {
+        Throwable failure = null;
+        boolean endedByDone = false;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(session.input(), StandardCharsets.UTF_8))) {
+            safeInvoke(() -> listener.onOpen(meta));
+            CompletableFuture<Void> watchdog = startIdleWatchdog(resolved.policy().streamIdleTimeoutMs(), session);
+            SseAccumulator event = new SseAccumulator();
+            String line;
+            while (!session.isCancelled() && (line = reader.readLine()) != null) {
+                session.touch();
+                if (line.isEmpty()) {
+                    if (!event.isEmpty()) {
+                        VKHttpSseEvent out = event.toEvent();
+                        validateSseEventSize(out, resolved.policy().sseMaxEventBytes());
+                        if ("[DONE]".equals(out.getData())) {
+                            if (resolved.policy().sseEmitDoneEvent()) {
+                                safeInvoke(() -> listener.onEvent(out));
+                            }
+                            endedByDone = true;
+                            break;
+                        }
+                        safeInvoke(() -> listener.onEvent(out));
+                        if (config.isMetricsEnabled()) {
+                            metrics.recordSseEvent();
+                        }
+                        event.reset();
+                    }
+                    continue;
+                }
+                if (line.startsWith(":")) {
+                    continue;
+                }
+                event.appendLine(line);
+            }
+            if (!endedByDone && !event.isEmpty() && !session.isCancelled()) {
+                VKHttpSseEvent out = event.toEvent();
+                validateSseEventSize(out, resolved.policy().sseMaxEventBytes());
+                if (!"[DONE]".equals(out.getData()) || resolved.policy().sseEmitDoneEvent()) {
+                    safeInvoke(() -> listener.onEvent(out));
+                    if (config.isMetricsEnabled()) {
+                        metrics.recordSseEvent();
+                    }
+                }
+            }
+            if (watchdog != null) {
+                watchdog.cancel(true);
+            }
+        } catch (Throwable e) {
+            if (!session.isCancelled()) {
+                failure = e;
+            }
+        }
+
+        if (session.idleTimeoutTriggered()) {
+            failure = new VKHttpException(VKHttpErrorCode.STREAM_IDLE_TIMEOUT, "HTTP stream idle timeout");
+        }
+        if (failure != null) {
+            VKHttpException streamError = asStreamError(failure);
+            safeNotify(() -> listener.onError(streamError));
+            if (config.isMetricsEnabled()) {
+                metrics.recordStreamError();
+            }
+            session.fail(streamError, config.isMetricsEnabled());
+            return;
+        }
+        safeNotify(listener::onComplete);
+        if (config.isMetricsEnabled()) {
+            metrics.recordStreamClose();
+        }
+        session.complete(config.isMetricsEnabled());
+    }
+
+    private void consumeChunks(VKHttpResponseMeta meta, long idleTimeoutMs, VKHttpChunkListener listener, StreamSessionImpl session) {
+        Throwable failure = null;
+        try (InputStream in = session.input()) {
+            safeInvoke(() -> listener.onOpen(meta));
+            CompletableFuture<Void> watchdog = startIdleWatchdog(idleTimeoutMs, session);
+            byte[] buf = new byte[2048];
+            int n;
+            while (!session.isCancelled() && (n = in.read(buf)) >= 0) {
+                session.touch();
+                if (n == 0) {
+                    continue;
+                }
+                byte[] chunk = new byte[n];
+                System.arraycopy(buf, 0, chunk, 0, n);
+                safeInvoke(() -> listener.onChunk(chunk));
+            }
+            if (watchdog != null) {
+                watchdog.cancel(true);
+            }
+        } catch (Throwable e) {
+            if (!session.isCancelled()) {
+                failure = e;
+            }
+        }
+        if (session.idleTimeoutTriggered()) {
+            failure = new VKHttpException(VKHttpErrorCode.STREAM_IDLE_TIMEOUT, "HTTP stream idle timeout");
+        }
+        if (failure != null) {
+            VKHttpException streamError = asStreamError(failure);
+            safeNotify(() -> listener.onError(streamError));
+            if (config.isMetricsEnabled()) {
+                metrics.recordStreamError();
+            }
+            session.fail(streamError, config.isMetricsEnabled());
+            return;
+        }
+        safeNotify(listener::onComplete);
+        if (config.isMetricsEnabled()) {
+            metrics.recordStreamClose();
+        }
+        session.complete(config.isMetricsEnabled());
+    }
+
+    private CompletableFuture<Void> startIdleWatchdog(long idleTimeoutMs, StreamSessionImpl session) {
+        if (idleTimeoutMs <= 0) {
+            return null;
+        }
+        ExecutorService executor = streamExecutor;
+        if (executor == null) {
+            return null;
+        }
+        return CompletableFuture.runAsync(() -> {
+            long intervalMs = Math.min(500, Math.max(50, idleTimeoutMs / 4));
+            while (session.isOpen() && !session.isCancelled()) {
+                long idle = System.currentTimeMillis() - session.lastActiveAt();
+                if (idle > idleTimeoutMs) {
+                    session.markIdleTimeout();
+                    session.cancel();
+                    return;
+                }
+                try {
+                    Thread.sleep(intervalMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }, executor);
+    }
+
+    private static void validateSseEventSize(VKHttpSseEvent event, int maxBytes) {
+        if (event == null || event.getData() == null) {
+            return;
+        }
+        int len = event.getData().getBytes(StandardCharsets.UTF_8).length;
+        if (len > maxBytes) {
+            throw new VKHttpException(VKHttpErrorCode.SSE_PARSE_ERROR,
+                    "SSE event exceeds max size: " + len + " > " + maxBytes);
+        }
+    }
+
+    private static void safeInvoke(Runnable action) {
+        try {
+            action.run();
+        } catch (VKHttpException e) {
+            throw e;
+        } catch (Throwable e) {
+            throw new VKHttpException(VKHttpErrorCode.STREAM_CONSUMER_BACKPRESSURE, "HTTP stream listener failed", e);
+        }
+    }
+
+    private static void safeNotify(Runnable action) {
+        try {
+            action.run();
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private static VKHttpException asStreamError(Throwable throwable) {
+        if (throwable instanceof VKHttpException e) {
+            return e;
+        }
+        if (throwable instanceof IOException) {
+            return new VKHttpException(VKHttpErrorCode.NETWORK_ERROR, "HTTP stream read failed", throwable);
+        }
+        return new VKHttpException(VKHttpErrorCode.STREAM_CLOSED, "HTTP stream failed", throwable);
+    }
+
+    private static void closeQuietly(InputStream in) {
+        if (in == null) {
+            return;
+        }
+        try {
+            in.close();
+        } catch (IOException ignore) {
+        }
+    }
+
     private void logCall(ResolvedRequest resolved, int status, long costMs, long retryCount) {
         if (!config.isLogEnabled()) {
             return;
         }
         try {
             Vostok.Log.info("Vostok.Http {} {} status={} costMs={} retries={} client={}",
-                    resolved.method,
-                    resolved.url,
+                    resolved.method(),
+                    resolved.url(),
                     status,
                     costMs,
                     retryCount,
-                    resolved.clientName == null ? "-" : resolved.clientName);
+                    resolved.clientName() == null ? "-" : resolved.clientName());
         } catch (Throwable ignore) {
         }
     }
@@ -454,11 +856,12 @@ public final class VKHttpRuntime {
                 config = new VKHttpConfig();
                 initialized = true;
                 clearClientRuntimes();
+                refreshStreamExecutor();
             }
         }
     }
 
-    private ResolvedRequest resolveRequest(VKHttpRequest request) {
+    private ResolvedRequest resolveRequest(VKHttpRequest request, boolean streamMode) {
         String clientName = request.getClientName();
         if ((clientName == null || clientName.isBlank()) && clientContext.get() != null) {
             clientName = clientContext.get();
@@ -549,8 +952,14 @@ public final class VKHttpRuntime {
         ClientRuntimeEntry runtime = getOrCreateClientRuntime(runtimeKey, connectTimeoutMs, followRedirects, clientCfg);
 
         HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                .uri(URI.create(targetUrl))
-                .timeout(Duration.ofMillis(Math.max(1, totalTimeoutMs)));
+                .uri(URI.create(targetUrl));
+        long streamTimeoutMs = resolveLong(null, clientCfg == null ? null : clientCfg.getStreamTotalTimeoutMs(), config.getStreamTotalTimeoutMs());
+        long effectiveTimeoutMs = streamMode
+                ? Math.max(0, streamTimeoutMs)
+                : totalTimeoutMs;
+        if (effectiveTimeoutMs > 0) {
+            reqBuilder.timeout(Duration.ofMillis(Math.max(1, effectiveTimeoutMs)));
+        }
 
         byte[] body = request.getBody();
         if (body.length == 0 && ("GET".equals(method) || "HEAD".equals(method))) {
@@ -586,6 +995,12 @@ public final class VKHttpRuntime {
         int bulkheadMaxConcurrent = resolveInt(null, clientCfg == null ? null : clientCfg.getBulkheadMaxConcurrent(), config.getBulkheadMaxConcurrent());
         int bulkheadQueueSize = resolveInt(null, clientCfg == null ? null : clientCfg.getBulkheadQueueSize(), config.getBulkheadQueueSize());
         long bulkheadAcquireTimeoutMs = resolveLong(null, clientCfg == null ? null : clientCfg.getBulkheadAcquireTimeoutMs(), config.getBulkheadAcquireTimeoutMs());
+        boolean streamEnabled = resolveBool(null, clientCfg == null ? null : clientCfg.getStreamEnabled(), config.isStreamEnabled());
+        long streamIdleTimeoutMs = resolveLong(null, clientCfg == null ? null : clientCfg.getStreamIdleTimeoutMs(), config.getStreamIdleTimeoutMs());
+        long streamTotalTimeoutMs = resolveLong(null, clientCfg == null ? null : clientCfg.getStreamTotalTimeoutMs(), config.getStreamTotalTimeoutMs());
+        int sseMaxEventBytes = resolveInt(null, clientCfg == null ? null : clientCfg.getSseMaxEventBytes(), config.getSseMaxEventBytes());
+        boolean sseEmitDoneEvent = resolveBool(null, clientCfg == null ? null : clientCfg.getSseEmitDoneEvent(), config.isSseEmitDoneEvent());
+        int streamQueueCapacity = resolveInt(null, clientCfg == null ? null : clientCfg.getStreamQueueCapacity(), config.getStreamQueueCapacity());
 
         ResolvedPolicy policy = new ResolvedPolicy(
                 maxRetries,
@@ -616,7 +1031,13 @@ public final class VKHttpRuntime {
                 bulkheadEnabled,
                 bulkheadMaxConcurrent,
                 bulkheadQueueSize,
-                bulkheadAcquireTimeoutMs
+                bulkheadAcquireTimeoutMs,
+                streamEnabled,
+                streamIdleTimeoutMs,
+                streamTotalTimeoutMs,
+                sseMaxEventBytes,
+                sseEmitDoneEvent,
+                streamQueueCapacity
         );
 
         runtime.lastUsedAt = System.currentTimeMillis();
@@ -679,10 +1100,10 @@ public final class VKHttpRuntime {
                 return again;
             }
             ResilienceRuntime created = new ResilienceRuntime(
-                    policy.rateLimitEnabled ? new TokenBucketLimiter(policy.rateLimitQps, policy.rateLimitBurst) : null,
-                    policy.bulkheadEnabled ? new Bulkhead(policy.bulkheadMaxConcurrent, policy.bulkheadQueueSize, policy.bulkheadAcquireTimeoutMs) : null,
-                    policy.circuitEnabled ? new CircuitBreaker(policy.circuitWindowSize, policy.circuitMinCalls,
-                            policy.circuitFailureRateThreshold, policy.circuitOpenWaitMs, policy.circuitHalfOpenMaxCalls) : null
+                    policy.rateLimitEnabled() ? new TokenBucketLimiter(policy.rateLimitQps(), policy.rateLimitBurst()) : null,
+                    policy.bulkheadEnabled() ? new Bulkhead(policy.bulkheadMaxConcurrent(), policy.bulkheadQueueSize(), policy.bulkheadAcquireTimeoutMs()) : null,
+                    policy.circuitEnabled() ? new CircuitBreaker(policy.circuitWindowSize(), policy.circuitMinCalls(),
+                            policy.circuitFailureRateThreshold(), policy.circuitOpenWaitMs(), policy.circuitHalfOpenMaxCalls()) : null
             );
             resilienceCache.put(key, created);
             return created;
@@ -786,6 +1207,28 @@ public final class VKHttpRuntime {
     private void clearClientRuntimes() {
         clientRuntimeCache.clear();
         resilienceCache.clear();
+    }
+
+    private void refreshStreamExecutor() {
+        ExecutorService old = streamExecutor;
+        int threads = Math.max(1, config.getStreamExecutorThreads());
+        ThreadFactory factory = runnable -> {
+            Thread t = new Thread(runnable, "vostok-http-stream-" + System.nanoTime());
+            t.setDaemon(true);
+            return t;
+        };
+        streamExecutor = Executors.newFixedThreadPool(threads, factory);
+        if (old != null) {
+            old.shutdownNow();
+        }
+    }
+
+    private void closeStreamExecutor() {
+        ExecutorService old = streamExecutor;
+        streamExecutor = null;
+        if (old != null) {
+            old.shutdownNow();
+        }
     }
 
     private void maybeEvictIdleRuntimes() {
@@ -918,338 +1361,4 @@ public final class VKHttpRuntime {
         return globalValue;
     }
 
-    private record ResolvedRequest(
-            String clientName,
-            String method,
-            String url,
-            Map<String, String> headers,
-            ClientRuntimeEntry runtime,
-            ResilienceRuntime resilience,
-            HttpRequest httpRequest,
-            ResolvedPolicy policy
-    ) {
-    }
-
-    private record ResolvedPolicy(
-            int maxRetries,
-            Set<Integer> retryOnStatuses,
-            Set<String> retryMethods,
-            boolean retryOnNetworkError,
-            boolean retryOnTimeout,
-            boolean respectRetryAfter,
-            long retryBackoffBaseMs,
-            long retryBackoffMaxMs,
-            boolean retryJitterEnabled,
-            long maxRetryDelayMs,
-            boolean failOnNon2xx,
-            long maxResponseBodyBytes,
-            long readTimeoutMs,
-            boolean requireIdempotencyKeyForUnsafeRetry,
-            String idempotencyKeyHeader,
-            boolean rateLimitEnabled,
-            int rateLimitQps,
-            int rateLimitBurst,
-            boolean circuitEnabled,
-            int circuitWindowSize,
-            int circuitMinCalls,
-            int circuitFailureRateThreshold,
-            long circuitOpenWaitMs,
-            int circuitHalfOpenMaxCalls,
-            Set<Integer> circuitRecordStatuses,
-            boolean bulkheadEnabled,
-            int bulkheadMaxConcurrent,
-            int bulkheadQueueSize,
-            long bulkheadAcquireTimeoutMs
-    ) {
-        String resilienceKey() {
-            return rateLimitEnabled + ":" + rateLimitQps + ":" + rateLimitBurst + "|"
-                    + circuitEnabled + ":" + circuitWindowSize + ":" + circuitMinCalls + ":"
-                    + circuitFailureRateThreshold + ":" + circuitOpenWaitMs + ":" + circuitHalfOpenMaxCalls + ":"
-                    + circuitRecordStatuses.hashCode() + "|"
-                    + bulkheadEnabled + ":" + bulkheadMaxConcurrent + ":" + bulkheadQueueSize + ":" + bulkheadAcquireTimeoutMs;
-        }
-    }
-
-    private static final class ClientRuntimeEntry {
-        private final HttpClient client;
-        private volatile long lastUsedAt;
-
-        private ClientRuntimeEntry(HttpClient client, long lastUsedAt) {
-            this.client = client;
-            this.lastUsedAt = lastUsedAt;
-        }
-    }
-
-    private static final class ResilienceRuntime {
-        private final TokenBucketLimiter rateLimiter;
-        private final Bulkhead bulkhead;
-        private final CircuitBreaker circuitBreaker;
-
-        private ResilienceRuntime(TokenBucketLimiter rateLimiter, Bulkhead bulkhead, CircuitBreaker circuitBreaker) {
-            this.rateLimiter = rateLimiter;
-            this.bulkhead = bulkhead;
-            this.circuitBreaker = circuitBreaker;
-        }
-    }
-
-    private static final class TokenBucketLimiter {
-        private final int qps;
-        private final int burst;
-        private double tokens;
-        private long lastRefillNanos;
-
-        private TokenBucketLimiter(int qps, int burst) {
-            this.qps = Math.max(1, qps);
-            this.burst = Math.max(1, burst);
-            this.tokens = this.burst;
-            this.lastRefillNanos = System.nanoTime();
-        }
-
-        synchronized boolean tryAcquire() {
-            long now = System.nanoTime();
-            double elapsedSec = Math.max(0, now - lastRefillNanos) / 1_000_000_000.0;
-            if (elapsedSec > 0) {
-                tokens = Math.min(burst, tokens + elapsedSec * qps);
-                lastRefillNanos = now;
-            }
-            if (tokens >= 1.0d) {
-                tokens -= 1.0d;
-                return true;
-            }
-            return false;
-        }
-    }
-
-    private static final class Bulkhead {
-        private final Semaphore permits;
-        private final Semaphore queuePermits;
-        private final long acquireTimeoutMs;
-
-        private Bulkhead(int maxConcurrent, int queueSize, long acquireTimeoutMs) {
-            this.permits = new Semaphore(Math.max(1, maxConcurrent));
-            this.queuePermits = queueSize > 0 ? new Semaphore(queueSize) : null;
-            this.acquireTimeoutMs = Math.max(0, acquireTimeoutMs);
-        }
-
-        void acquire() {
-            try {
-                if (queuePermits == null) {
-                    if (!permits.tryAcquire()) {
-                        throw new VKHttpException(VKHttpErrorCode.BULKHEAD_REJECTED, "Http bulkhead full");
-                    }
-                    return;
-                }
-                if (!queuePermits.tryAcquire()) {
-                    throw new VKHttpException(VKHttpErrorCode.BULKHEAD_REJECTED, "Http bulkhead queue full");
-                }
-                try {
-                    boolean ok = acquireTimeoutMs <= 0
-                            ? permits.tryAcquire()
-                            : permits.tryAcquire(acquireTimeoutMs, TimeUnit.MILLISECONDS);
-                    if (!ok) {
-                        throw new VKHttpException(VKHttpErrorCode.BULKHEAD_REJECTED, "Http bulkhead acquire timeout");
-                    }
-                } finally {
-                    queuePermits.release();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                throw new VKHttpException(VKHttpErrorCode.BULKHEAD_REJECTED, "Http bulkhead interrupted", e);
-            }
-        }
-
-        void release() {
-            permits.release();
-        }
-    }
-
-    private static final class CircuitBreaker {
-        private final int windowSize;
-        private final int minCalls;
-        private final int failureRateThreshold;
-        private final long openWaitMs;
-        private final int halfOpenMaxCalls;
-        private final Object lock = new Object();
-        private final ArrayDeque<Boolean> outcomes;
-
-        private final AtomicReference<CircuitState> state = new AtomicReference<>(CircuitState.CLOSED);
-        private volatile long openUntilMs;
-        private volatile int halfOpenAttempted;
-        private volatile int halfOpenFailures;
-
-        private CircuitBreaker(int windowSize, int minCalls, int failureRateThreshold, long openWaitMs, int halfOpenMaxCalls) {
-            this.windowSize = Math.max(1, windowSize);
-            this.minCalls = Math.max(1, minCalls);
-            this.failureRateThreshold = Math.min(100, Math.max(1, failureRateThreshold));
-            this.openWaitMs = Math.max(100, openWaitMs);
-            this.halfOpenMaxCalls = Math.max(1, halfOpenMaxCalls);
-            this.outcomes = new ArrayDeque<>(this.windowSize);
-        }
-
-        void beforeCall() {
-            CircuitState s = state.get();
-            long now = System.currentTimeMillis();
-            if (s == CircuitState.OPEN) {
-                if (now < openUntilMs) {
-                    throw new VKHttpException(VKHttpErrorCode.CIRCUIT_OPEN, "Http circuit is open");
-                }
-                synchronized (lock) {
-                    if (state.get() == CircuitState.OPEN && now >= openUntilMs) {
-                        state.set(CircuitState.HALF_OPEN);
-                        halfOpenAttempted = 0;
-                        halfOpenFailures = 0;
-                    }
-                }
-                s = state.get();
-            }
-            if (s == CircuitState.HALF_OPEN) {
-                synchronized (lock) {
-                    if (halfOpenAttempted >= halfOpenMaxCalls) {
-                        throw new VKHttpException(VKHttpErrorCode.CIRCUIT_OPEN, "Http circuit half-open quota exhausted");
-                    }
-                    halfOpenAttempted++;
-                }
-            }
-        }
-
-        void onSuccess() {
-            CircuitState s = state.get();
-            if (s == CircuitState.CLOSED) {
-                record(false);
-                return;
-            }
-            if (s == CircuitState.HALF_OPEN) {
-                synchronized (lock) {
-                    if (state.get() != CircuitState.HALF_OPEN) {
-                        return;
-                    }
-                    if (halfOpenFailures == 0 && halfOpenAttempted >= halfOpenMaxCalls) {
-                        state.set(CircuitState.CLOSED);
-                        outcomes.clear();
-                    }
-                }
-            }
-        }
-
-        void onFailure() {
-            CircuitState s = state.get();
-            if (s == CircuitState.CLOSED) {
-                record(true);
-                return;
-            }
-            if (s == CircuitState.HALF_OPEN) {
-                synchronized (lock) {
-                    if (state.get() != CircuitState.HALF_OPEN) {
-                        return;
-                    }
-                    halfOpenFailures++;
-                    open();
-                }
-            }
-        }
-
-        private void record(boolean failure) {
-            synchronized (lock) {
-                outcomes.addLast(failure);
-                while (outcomes.size() > windowSize) {
-                    outcomes.removeFirst();
-                }
-                if (outcomes.size() < minCalls) {
-                    return;
-                }
-                int fails = 0;
-                for (Boolean it : outcomes) {
-                    if (Boolean.TRUE.equals(it)) {
-                        fails++;
-                    }
-                }
-                int rate = (int) ((fails * 100L) / outcomes.size());
-                if (rate >= failureRateThreshold) {
-                    open();
-                }
-            }
-        }
-
-        private void open() {
-            state.set(CircuitState.OPEN);
-            openUntilMs = System.currentTimeMillis() + openWaitMs;
-        }
-    }
-
-    private enum CircuitState {
-        CLOSED,
-        OPEN,
-        HALF_OPEN
-    }
-
-    private static final class HttpMetrics {
-        private final AtomicLong totalCalls = new AtomicLong();
-        private final AtomicLong successCalls = new AtomicLong();
-        private final AtomicLong failedCalls = new AtomicLong();
-        private final AtomicLong retriedCalls = new AtomicLong();
-        private final AtomicLong timeoutCalls = new AtomicLong();
-        private final AtomicLong networkErrorCalls = new AtomicLong();
-        private final AtomicLong totalCostMs = new AtomicLong();
-        private final ConcurrentHashMap<Integer, AtomicLong> statusCounts = new ConcurrentHashMap<>();
-
-        void recordRetry() {
-            retriedCalls.incrementAndGet();
-        }
-
-        void recordResponse(int status, long costMs) {
-            totalCalls.incrementAndGet();
-            totalCostMs.addAndGet(Math.max(0, costMs));
-            if (status >= 200 && status < 300) {
-                successCalls.incrementAndGet();
-            } else {
-                failedCalls.incrementAndGet();
-            }
-            statusCounts.computeIfAbsent(status, k -> new AtomicLong()).incrementAndGet();
-        }
-
-        void recordFailure(VKHttpErrorCode code, long costMs) {
-            totalCalls.incrementAndGet();
-            failedCalls.incrementAndGet();
-            totalCostMs.addAndGet(Math.max(0, costMs));
-            if (code == VKHttpErrorCode.CONNECT_TIMEOUT
-                    || code == VKHttpErrorCode.READ_TIMEOUT
-                    || code == VKHttpErrorCode.TOTAL_TIMEOUT
-                    || code == VKHttpErrorCode.TIMEOUT) {
-                timeoutCalls.incrementAndGet();
-            }
-            if (code == VKHttpErrorCode.NETWORK_ERROR) {
-                networkErrorCalls.incrementAndGet();
-            }
-        }
-
-        VKHttpMetrics snapshot() {
-            Map<Integer, Long> statuses = new LinkedHashMap<>();
-            List<Integer> keys = new ArrayList<>(statusCounts.keySet());
-            keys.sort(Integer::compareTo);
-            for (Integer status : keys) {
-                statuses.put(status, statusCounts.get(status).get());
-            }
-            return new VKHttpMetrics(
-                    totalCalls.get(),
-                    successCalls.get(),
-                    failedCalls.get(),
-                    retriedCalls.get(),
-                    timeoutCalls.get(),
-                    networkErrorCalls.get(),
-                    totalCostMs.get(),
-                    statuses
-            );
-        }
-
-        void reset() {
-            totalCalls.set(0);
-            successCalls.set(0);
-            failedCalls.set(0);
-            retriedCalls.set(0);
-            timeoutCalls.set(0);
-            networkErrorCalls.set(0);
-            totalCostMs.set(0);
-            statusCounts.clear();
-        }
-    }
 }

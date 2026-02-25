@@ -9,6 +9,10 @@ public record VKHttpMetrics(
         long retriedCalls,
         long timeoutCalls,
         long networkErrorCalls,
+        long streamOpens,
+        long streamCloses,
+        long streamErrors,
+        long sseEvents,
         long totalCostMs,
         Map<Integer, Long> statusCounts
 ) {

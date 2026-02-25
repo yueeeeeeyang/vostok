@@ -350,6 +350,30 @@ public final class VKHttpRequestBuilder {
         return VostokHttp.executeJsonAsync(build(), type);
     }
 
+    public VKHttpStreamSession openSse(VKHttpSseListener listener) {
+        return VostokHttp.openSse(build(), listener);
+    }
+
+    public void executeSse(VKHttpSseListener listener) {
+        VostokHttp.executeSse(build(), listener);
+    }
+
+    public CompletableFuture<Void> executeSseAsync(VKHttpSseListener listener) {
+        return VostokHttp.executeSseAsync(build(), listener);
+    }
+
+    public VKHttpStreamSession openStream(VKHttpChunkListener listener) {
+        return VostokHttp.openStream(build(), listener);
+    }
+
+    public void executeStream(VKHttpChunkListener listener) {
+        VostokHttp.executeStream(build(), listener);
+    }
+
+    public CompletableFuture<Void> executeStreamAsync(VKHttpChunkListener listener) {
+        return VostokHttp.executeStreamAsync(build(), listener);
+    }
+
     private static String buildForm(Map<String, String> formValues) {
         StringBuilder sb = new StringBuilder();
         boolean first = true;
