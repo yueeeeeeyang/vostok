@@ -2,7 +2,7 @@
 
 ---
 
-Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合十一个模块能力：
+Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合十二个模块能力：
 
 - `Vostok.Data`：基于 JDBC 的数据访问（CRUD、事务、查询、多数据源、连接池）
 - `Vostok.Web`：基于 NIO Reactor 的 Web 服务器（路由、中间件、静态资源、自动 CRUD API）
@@ -15,6 +15,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Http`：统一 HTTP Client（命名 Client、鉴权、重试、超时、JSON/表单/文件上传）
 - `Vostok.Util`：通用工具门面（JSON 能力、Provider 注册与切换）
 - `Vostok.AI`：统一 AI Client（命名 Client、Chat/ChatJson、重试、指标、异常模型）
+- `Vostok.Terminal`：终端应用模块（终端工具类 + 组件化 TUI）
 
 项目构建方式为 Maven：`/Users/yueyang/Develop/code/codex/Vostok/pom.xml`。
 
@@ -33,6 +34,7 @@ import yueyang.vostok.log.VKLogConfig;
 import yueyang.vostok.security.VKSecurityConfig;
 import yueyang.vostok.config.VKConfigOptions;
 import yueyang.vostok.file.VKFileConfig;
+import yueyang.vostok.terminal.VKTerminalConfig;
 import yueyang.vostok.web.VKWebConfig;
 
 Vostok.init(cfg -> cfg
@@ -68,6 +70,13 @@ Vostok.init(cfg -> cfg
                 .baseDir("./data/files")
         )
 
+        // Terminal（可选）
+        .terminalConfig(new VKTerminalConfig()
+                .appName("Demo Console")
+                .fps(20)
+                .ansiEnabled(true)
+        )
+
         // Web（可选）
         .webConfig(new VKWebConfig().port(8080))
         .webSetup(web -> web
@@ -97,6 +106,7 @@ Vostok.init(cfg -> cfg
 - `Vostok.Cache` 不依赖 `Vostok.Config`，必须通过 `VKCacheConfig` 或显式 Loader 初始化。
 - `Vostok.Http` 建议显式 `init(...)` 后再使用；如调用相对路径，必须先注册带 `baseUrl` 的命名 Client。
 - `Vostok.AI` 建议显式 `init(...)` 并注册命名 Client；若未指定 client 且注册了多个 Client，会抛出配置异常。
+- `Vostok.Terminal` 在非 TTY 环境会自动降级为普通文本输出；交互式模式需保证标准输入可读。
 - JSON 能力通过 `Vostok.Util` 暴露，默认使用内置 `builtin` 实现；如需 Jackson/Gson/Fastjson 等能力，请业务侧自行实现 `VKJsonProvider` 并注册切换。
 - `Vostok.Http` 默认会对非 `2xx` 响应抛出异常（可通过 `failOnNon2xx(false)` 关闭）。
 - `Vostok.Security` 的检测结果是风险判断，不替代参数化查询、鉴权、最小权限、WAF/主机安全等基础安全控制。
@@ -5133,6 +5143,10 @@ long crc = Vostok.Util.crc32("hello".getBytes(StandardCharsets.UTF_8));
   - `yueyang.vostok.ai.rag`：Embedding/Rerank/Vector/RAG 模型与实现
   - `yueyang.vostok.ai.exception`：异常模型
 - 建议使用 OpenAI 兼容协议 Provider（默认 `chatPath=/v1/chat/completions`）。
+- AI 传输层已统一迁移到 `Vostok.Http`：
+  - 非流式（chat/embed/rerank）走 `Vostok.Http.execute(...)`
+  - 流式 chat 走 `Vostok.Http.openSse(...)`
+  - 统一复用 `Vostok.Http` 的连接池、超时/限流/熔断与流式 watchdog 能力
 - 当存在多个命名 Profile 时，必须通过 `request.profile(name)` 或 `withProfile(name, ...)` 指定上下文。
 - `chatJson(...)` 会将模型文本结果按 JSON 反序列化为目标类型；如格式不合法会抛 `JSON_PARSE_ERROR`。
 - 当启用安全策略且 `blockOnSecurityRisk=true` 时，Prompt/Tool 参数命中风险会直接阻断（`SECURITY_BLOCKED`）。
@@ -5450,6 +5464,7 @@ System.out.println(m.totalCalls());
 - 流式说明：
   1) `stream=true` 时 `VKAiChatResponse` 不聚合 `text`，请通过 `response.stream()` 读取 `delta`。
   2) `chatJson(...)` 不支持 `stream=true`。
+  3) 流式内部通过 `Vostok.Http.openSse(...)` 事件驱动消费，增量到达即写入 `delta`，不聚合整段响应字符串。
 - 工具白名单：通过 `VKAiChatRequest.allowTool(...)` 声明本次请求允许调用的工具；不在白名单会抛 `TOOL_DENIED`。
 - 安全策略：当前对 Prompt 与 Tool 参数执行 XSS/命令注入/路径穿越检测；命中后按 `blockOnSecurityRisk` 决定是否阻断。
 - 审计日志：`CHAT_REQUEST / CHAT_RESPONSE / TOOL_CALL / TOOL_DENIED / CHAT_SECURITY_BLOCK ...` 可通过 `audits(limit)` 读取。
@@ -5524,3 +5539,143 @@ CREATE TABLE vk_ai_session_message (
   created_at BIGINT
 );
 ```
+
+# 13. Terminal 模块
+
+## 13.1 接口定义
+
+```java
+public interface Vostok.Terminal {
+    // 初始化
+    public static void init();
+    public static void init(VKTerminalConfig config);
+    public static void reinit(VKTerminalConfig config);
+    public static boolean started();
+    public static VKTerminalConfig config();
+    public static VKTerminalTheme theme();
+    public static void useTheme(VKTerminalTheme theme);
+    public static void close();
+
+    // 应用
+    public static VKTerminalApp app();
+
+    // 工具
+    public static VKTablePrinter table();
+    public static VKProgressBar progressBar();
+    public static VKSpinner spinner();
+    public static VKConsole console();
+}
+```
+
+## 13.2 使用 Demo
+
+### 13.2.1 终端应用（组件化）
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.terminal.VKTerminalConfig;
+import yueyang.vostok.terminal.VKTerminalTheme;
+import yueyang.vostok.terminal.component.*;
+import yueyang.vostok.terminal.layout.*;
+
+Vostok.Terminal.init(new VKTerminalConfig()
+        .appName("Ops Console")
+        .fps(20)
+        .alternateScreen(true)
+        .ansiEnabled(true)
+        .theme(VKTerminalTheme.ocean())
+);
+
+VKVBox root = new VKVBox().spacing(1)
+        .child(new VKTextView("Dashboard").title())
+        .child(new VKDivider())
+        .child(new VKGrid().columns(2).hSpacing(2)
+                .child(new VKPanel("Tasks").child(
+                        new VKListView().items(java.util.List.of("Sync", "Export", "Cleanup")).selectedIndex(0)
+                ))
+                .child(new VKPanel("Stats").child(
+                        new VKTableView().columns("Key", "Value")
+                                .addRow("QPS", "120")
+                                .addRow("Err", "0.1%")
+                ))
+        );
+
+Vostok.Terminal.app()
+        .root(root)
+        .statusBar(new VKStatusBar("READY"))
+        .toast(new VKToast("Saved").level(VKToast.Level.SUCCESS))
+        .run();
+```
+
+### 13.2.2 表格、进度条、Spinner、Prompt
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.terminal.tool.VKPrompt;
+
+String table = Vostok.Terminal.table()
+        .columns("ID", "Name", "Status")
+        .row(1, "Sync", "Running")
+        .row(2, "Export", "Done")
+        .render();
+System.out.println(table);
+
+String p50 = Vostok.Terminal.progressBar().width(20).render(0.5, "half");
+System.out.println(p50);
+
+String spin = Vostok.Terminal.spinner().render(System.currentTimeMillis() / 100, "Loading");
+System.out.println(spin);
+
+boolean ok = VKPrompt.confirm("Continue", true, System.in, System.out);
+System.out.println(ok);
+```
+
+### 13.2.3 彩色终端日志
+
+```java
+import yueyang.vostok.Vostok;
+
+Vostok.Terminal.init(new VKTerminalConfig().ansiEnabled(true));
+Vostok.Terminal.console().info("service started");
+Vostok.Terminal.console().warn("cpu high");
+Vostok.Terminal.console().error("task failed");
+```
+
+## 13.3 配置详解（VKTerminalConfig）
+
+- `appName`：应用名称。
+- `fps`：渲染帧率（最小 1）。
+- `alternateScreen`：是否启用备用屏幕。
+- `hideCursor`：运行时是否隐藏光标。
+- `ansiEnabled`：是否允许 ANSI 样式输出。
+- `unicodeEnabled`：是否启用 Unicode 边框/字符。
+- `interactive`：是否读取输入事件（默认单帧渲染）。
+- `forceTty`：测试/容器环境可强制按 TTY 行为运行。
+- `width/height`：终端大小回退值（当无法探测时使用）。
+- `input/output`：输入输出流。
+- `theme`：主题对象（`VKTerminalTheme`）。
+
+## 13.4 内置工具类
+
+- `VKAnsi`：ANSI 颜色样式、清屏、光标与备用屏幕控制。
+- `VKTerminal`：终端能力检测（TTY、ANSI、尺寸）。
+- `VKTextWidth`：字符宽度、截断、左右对齐、居中。
+- `VKTablePrinter`：表格渲染（ASCII/圆角/无边框）。
+- `VKProgressBar`：进度条渲染（确定/不确定）。
+- `VKSpinner`：Spinner 动画帧。
+- `VKPrompt`：输入、确认、单选、多选。
+- `VKConsole`：彩色级别日志输出。
+
+## 13.5 内置组件
+
+- 基础：`VKTextView`、`VKDivider`、`VKPanel`。
+- 列表与表格：`VKListView`、`VKTableView`。
+- 输入与表单：`VKInput`、`VKForm`。
+- 反馈：`VKStatusBar`、`VKToast`、`VKModal`。
+- 布局：`VKVBox`、`VKHBox`、`VKGrid`。
+
+## 13.6 说明与边界
+
+- `Terminal` 默认适合构建轻量 TUI；复杂交互可在其基础上扩展。
+- 非 TTY 或不支持 ANSI 的场景会自动降级为纯文本输出。
+- `interactive(true)` 时会读取标准输入事件；生产运行请确保输入流可用。
