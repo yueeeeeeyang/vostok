@@ -5170,7 +5170,6 @@ Vostok.AI.init(new VKAiConfig()
         .readTimeoutMs(30000)
         .maxRetries(1)
         .retryBackoffMs(150)
-        .defaultModel("gpt-4o-mini")
         .ragCacheEnabled(true)
         .embeddingCacheTtlMs(6 * 60 * 60 * 1000L)
         .rerankCacheTtlMs(30 * 60 * 1000L)
@@ -5229,7 +5228,7 @@ Summary summary = Vostok.AI.chatJson(new VKAiChatRequest()
         .system("Return JSON only")
         .message("user", "{" + "\\\"title\\\":\\\"Demo\\\",\\\"score\\\":95}"), Summary.class);
 
-// 5) 多 client 上下文
+// 5) 多 profile 上下文
 String text = Vostok.AI.withProfile("openai-default", () ->
         Vostok.AI.chat(new VKAiChatRequest().message("user", "ping")).getText());
 
@@ -5343,9 +5342,6 @@ System.out.println(m.totalCalls());
 - `retryOnNetworkError` / `retryOnTimeout`：网络错误与超时重试开关。
 - `failOnNon2xx`：非 2xx 是否抛异常。
 - `metricsEnabled`：是否统计指标。
-- `defaultModel`：默认模型名。
-- `defaultEmbeddingModel`：全局默认 Embedding 模型（用于 `embed/rag`）。
-- `defaultRerankModel`：全局默认 Rerank 模型（用于 `rerank/rag`）。
 - `toolCallingEnabled`：是否启用工具调用。
 - `securityCheckEnabled`：是否启用输入安全扫描。
 - `blockOnSecurityRisk`：命中风险是否阻断。
@@ -5426,7 +5422,6 @@ System.out.println(m.totalCalls());
 - 模型配置分层（从高到低）：
   1) 请求级：`VKAiRagRequest.model/embeddingModel/rerankModel`（模型ID，可直接覆盖）
   2) Profile 级：`VKAiProfileConfig.chatModel/embeddingModel/rerankModel`
-  3) 全局级：`VKAiConfig.defaultEmbeddingModel/defaultRerankModel`
 - Provider 路由分层（RAG 内部）：
   1) `VKAiRagRequest.chatProfile/embeddingProfile/rerankProfile`（分别指定三段链路 Profile）
   2) 未指定时回退 `VKAiRagRequest.profile`

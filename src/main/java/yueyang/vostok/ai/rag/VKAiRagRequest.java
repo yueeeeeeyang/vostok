@@ -32,14 +32,6 @@ public class VKAiRagRequest {
         return this;
     }
 
-    public String getClientName() {
-        return profileName;
-    }
-
-    public VKAiRagRequest client(String clientName) {
-        return profile(clientName);
-    }
-
     public String getChatProfileName() {
         return chatProfileName;
     }
@@ -65,30 +57,6 @@ public class VKAiRagRequest {
     public VKAiRagRequest rerankProfile(String rerankProfileName) {
         this.rerankProfileName = rerankProfileName;
         return this;
-    }
-
-    public String getChatClientName() {
-        return chatProfileName;
-    }
-
-    public VKAiRagRequest chatClient(String chatClientName) {
-        return chatProfile(chatClientName);
-    }
-
-    public String getEmbeddingClientName() {
-        return embeddingProfileName;
-    }
-
-    public VKAiRagRequest embeddingClient(String embeddingClientName) {
-        return embeddingProfile(embeddingClientName);
-    }
-
-    public String getRerankClientName() {
-        return rerankProfileName;
-    }
-
-    public VKAiRagRequest rerankClient(String rerankClientName) {
-        return rerankProfile(rerankClientName);
     }
 
     public String getModel() {

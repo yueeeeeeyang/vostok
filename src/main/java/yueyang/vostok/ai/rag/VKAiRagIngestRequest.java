@@ -23,14 +23,6 @@ public class VKAiRagIngestRequest {
         return this;
     }
 
-    public String getClientName() {
-        return profileName;
-    }
-
-    public VKAiRagIngestRequest client(String clientName) {
-        return profile(clientName);
-    }
-
     public String getModel() {
         return model;
     }

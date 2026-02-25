@@ -17,14 +17,6 @@ public class VKAiEmbeddingRequest {
         return this;
     }
 
-    public String getClientName() {
-        return profileName;
-    }
-
-    public VKAiEmbeddingRequest client(String clientName) {
-        return profile(clientName);
-    }
-
     public String getModel() {
         return model;
     }

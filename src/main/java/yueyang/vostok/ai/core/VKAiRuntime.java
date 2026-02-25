@@ -10,7 +10,6 @@ import yueyang.vostok.ai.provider.VKAiModelConfig;
 import yueyang.vostok.ai.provider.VKAiModelType;
 import yueyang.vostok.ai.provider.VKAiProfileConfig;
 import yueyang.vostok.ai.provider.VKAiProviderConfig;
-import yueyang.vostok.ai.provider.VKAiClientConfig;
 import yueyang.vostok.ai.rag.VKAiEmbedding;
 import yueyang.vostok.ai.rag.VKAiEmbeddingRequest;
 import yueyang.vostok.ai.rag.VKAiInMemoryVectorStore;
@@ -221,64 +220,6 @@ public final class VKAiRuntime {
         profiles.put(name.trim(), cfg.copy());
     }
 
-    public void registerClient(String name, VKAiClientConfig cfg) {
-        ensureInit();
-        if (cfg == null) {
-            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "VKAiClientConfig is null");
-        }
-        registerProvider(name, new VKAiProviderConfig()
-                .provider(cfg.getProvider())
-                .baseUrl(cfg.getBaseUrl())
-                .apiKey(cfg.getApiKey())
-                .chatPath(cfg.getChatPath())
-                .embeddingPath(cfg.getEmbeddingPath())
-                .rerankPath(cfg.getRerankPath())
-                .connectTimeoutMs(cfg.getConnectTimeoutMs())
-                .readTimeoutMs(cfg.getReadTimeoutMs())
-                .maxRetries(cfg.getMaxRetries())
-                .failOnNon2xx(cfg.getFailOnNon2xx())
-                .defaultHeaders(cfg.getDefaultHeaders()));
-
-        String chatModelValue = firstNonBlank(cfg.getModel(), config.getDefaultModel());
-        if (chatModelValue == null) {
-            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Client chat model is not configured");
-        }
-        String embeddingModelValue = firstNonBlank(
-                cfg.getEmbeddingModel(),
-                config.getDefaultEmbeddingModel(),
-                cfg.getModel(),
-                config.getDefaultModel());
-        String rerankModelValue = firstNonBlank(
-                cfg.getRerankModel(),
-                config.getDefaultRerankModel(),
-                cfg.getModel(),
-                config.getDefaultModel());
-
-        String chatModelId = name.trim() + "#chat";
-        String embeddingModelId = name.trim() + "#embedding";
-        String rerankModelId = name.trim() + "#rerank";
-        registerModel(chatModelId, new VKAiModelConfig()
-                .type(VKAiModelType.CHAT)
-                .provider(name.trim())
-                .model(chatModelValue));
-        if (embeddingModelValue != null && !embeddingModelValue.isBlank()) {
-            registerModel(embeddingModelId, new VKAiModelConfig()
-                    .type(VKAiModelType.EMBEDDING)
-                    .provider(name.trim())
-                    .model(embeddingModelValue));
-        }
-        if (rerankModelValue != null && !rerankModelValue.isBlank()) {
-            registerModel(rerankModelId, new VKAiModelConfig()
-                    .type(VKAiModelType.RERANK)
-                    .provider(name.trim())
-                    .model(rerankModelValue));
-        }
-        registerProfile(name, new VKAiProfileConfig()
-                .chatModel(chatModelId)
-                .embeddingModel(embeddingModelValue == null ? null : embeddingModelId)
-                .rerankModel(rerankModelValue == null ? null : rerankModelId));
-    }
-
     public void withProfile(String name, Runnable action) {
         if (action == null) {
             throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Runnable is null");
@@ -315,14 +256,6 @@ public final class VKAiRuntime {
         }
     }
 
-    public void withClient(String name, Runnable action) {
-        withProfile(name, action);
-    }
-
-    public <T> T withClient(String name, Supplier<T> supplier) {
-        return withProfile(name, supplier);
-    }
-
     public Set<String> profileNames() {
         return Set.copyOf(profiles.keySet());
     }
@@ -331,13 +264,6 @@ public final class VKAiRuntime {
         return profileContext.get();
     }
 
-    public Set<String> clientNames() {
-        return profileNames();
-    }
-
-    public String currentClientName() {
-        return currentProfileName();
-    }
 
     public void setMemoryStore(VKAiMemoryStore store) {
         ensureInit();
@@ -1083,9 +1009,9 @@ public final class VKAiRuntime {
             throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "RAG query is blank");
         }
         String profileName = resolveProfileName(request.getProfileName());
-        String chatProfileName = resolveRagProfileName(request.getChatProfileName(), request.getChatClientName(), profileName);
-        String embeddingProfileName = resolveRagProfileName(request.getEmbeddingProfileName(), request.getEmbeddingClientName(), profileName);
-        String rerankProfileName = resolveRagProfileName(request.getRerankProfileName(), request.getRerankClientName(), profileName);
+        String chatProfileName = resolveProfileName(firstNonBlank(request.getChatProfileName(), profileName));
+        String embeddingProfileName = resolveProfileName(firstNonBlank(request.getEmbeddingProfileName(), profileName));
+        String rerankProfileName = resolveProfileName(firstNonBlank(request.getRerankProfileName(), profileName));
 
         String retrievalQuery = request.isQueryRewriteEnabled()
                 ? rewriteRagQueryLight(request.getQuery())
@@ -1467,10 +1393,6 @@ public final class VKAiRuntime {
         return normalized;
     }
 
-    private String resolveRagProfileName(String preferred, String legacyPreferred, String fallback) {
-        String raw = firstNonBlank(preferred, legacyPreferred, fallback);
-        return resolveProfileName(raw);
-    }
 
     private void ensureModelType(String modelName, VKAiModelType expected, String from) {
         VKAiModelConfig model = models.get(modelName == null ? null : modelName.trim());
@@ -1495,8 +1417,8 @@ public final class VKAiRuntime {
         }
         String defaultModelName = switch (expected) {
             case CHAT -> profile.getChatModel();
-            case EMBEDDING -> firstNonBlank(profile.getEmbeddingModel(), config.getDefaultEmbeddingModel());
-            case RERANK -> firstNonBlank(profile.getRerankModel(), config.getDefaultRerankModel());
+            case EMBEDDING -> profile.getEmbeddingModel();
+            case RERANK -> profile.getRerankModel();
         };
         if (defaultModelName == null || defaultModelName.isBlank()) {
             throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Model is not configured for stage: " + stage);

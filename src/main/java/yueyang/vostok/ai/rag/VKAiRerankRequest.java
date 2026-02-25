@@ -19,14 +19,6 @@ public class VKAiRerankRequest {
         return this;
     }
 
-    public String getClientName() {
-        return profileName;
-    }
-
-    public VKAiRerankRequest client(String clientName) {
-        return profile(clientName);
-    }
-
     public String getModel() {
         return model;
     }

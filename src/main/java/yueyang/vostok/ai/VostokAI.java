@@ -1,7 +1,6 @@
 package yueyang.vostok.ai;
 
 import yueyang.vostok.ai.core.VKAiRuntime;
-import yueyang.vostok.ai.provider.VKAiClientConfig;
 import yueyang.vostok.ai.provider.VKAiModelConfig;
 import yueyang.vostok.ai.provider.VKAiProfileConfig;
 import yueyang.vostok.ai.provider.VKAiProviderConfig;
@@ -58,10 +57,6 @@ public class VostokAI {
         RUNTIME.registerProvider(name, config);
     }
 
-    public static void registerClient(String name, VKAiClientConfig config) {
-        RUNTIME.registerClient(name, config);
-    }
-
     public static void registerModel(String name, VKAiModelConfig config) {
         RUNTIME.registerModel(name, config);
     }
@@ -74,32 +69,16 @@ public class VostokAI {
         RUNTIME.withProfile(name, action);
     }
 
-    public static void withClient(String name, Runnable action) {
-        RUNTIME.withClient(name, action);
-    }
-
     public static <T> T withProfile(String name, Supplier<T> supplier) {
         return RUNTIME.withProfile(name, supplier);
-    }
-
-    public static <T> T withClient(String name, Supplier<T> supplier) {
-        return RUNTIME.withClient(name, supplier);
     }
 
     public static Set<String> profileNames() {
         return RUNTIME.profileNames();
     }
 
-    public static Set<String> clientNames() {
-        return RUNTIME.clientNames();
-    }
-
     public static String currentProfileName() {
         return RUNTIME.currentProfileName();
-    }
-
-    public static String currentClientName() {
-        return RUNTIME.currentClientName();
     }
 
     public static void setMemoryStore(VKAiMemoryStore store) {

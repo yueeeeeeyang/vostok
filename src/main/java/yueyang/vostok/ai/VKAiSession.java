@@ -29,14 +29,6 @@ public class VKAiSession {
         return this;
     }
 
-    public String getClientName() {
-        return profileName;
-    }
-
-    public VKAiSession clientName(String clientName) {
-        return profileName(clientName);
-    }
-
     public String getCurrentModel() {
         return currentModel;
     }

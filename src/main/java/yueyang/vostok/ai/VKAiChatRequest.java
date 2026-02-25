@@ -27,14 +27,6 @@ public class VKAiChatRequest {
         return this;
     }
 
-    public String getClientName() {
-        return profileName;
-    }
-
-    public VKAiChatRequest client(String clientName) {
-        return profile(clientName);
-    }
-
     public String getSystemPrompt() {
         return systemPrompt;
     }

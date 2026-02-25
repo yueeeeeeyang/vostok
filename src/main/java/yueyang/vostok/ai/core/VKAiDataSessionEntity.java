@@ -41,14 +41,6 @@ public class VKAiDataSessionEntity {
         this.profileName = profileName;
     }
 
-    public String getClientName() {
-        return profileName;
-    }
-
-    public void setClientName(String clientName) {
-        this.profileName = clientName;
-    }
-
     public String getCurrentModel() {
         return currentModel;
     }
