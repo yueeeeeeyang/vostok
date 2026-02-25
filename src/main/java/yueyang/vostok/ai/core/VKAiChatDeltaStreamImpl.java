@@ -34,14 +34,10 @@ final class VKAiChatDeltaStreamImpl implements VKAiChatDeltaStream {
         if (nextDelta != null) {
             return true;
         }
-        if (done.get()) {
-            throwIfError();
-            return false;
-        }
         long timeout = Math.max(0L, timeoutMs);
         Object item;
         try {
-            item = queue.poll(timeout, TimeUnit.MILLISECONDS);
+            item = queue.poll(done.get() ? 0L : timeout, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new VKAiException(VKAiErrorCode.STATE_ERROR, "Stream polling interrupted", e);

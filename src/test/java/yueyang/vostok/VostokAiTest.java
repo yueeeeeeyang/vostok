@@ -9,6 +9,9 @@ import yueyang.vostok.ai.VKAiAuditRecord;
 import yueyang.vostok.ai.VKAiChatRequest;
 import yueyang.vostok.ai.VKAiChatResponse;
 import yueyang.vostok.ai.VKAiChatDeltaStream;
+import yueyang.vostok.ai.VKAiSession;
+import yueyang.vostok.ai.VKAiSessionMessage;
+import yueyang.vostok.ai.core.VKAiDataMemoryStore;
 import yueyang.vostok.ai.provider.VKAiClientConfig;
 import yueyang.vostok.ai.VKAiConfig;
 import yueyang.vostok.ai.rag.VKAiEmbedding;
@@ -31,6 +34,8 @@ import yueyang.vostok.ai.exception.VKAiErrorCode;
 import yueyang.vostok.ai.exception.VKAiException;
 import yueyang.vostok.cache.VKCacheConfig;
 import yueyang.vostok.cache.VKCacheProviderType;
+import yueyang.vostok.data.VKDataConfig;
+import yueyang.vostok.data.dialect.VKDialectType;
 import yueyang.vostok.util.json.VKJson;
 
 import java.io.IOException;
@@ -61,6 +66,8 @@ public class VostokAiTest {
     private final AtomicReference<String> lastRagUserPrompt = new AtomicReference<>();
     private final AtomicReference<String> lastEmbeddingModel = new AtomicReference<>();
     private final AtomicReference<String> lastRerankModel = new AtomicReference<>();
+    private final AtomicReference<String> lastSessionModel = new AtomicReference<>();
+    private final AtomicInteger lastSessionMsgCount = new AtomicInteger();
 
     @BeforeEach
     void setUp() throws Exception {
@@ -79,6 +86,7 @@ public class VostokAiTest {
         server.createContext("/v1/chat/rag", this::handleRagChat);
         server.createContext("/v1/chat/rag-alt", this::handleRagChatAlt);
         server.createContext("/v1/chat/stream", this::handleStreamChat);
+        server.createContext("/v1/chat/session", this::handleSessionChat);
         server.createContext("/v1/embeddings", this::handleEmbeddings);
         server.createContext("/v1/embeddings-alt", this::handleEmbeddingsAlt);
         server.createContext("/v1/rerank", this::handleRerank);
@@ -88,6 +96,7 @@ public class VostokAiTest {
         baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
 
         Vostok.AI.close();
+        Vostok.Data.close();
         Vostok.Cache.close();
         Vostok.Cache.init(new VKCacheConfig().providerType(VKCacheProviderType.MEMORY).codec("string"));
         Vostok.AI.init(new VKAiConfig()
@@ -123,6 +132,8 @@ public class VostokAiTest {
         lastRagUserPrompt.set(null);
         lastEmbeddingModel.set(null);
         lastRerankModel.set(null);
+        lastSessionModel.set(null);
+        lastSessionMsgCount.set(0);
     }
 
     @AfterEach
@@ -131,6 +142,7 @@ public class VostokAiTest {
             server.stop(0);
         }
         Vostok.AI.close();
+        Vostok.Data.close();
         Vostok.Cache.close();
     }
 
@@ -254,8 +266,15 @@ public class VostokAiTest {
 
         StringBuilder sb = new StringBuilder();
         VKAiChatDeltaStream stream = response.stream();
-        while (stream.hasNext(1000)) {
-            sb.append(stream.next().getContentDelta());
+        long deadline = System.currentTimeMillis() + 5000L;
+        while (System.currentTimeMillis() < deadline) {
+            if (stream.hasNext(200)) {
+                sb.append(stream.next().getContentDelta());
+                continue;
+            }
+            if (stream.isDone()) {
+                break;
+            }
         }
         assertEquals("hello", sb.toString());
         assertTrue(stream.isDone());
@@ -279,6 +298,75 @@ public class VostokAiTest {
         assertEquals(VKAiErrorCode.INVALID_ARGUMENT, ex.getCode());
     }
 
+    @Test
+    void testSessionMemoryAndModelSwitch() {
+        Vostok.AI.registerClient("session", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .chatPath("/v1/chat/session"));
+
+        VKAiSession session = Vostok.AI.createSession("session", "model-a");
+        assertNotNull(session.getSessionId());
+        assertEquals("model-a", session.getCurrentModel());
+
+        VKAiChatResponse r1 = Vostok.AI.chatSession(session.getSessionId(), "hi");
+        assertTrue(r1.getText().contains("model-a"));
+        assertEquals("model-a", lastSessionModel.get());
+        assertEquals(1, lastSessionMsgCount.get());
+
+        VKAiChatResponse r2 = Vostok.AI.chatSession(session.getSessionId(), "again");
+        assertTrue(r2.getText().contains("model-a"));
+        assertEquals(3, lastSessionMsgCount.get());
+
+        Vostok.AI.switchSessionModel(session.getSessionId(), "model-b");
+        VKAiChatResponse r3 = Vostok.AI.chatSession(session.getSessionId(), "third");
+        assertTrue(r3.getText().contains("model-b"));
+        assertEquals("model-b", lastSessionModel.get());
+        assertEquals(5, lastSessionMsgCount.get());
+
+        List<VKAiSessionMessage> messages = Vostok.AI.sessionMessages(session.getSessionId());
+        assertEquals(6, messages.size());
+        assertEquals("user", messages.get(0).getRole());
+        assertEquals("assistant", messages.get(1).getRole());
+        assertEquals("user", messages.get(4).getRole());
+        assertEquals("assistant", messages.get(5).getRole());
+    }
+
+
+    
+    @Test
+    void testSessionPersistenceWithDataStore() throws Exception {
+        String jdbcUrl = "jdbc:h2:mem:ai_session_" + System.nanoTime() + ";MODE=MySQL;DB_CLOSE_DELAY=-1";
+        Vostok.Data.init(new VKDataConfig()
+                .url(jdbcUrl)
+                .username("sa")
+                .password("")
+                .driver("org.h2.Driver")
+                .dialect(VKDialectType.MYSQL), "yueyang.vostok");
+        try (var conn = java.sql.DriverManager.getConnection(jdbcUrl, "sa", "");
+             var stmt = conn.createStatement()) {
+            stmt.execute("CREATE TABLE vk_ai_session (session_id VARCHAR(64) PRIMARY KEY, client_name VARCHAR(64), current_model VARCHAR(128), created_at BIGINT, updated_at BIGINT, metadata_json VARCHAR(4000))");
+            stmt.execute("CREATE TABLE vk_ai_session_message (id BIGINT AUTO_INCREMENT PRIMARY KEY, session_id VARCHAR(64), seq BIGINT, role VARCHAR(32), content VARCHAR(4000), model VARCHAR(128), created_at BIGINT)");
+        }
+
+        Vostok.AI.registerClient("session", new VKAiClientConfig()
+                .baseUrl(baseUrl)
+                .chatPath("/v1/chat/session"));
+        Vostok.AI.setMemoryStore(new VKAiDataMemoryStore());
+
+        VKAiSession session = Vostok.AI.createSession("session", "model-a");
+        Vostok.AI.chatSession(session.getSessionId(), "persist me");
+        Vostok.AI.chatSession(session.getSessionId(), "persist me too");
+
+        List<VKAiSessionMessage> messages = Vostok.AI.sessionMessages(session.getSessionId());
+        assertEquals(4, messages.size());
+
+        VKAiSession loaded = Vostok.AI.session(session.getSessionId());
+        assertEquals("model-a", loaded.getCurrentModel());
+        assertEquals("session", loaded.getClientName());
+    }
+
+
+    
     @Test
     void testClientValidationAndMissingClient() {
         VKAiException registerError = assertThrows(VKAiException.class,
@@ -919,6 +1007,17 @@ public class VostokAiTest {
         ragChatAltCounter.incrementAndGet();
         write(exchange, 200,
                 "{\"id\":\"req-rag-alt\",\"choices\":[{\"message\":{\"content\":\"java from alt provider\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":8,\"completion_tokens\":6,\"total_tokens\":14}}" );
+    }
+
+    private void handleSessionChat(HttpExchange exchange) throws IOException {
+        String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        Map<?, ?> req = VKJson.fromJson(body, Map.class);
+        String model = req.get("model") == null ? "" : String.valueOf(req.get("model"));
+        lastSessionModel.set(model);
+        Object messages = req.get("messages");
+        int size = messages instanceof List<?> list ? list.size() : 0;
+        lastSessionMsgCount.set(size);
+        write(exchange, 200, "{\"id\":\"req-session\",\"choices\":[{\"message\":{\"content\":\"session-ok model=" + model + " msgs=" + size + "\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":2,\"completion_tokens\":2,\"total_tokens\":4}}");
     }
 
     private void handleStreamChat(HttpExchange exchange) throws IOException {

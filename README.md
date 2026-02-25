@@ -5106,6 +5106,15 @@ public interface Vostok.AI {
     public static Set<String> clientNames();
     public static String currentClientName();
 
+    public static void setMemoryStore(VKAiMemoryStore store);
+    public static VKAiSession createSession(String clientName);
+    public static VKAiSession createSession(String clientName, String model);
+    public static VKAiSession session(String sessionId);
+    public static VKAiSession switchSessionModel(String sessionId, String model);
+    public static List<VKAiSessionMessage> sessionMessages(String sessionId);
+    public static VKAiChatResponse chatSession(String sessionId, String userText);
+    public static void deleteSession(String sessionId);
+
     public static VKAiChatResponse chat(VKAiChatRequest request);
     public static CompletableFuture<VKAiChatResponse> chatAsync(VKAiChatRequest request);
 
@@ -5208,6 +5217,21 @@ Summary summary = Vostok.AI.chatJson(new VKAiChatRequest()
 // 5) 多 client 上下文
 String text = Vostok.AI.withClient("openai", () ->
         Vostok.AI.chat(new VKAiChatRequest().message("user", "ping")).getText());
+
+// 5.1) 会话记忆（默认内存）
+VKAiSession session = Vostok.AI.createSession("openai", "gpt-4o-mini");
+VKAiChatResponse s1 = Vostok.AI.chatSession(session.getSessionId(), "我叫Tom");
+VKAiChatResponse s2 = Vostok.AI.chatSession(session.getSessionId(), "我叫什么名字?");
+System.out.println(s2.getText());
+
+// 5.2) 会话切换模型（历史对话自动延续）
+Vostok.AI.switchSessionModel(session.getSessionId(), "gpt-4.1-mini");
+VKAiChatResponse s3 = Vostok.AI.chatSession(session.getSessionId(), "继续刚才的话题");
+System.out.println(s3.getText());
+
+// 5.3) 切换为 Vostok.Data 持久化存储
+// 需要先初始化 Vostok.Data，并准备表 vk_ai_session / vk_ai_session_message
+Vostok.AI.setMemoryStore(new yueyang.vostok.ai.core.VKAiDataMemoryStore());
 
 // 6) 注册工具并手动调用
 Vostok.AI.registerTool(new VKAiTool() {
@@ -5414,3 +5438,40 @@ System.out.println(m.totalCalls());
   1) 使用持久化向量库（如 pgvector/ES/Milvus 自定义实现 `VKAiVectorStore`）
   2) 配置合理 chunk size/overlap，避免上下文断裂
   3) 将 `topK` 与提示词模板按业务场景调优
+
+## 12.8 会话记忆（Session Memory）
+
+- `createSession(clientName[, model])`：创建会话，返回 `sessionId`。
+- `chatSession(sessionId, userText)`：按会话上下文连续对话，自动存储 `user/assistant` 消息。
+- `switchSessionModel(sessionId, model)`：切换会话模型，历史消息不丢失，后续对话自动续上。
+- `sessionMessages(sessionId)`：读取会话历史消息。
+- `deleteSession(sessionId)`：删除会话与历史。
+
+默认行为：
+- 默认使用内存存储（`VKAiInMemoryMemoryStore`）。
+- 默认会将会话全部历史消息参与后续对话组装（`chatSession` 内部关闭 history trim）。
+
+切换到 `Vostok.Data` 持久化：
+- `Vostok.AI.setMemoryStore(new yueyang.vostok.ai.core.VKAiDataMemoryStore())`
+- 需要先初始化 `Vostok.Data`，并准备以下表结构（可按方言微调）：
+
+```sql
+CREATE TABLE vk_ai_session (
+  session_id VARCHAR(64) PRIMARY KEY,
+  client_name VARCHAR(64),
+  current_model VARCHAR(128),
+  created_at BIGINT,
+  updated_at BIGINT,
+  metadata_json VARCHAR(4000)
+);
+
+CREATE TABLE vk_ai_session_message (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  session_id VARCHAR(64),
+  seq BIGINT,
+  role VARCHAR(32),
+  content VARCHAR(4000),
+  model VARCHAR(128),
+  created_at BIGINT
+);
+```

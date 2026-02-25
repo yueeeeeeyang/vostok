@@ -4,6 +4,7 @@ import yueyang.vostok.Vostok;
 import yueyang.vostok.ai.VKAiAuditRecord;
 import yueyang.vostok.ai.VKAiChatRequest;
 import yueyang.vostok.ai.VKAiChatResponse;
+import yueyang.vostok.ai.VKAiMemoryStore;
 import yueyang.vostok.ai.provider.VKAiClientConfig;
 import yueyang.vostok.ai.VKAiConfig;
 import yueyang.vostok.ai.rag.VKAiEmbedding;
@@ -11,6 +12,8 @@ import yueyang.vostok.ai.rag.VKAiEmbeddingRequest;
 import yueyang.vostok.ai.rag.VKAiInMemoryVectorStore;
 import yueyang.vostok.ai.VKAiMessage;
 import yueyang.vostok.ai.VKAiMetrics;
+import yueyang.vostok.ai.VKAiSession;
+import yueyang.vostok.ai.VKAiSessionMessage;
 import yueyang.vostok.ai.rag.VKAiRagRequest;
 import yueyang.vostok.ai.rag.VKAiRagResponse;
 import yueyang.vostok.ai.rag.VKAiRagIngestRequest;
@@ -49,6 +52,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.UUID;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -73,6 +77,7 @@ public final class VKAiRuntime {
     private final ArrayDeque<VKAiAuditRecord> auditRecords = new ArrayDeque<>();
     private final ThreadLocal<String> clientContext = new ThreadLocal<>();
     private volatile VKAiVectorStore vectorStore = new VKAiInMemoryVectorStore();
+    private volatile VKAiMemoryStore memoryStore = new VKAiInMemoryMemoryStore();
     private final ConcurrentHashMap<String, Set<String>> docVersionChunks = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> latestVersionByDoc = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> chunkFingerprintById = new ConcurrentHashMap<>();
@@ -138,6 +143,11 @@ public final class VKAiRuntime {
             tools.clear();
             clearAudits();
             clearRagIndexes();
+            try {
+                memoryStore.close();
+            } catch (Throwable ignore) {
+            }
+            memoryStore = new VKAiInMemoryMemoryStore();
             resetMetrics();
             config = new VKAiConfig();
             initialized = false;
@@ -200,6 +210,105 @@ public final class VKAiRuntime {
 
     public String currentClientName() {
         return clientContext.get();
+    }
+
+    public void setMemoryStore(VKAiMemoryStore store) {
+        ensureInit();
+        if (store == null) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "VKAiMemoryStore is null");
+        }
+        this.memoryStore = store;
+    }
+
+    public VKAiSession createSession(String clientName, String model) {
+        ensureInit();
+        ClientResolved cr = resolveClient(clientName);
+        String nowModel = firstNonBlank(model, cr.client().getModel(), config.getDefaultModel());
+        long now = System.currentTimeMillis();
+        VKAiSession session = new VKAiSession()
+                .sessionId(UUID.randomUUID().toString().replace("-", ""))
+                .clientName(cr.name())
+                .currentModel(nowModel)
+                .createdAt(now)
+                .updatedAt(now);
+        VKAiSession saved = memoryStore.saveSession(session);
+        return saved == null ? session.copy() : saved;
+    }
+
+    public VKAiSession session(String sessionId) {
+        ensureInit();
+        VKAiSession session = memoryStore.findSession(sessionId);
+        if (session == null) {
+            throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Ai session not found: " + sessionId);
+        }
+        return session;
+    }
+
+    public VKAiSession switchSessionModel(String sessionId, String model) {
+        ensureInit();
+        if (model == null || model.isBlank()) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Session model is blank");
+        }
+        VKAiSession session = session(sessionId);
+        session.currentModel(model.trim()).updatedAt(System.currentTimeMillis());
+        VKAiSession saved = memoryStore.saveSession(session);
+        return saved == null ? session.copy() : saved;
+    }
+
+    public List<VKAiSessionMessage> sessionMessages(String sessionId) {
+        ensureInit();
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Session id is blank");
+        }
+        return memoryStore.listMessages(sessionId);
+    }
+
+    public VKAiChatResponse chatSession(String sessionId, String userText) {
+        ensureInit();
+        if (userText == null || userText.isBlank()) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Session user text is blank");
+        }
+        VKAiSession session = session(sessionId);
+        List<VKAiSessionMessage> history = memoryStore.listMessages(sessionId);
+        long nextSeq = history.isEmpty() ? 1L : history.get(history.size() - 1).getSeq() + 1L;
+        long now = System.currentTimeMillis();
+
+        VKAiSessionMessage userMsg = new VKAiSessionMessage()
+                .sessionId(sessionId)
+                .seq(nextSeq)
+                .role("user")
+                .content(userText)
+                .model(session.getCurrentModel())
+                .timestamp(now);
+        memoryStore.appendMessage(userMsg);
+
+        VKAiChatRequest request = new VKAiChatRequest()
+                .client(session.getClientName())
+                .model(session.getCurrentModel())
+                .historyTrimEnabled(false);
+        for (VKAiSessionMessage msg : history) {
+            request.message(msg.getRole(), msg.getContent());
+        }
+        request.message("user", userText);
+
+        VKAiChatResponse response = chat(request);
+        VKAiSessionMessage assistant = new VKAiSessionMessage()
+                .sessionId(sessionId)
+                .seq(nextSeq + 1L)
+                .role("assistant")
+                .content(response.getText())
+                .model(session.getCurrentModel())
+                .timestamp(System.currentTimeMillis());
+        memoryStore.appendMessage(assistant);
+
+        session.updatedAt(System.currentTimeMillis());
+        memoryStore.saveSession(session);
+        return response;
+    }
+
+    public void deleteSession(String sessionId) {
+        ensureInit();
+        memoryStore.deleteSession(sessionId);
     }
 
     public void registerTool(VKAiTool tool) {

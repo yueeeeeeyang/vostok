@@ -71,6 +71,38 @@ public class VostokAI {
         return RUNTIME.currentClientName();
     }
 
+    public static void setMemoryStore(VKAiMemoryStore store) {
+        RUNTIME.setMemoryStore(store);
+    }
+
+    public static VKAiSession createSession(String clientName) {
+        return RUNTIME.createSession(clientName, null);
+    }
+
+    public static VKAiSession createSession(String clientName, String model) {
+        return RUNTIME.createSession(clientName, model);
+    }
+
+    public static VKAiSession session(String sessionId) {
+        return RUNTIME.session(sessionId);
+    }
+
+    public static VKAiSession switchSessionModel(String sessionId, String model) {
+        return RUNTIME.switchSessionModel(sessionId, model);
+    }
+
+    public static java.util.List<VKAiSessionMessage> sessionMessages(String sessionId) {
+        return RUNTIME.sessionMessages(sessionId);
+    }
+
+    public static VKAiChatResponse chatSession(String sessionId, String userText) {
+        return RUNTIME.chatSession(sessionId, userText);
+    }
+
+    public static void deleteSession(String sessionId) {
+        RUNTIME.deleteSession(sessionId);
+    }
+
     public static VKAiChatResponse chat(VKAiChatRequest request) {
         return RUNTIME.chat(request);
     }
