@@ -47,6 +47,22 @@ public class VostokWeb {
         return INSTANCE.portInternal();
     }
 
+    public static int websocketBroadcast(String path, String text) {
+        return INSTANCE.websocketBroadcastInternal(path, text);
+    }
+
+    public static int websocketBroadcastRoom(String path, String room, String text) {
+        return INSTANCE.websocketBroadcastRoomInternal(path, room, text);
+    }
+
+    public static int websocketBroadcastGroup(String path, String group, String text) {
+        return INSTANCE.websocketBroadcastGroupInternal(path, group, text);
+    }
+
+    public static int websocketBroadcastRoomAndGroup(String path, String room, String group, String text) {
+        return INSTANCE.websocketBroadcastRoomAndGroupInternal(path, room, group, text);
+    }
+
     public VostokWeb get(String path, VKHandler handler) {
         ensureServer();
         server.addRoute("GET", path, handler);
@@ -148,6 +164,26 @@ public class VostokWeb {
     private int portInternal() {
         ensureServer();
         return server.port();
+    }
+
+    private int websocketBroadcastInternal(String path, String text) {
+        ensureServer();
+        return server.broadcastWebSocket(path, text);
+    }
+
+    private int websocketBroadcastRoomInternal(String path, String room, String text) {
+        ensureServer();
+        return server.broadcastWebSocketRoom(path, room, text);
+    }
+
+    private int websocketBroadcastGroupInternal(String path, String group, String text) {
+        ensureServer();
+        return server.broadcastWebSocketGroup(path, group, text);
+    }
+
+    private int websocketBroadcastRoomAndGroupInternal(String path, String room, String group, String text) {
+        ensureServer();
+        return server.broadcastWebSocketRoomAndGroup(path, room, group, text);
     }
 
     private void ensureServer() {

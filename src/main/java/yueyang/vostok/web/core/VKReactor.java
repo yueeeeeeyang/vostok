@@ -16,7 +16,9 @@ import yueyang.vostok.web.route.VKRouter;
 import yueyang.vostok.web.util.VKBufferPool;
 import yueyang.vostok.web.websocket.VKWebSocketEndpoint;
 import yueyang.vostok.web.websocket.VKWebSocketSession;
+import yueyang.vostok.web.websocket.VKWsAuthResult;
 import yueyang.vostok.web.websocket.VKWsFrame;
+import yueyang.vostok.web.websocket.VKWsHandshakeContext;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -538,6 +540,7 @@ final class VKReactor implements Runnable {
                 multipartCtx = null;
             }
             if (wsWasOpen && wsEndpoint != null && wsSession != null) {
+                server.unregisterWebSocketSession(wsEndpoint.path(), wsSession);
                 try {
                     wsEndpoint.handler().onClose(wsSession, 1006, "Abnormal Closure");
                 } catch (Throwable ignore) {
@@ -644,6 +647,33 @@ final class VKReactor implements Runnable {
                 respondError(400, "Bad WebSocket Request", true);
                 return true;
             }
+            VKWsHandshakeContext hsContext = new VKWsHandshakeContext(
+                    req.path(),
+                    req.traceId(),
+                    req.header("sec-websocket-protocol"),
+                    req.remoteAddress(),
+                    req.headers(),
+                    req.queryParams()
+            );
+            VKWsAuthResult authResult;
+            try {
+                endpoint.config().getHandshakeHook().beforeUpgrade(hsContext);
+                authResult = endpoint.config().getHandshakeAuthenticator().authenticate(hsContext);
+            } catch (Throwable e) {
+                authResult = VKWsAuthResult.reject(401, "WebSocket Unauthorized");
+            }
+            if (authResult == null) {
+                authResult = VKWsAuthResult.allow();
+            }
+            if (!authResult.allowed()) {
+                try {
+                    endpoint.config().getHandshakeHook().onReject(hsContext, authResult);
+                } catch (Throwable ignore) {
+                }
+                int status = authResult.rejectStatus() <= 0 ? 401 : authResult.rejectStatus();
+                respondError(status, authResult.rejectReason(), true);
+                return true;
+            }
             String accept = websocketAccept(key);
             byte[] head = ("HTTP/1.1 101 Switching Protocols\r\n"
                     + "Upgrade: websocket\r\n"
@@ -652,11 +682,11 @@ final class VKReactor implements Runnable {
                     + "X-Trace-Id: " + (req.traceId() == null ? "" : req.traceId()) + "\r\n\r\n")
                     .getBytes(StandardCharsets.US_ASCII);
             enqueueResponse(VKOutbound.fromHeadBytes(head), false);
-            enableWebSocket(req, endpoint);
+            enableWebSocket(req, endpoint, hsContext, authResult);
             return true;
         }
 
-        private void enableWebSocket(VKRequest req, VKWebSocketEndpoint endpoint) {
+        private void enableWebSocket(VKRequest req, VKWebSocketEndpoint endpoint, VKWsHandshakeContext hsContext, VKWsAuthResult authResult) {
             protocol = Protocol.WS;
             wsEndpoint = endpoint;
             wsLastPongAt = System.currentTimeMillis();
@@ -671,9 +701,13 @@ final class VKReactor implements Runnable {
                     req.remoteAddress(),
                     () -> !closed && protocol == Protocol.WS,
                     this::sendWsFrame,
-                    this::close
+                    this::close,
+                    server.wsRegistry(),
+                    authResult.attributes()
             );
+            server.registerWebSocketSession(endpoint.path(), wsSession);
             try {
+                endpoint.config().getHandshakeHook().afterAuth(wsSession, hsContext);
                 endpoint.handler().onOpen(wsSession);
             } catch (Throwable t) {
                 endpoint.handler().onError(wsSession, t);
@@ -856,6 +890,7 @@ final class VKReactor implements Runnable {
             System.arraycopy(reasonBytes, 0, payload, 2, reasonBytes.length);
             sendWsFrame(VKWsFrame.close(payload));
             if (wsEndpoint != null && wsSession != null) {
+                server.unregisterWebSocketSession(wsEndpoint.path(), wsSession);
                 wsEndpoint.handler().onClose(wsSession, code, reason == null ? "" : reason);
             }
             wsEndpoint = null;

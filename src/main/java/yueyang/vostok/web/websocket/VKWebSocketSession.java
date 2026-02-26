@@ -2,6 +2,9 @@ package yueyang.vostok.web.websocket;
 
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -13,6 +16,8 @@ public final class VKWebSocketSession {
     private final Supplier<Boolean> openSupplier;
     private final Consumer<VKWsFrame> sender;
     private final Runnable closeAction;
+    private final VKWsRegistry registry;
+    private final ConcurrentHashMap<String, Object> attributes;
 
     public VKWebSocketSession(String id,
                               String path,
@@ -20,7 +25,9 @@ public final class VKWebSocketSession {
                               InetSocketAddress remoteAddress,
                               Supplier<Boolean> openSupplier,
                               Consumer<VKWsFrame> sender,
-                              Runnable closeAction) {
+                              Runnable closeAction,
+                              VKWsRegistry registry,
+                              Map<String, Object> attributes) {
         this.id = id;
         this.path = path;
         this.traceId = traceId;
@@ -28,6 +35,11 @@ public final class VKWebSocketSession {
         this.openSupplier = openSupplier;
         this.sender = sender;
         this.closeAction = closeAction;
+        this.registry = registry;
+        this.attributes = new ConcurrentHashMap<>();
+        if (attributes != null && !attributes.isEmpty()) {
+            this.attributes.putAll(attributes);
+        }
     }
 
     public String id() {
@@ -61,6 +73,82 @@ public final class VKWebSocketSession {
 
     public void ping(byte[] payload) {
         sender.accept(VKWsFrame.ping(payload == null ? new byte[0] : payload));
+    }
+
+    public Map<String, Object> attributes() {
+        return Collections.unmodifiableMap(attributes);
+    }
+
+    public Object getAttribute(String key) {
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+        return attributes.get(key);
+    }
+
+    public <T> T getAttribute(String key, Class<T> type) {
+        if (type == null) {
+            return null;
+        }
+        Object value = getAttribute(key);
+        if (value == null) {
+            return null;
+        }
+        if (!type.isInstance(value)) {
+            return null;
+        }
+        return type.cast(value);
+    }
+
+    public VKWebSocketSession setAttribute(String key, Object value) {
+        if (key == null || key.isBlank()) {
+            return this;
+        }
+        if (value == null) {
+            attributes.remove(key);
+        } else {
+            attributes.put(key, value);
+        }
+        return this;
+    }
+
+    public Object removeAttribute(String key) {
+        if (key == null || key.isBlank()) {
+            return null;
+        }
+        return attributes.remove(key);
+    }
+
+    public boolean hasAttribute(String key) {
+        return getAttribute(key) != null;
+    }
+
+    public boolean joinRoom(String room) {
+        return registry != null && registry.joinRoom(path, id, room);
+    }
+
+    public boolean leaveRoom(String room) {
+        return registry != null && registry.leaveRoom(path, id, room);
+    }
+
+    public boolean joinGroup(String group) {
+        return registry != null && registry.joinGroup(path, id, group);
+    }
+
+    public boolean leaveGroup(String group) {
+        return registry != null && registry.leaveGroup(path, id, group);
+    }
+
+    public int broadcastRoom(String room, String message) {
+        return registry == null ? 0 : registry.broadcastRoomText(path, room, message);
+    }
+
+    public int broadcastGroup(String group, String message) {
+        return registry == null ? 0 : registry.broadcastGroupText(path, group, message);
+    }
+
+    public int broadcastRoomAndGroup(String room, String group, String message) {
+        return registry == null ? 0 : registry.broadcastRoomAndGroupText(path, room, group, message);
     }
 
     public void close() {

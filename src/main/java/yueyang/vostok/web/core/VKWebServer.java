@@ -16,6 +16,8 @@ import yueyang.vostok.web.http.VKHttpParser;
 import yueyang.vostok.web.websocket.VKWebSocketConfig;
 import yueyang.vostok.web.websocket.VKWebSocketEndpoint;
 import yueyang.vostok.web.websocket.VKWebSocketHandler;
+import yueyang.vostok.web.websocket.VKWebSocketSession;
+import yueyang.vostok.web.websocket.VKWsRegistry;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -48,6 +50,7 @@ public final class VKWebServer {
     private volatile VKRateLimiter globalRateLimiter;
     private final Map<String, VKRateLimiter> routeRateLimiters = new ConcurrentHashMap<>();
     private final Map<String, VKWebSocketEndpoint> webSockets = new ConcurrentHashMap<>();
+    private final VKWsRegistry wsRegistry = new VKWsRegistry();
 
     public VKWebServer(VKWebConfig config) {
         this.config = config;
@@ -158,6 +161,40 @@ public final class VKWebServer {
 
     VKWebSocketEndpoint findWebSocket(String path) {
         return webSockets.get(normalizePath(path));
+    }
+
+    void registerWebSocketSession(String path, VKWebSocketSession session) {
+        if (session == null) {
+            return;
+        }
+        wsRegistry.register(normalizePath(path), session);
+    }
+
+    void unregisterWebSocketSession(String path, VKWebSocketSession session) {
+        if (session == null) {
+            return;
+        }
+        wsRegistry.unregister(normalizePath(path), session.id());
+    }
+
+    VKWsRegistry wsRegistry() {
+        return wsRegistry;
+    }
+
+    public int broadcastWebSocket(String path, String text) {
+        return wsRegistry.broadcastAllText(normalizePath(path), text);
+    }
+
+    public int broadcastWebSocketRoom(String path, String room, String text) {
+        return wsRegistry.broadcastRoomText(normalizePath(path), room, text);
+    }
+
+    public int broadcastWebSocketGroup(String path, String group, String text) {
+        return wsRegistry.broadcastGroupText(normalizePath(path), group, text);
+    }
+
+    public int broadcastWebSocketRoomAndGroup(String path, String room, String group, String text) {
+        return wsRegistry.broadcastRoomAndGroupText(normalizePath(path), room, group, text);
     }
 
     boolean tryRateLimit(VKRequest req, VKRouteMatch match, VKResponse res) {

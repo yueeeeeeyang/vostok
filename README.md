@@ -1020,6 +1020,46 @@ public interface Vostok.Web {
     public static int port();
 
     /**
+     * 向指定 WebSocket 路由下的全部在线会话广播文本。
+     *
+     * - path：WebSocket 路由路径，类型为 String，例如 "/ws/chat"。
+     * - text：广播文本，类型为 String（null 按空串发送）。
+     * - 返回值：int（实际发送成功的会话数）。
+     */
+    public static int websocketBroadcast(String path, String text);
+
+    /**
+     * 向指定 WebSocket 路由下某 room 的在线会话广播文本。
+     *
+     * - path：WebSocket 路由路径。
+     * - room：房间名，类型为 String。
+     * - text：广播文本，类型为 String。
+     * - 返回值：int（实际发送成功的会话数）。
+     */
+    public static int websocketBroadcastRoom(String path, String room, String text);
+
+    /**
+     * 向指定 WebSocket 路由下某 group 的在线会话广播文本。
+     *
+     * - path：WebSocket 路由路径。
+     * - group：分组名，类型为 String。
+     * - text：广播文本，类型为 String。
+     * - 返回值：int（实际发送成功的会话数）。
+     */
+    public static int websocketBroadcastGroup(String path, String group, String text);
+
+    /**
+     * 向指定 WebSocket 路由下 room + group 交集会话广播文本。
+     *
+     * - path：WebSocket 路由路径。
+     * - room：房间名。
+     * - group：分组名。
+     * - text：广播文本。
+     * - 返回值：int（实际发送成功的会话数）。
+     */
+    public static int websocketBroadcastRoomAndGroup(String path, String room, String group, String text);
+
+    /**
      * 注册 GET 路由。
      *
      * - path：路由路径，类型为 String，例如 "/ping"、"/users/{id}"。
@@ -1532,7 +1572,10 @@ Vostok.Log.init(logCfg);
 ### 3.4.2 WebSocket 路由配置（VKWebSocketConfig）
 
 ```java
+import java.util.Map;
 import yueyang.vostok.web.websocket.VKWebSocketConfig;
+import yueyang.vostok.web.websocket.VKWsAuthResult;
+import yueyang.vostok.web.websocket.VKWsHandshakeHook;
 
 VKWebSocketConfig ws = new VKWebSocketConfig()
     // 单帧 payload 最大字节数。默认 1MB；内部最小 1024。
@@ -1548,7 +1591,16 @@ VKWebSocketConfig ws = new VKWebSocketConfig()
     // 发送 ping 后等待 pong 超时毫秒。默认 10000；内部最小 1000。
     .pongTimeoutMs(10_000)
     // 连接空闲超时毫秒。默认 120000；内部最小 1000。
-    .idleTimeoutMs(120_000);
+    .idleTimeoutMs(120_000)
+    // 握手鉴权扩展：返回 allow/reject，可注入 session attributes。
+    .handshakeAuthenticator(ctx -> {
+        if (!"ok".equals(ctx.queryParam("token"))) {
+            return VKWsAuthResult.reject(403, "Forbidden");
+        }
+        return VKWsAuthResult.allow(Map.of("uid", ctx.queryParam("uid")));
+    })
+    // 握手阶段扩展钩子：before/after/reject。
+    .handshakeHook(new VKWsHandshakeHook() {});
 ```
 
 ```java
@@ -1571,6 +1623,59 @@ Vostok.Web.init(8080)
         }
     });
 ```
+
+### 3.4.3 WebSocket 广播、Room/Group 与 Session Attributes
+
+```java
+import java.util.Map;
+import yueyang.vostok.web.websocket.VKWebSocketConfig;
+import yueyang.vostok.web.websocket.VKWebSocketHandler;
+import yueyang.vostok.web.websocket.VKWebSocketSession;
+import yueyang.vostok.web.websocket.VKWsAuthResult;
+
+Vostok.Web.init(8080)
+    .websocket("/ws/live", new VKWebSocketConfig()
+        .handshakeAuthenticator(ctx -> VKWsAuthResult.allow(Map.of(
+            "uid", ctx.queryParam("uid"),
+            "tenant", ctx.queryParam("tenant")
+        ))), new VKWebSocketHandler() {
+        @Override
+        public void onOpen(VKWebSocketSession session) {
+            // 读取握手注入 attributes，并建立 room/group 归属
+            session.joinRoom("room-main");
+            session.joinGroup(session.getAttribute("tenant", String.class));
+            session.sendText("hello:" + session.getAttribute("uid", String.class));
+        }
+
+        @Override
+        public void onText(VKWebSocketSession session, String text) {
+            // 运行期可写/可读 attributes
+            session.setAttribute("lastText", text);
+            session.sendText("echo:" + session.getAttribute("lastText", String.class));
+        }
+    });
+
+// 路由级广播（全体 / room / group / room∩group）
+int all = Vostok.Web.websocketBroadcast("/ws/live", "all-online");
+int room = Vostok.Web.websocketBroadcastRoom("/ws/live", "room-main", "room-msg");
+int group = Vostok.Web.websocketBroadcastGroup("/ws/live", "tenant-a", "group-msg");
+int both = Vostok.Web.websocketBroadcastRoomAndGroup("/ws/live", "room-main", "tenant-a", "both-msg");
+```
+
+常用会话方法：
+
+- `session.attributes()`：读取当前会话全部 attributes（只读视图）。
+- `session.getAttribute(key)` / `session.getAttribute(key, type)`：读取 attribute。
+- `session.setAttribute(key, value)` / `session.removeAttribute(key)`：写入或删除 attribute。
+- `session.joinRoom(room)` / `session.leaveRoom(room)`：加入/退出房间。
+- `session.joinGroup(group)` / `session.leaveGroup(group)`：加入/退出分组。
+- `session.broadcastRoom(...)` / `session.broadcastGroup(...)` / `session.broadcastRoomAndGroup(...)`：会话侧按维度广播。
+
+WebSocket 使用注意事项：
+
+- `room/group` 索引是进程内内存态，不跨实例同步；多实例广播需要业务侧消息总线（如 Redis/Kafka）。
+- 握手鉴权应避免阻塞和重 IO；建议仅做轻量校验，重操作可在连接后异步执行。
+- attributes 用于会话维度上下文，不建议放大对象或长期增长数据，避免连接内存膨胀。
 
 ---
 

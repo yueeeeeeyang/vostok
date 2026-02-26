@@ -8,6 +8,8 @@ public final class VKWebSocketConfig {
     private int pingIntervalMs = 30_000;
     private int pongTimeoutMs = 10_000;
     private int idleTimeoutMs = 120_000;
+    private VKWsHandshakeAuthenticator handshakeAuthenticator = VKWsHandshakeAuthenticator.allowAll();
+    private VKWsHandshakeHook handshakeHook = VKWsHandshakeHook.noop();
 
     public int getMaxFramePayloadBytes() {
         return maxFramePayloadBytes;
@@ -69,6 +71,28 @@ public final class VKWebSocketConfig {
 
     public VKWebSocketConfig idleTimeoutMs(int idleTimeoutMs) {
         this.idleTimeoutMs = Math.max(1000, idleTimeoutMs);
+        return this;
+    }
+
+    public VKWsHandshakeAuthenticator getHandshakeAuthenticator() {
+        return handshakeAuthenticator;
+    }
+
+    public VKWebSocketConfig handshakeAuthenticator(VKWsHandshakeAuthenticator handshakeAuthenticator) {
+        this.handshakeAuthenticator = handshakeAuthenticator == null
+                ? VKWsHandshakeAuthenticator.allowAll()
+                : handshakeAuthenticator;
+        return this;
+    }
+
+    public VKWsHandshakeHook getHandshakeHook() {
+        return handshakeHook;
+    }
+
+    public VKWebSocketConfig handshakeHook(VKWsHandshakeHook handshakeHook) {
+        this.handshakeHook = handshakeHook == null
+                ? VKWsHandshakeHook.noop()
+                : handshakeHook;
         return this;
     }
 }
