@@ -156,28 +156,22 @@ public final class VKAiRuntime {
         if (cfg.getBaseUrl() == null || cfg.getBaseUrl().isBlank()) {
             throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Model baseUrl is blank");
         }
-        if (cfg.getProvider() == null || cfg.getProvider().isBlank()) {
+        if (cfg.getProvider() == null) {
             throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Model provider is blank");
         }
         if (cfg.getModel() == null || cfg.getModel().isBlank()) {
             throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "Model value is blank");
         }
         if (cfg.getPath() == null || cfg.getPath().isBlank()) {
-            cfg = cfg.copy().path(defaultPathByType(cfg.getType()));
+            String defaultPath = cfg.getProvider().defaultPath(cfg.getType());
+            if (defaultPath == null || defaultPath.isBlank()) {
+                throw new VKAiException(VKAiErrorCode.CONFIG_ERROR,
+                        "Model path is blank and provider has no default path: " + cfg.getProvider() + ", type=" + cfg.getType());
+            }
+            cfg = cfg.copy().path(defaultPath);
         }
         models.put(name.trim(), cfg.copy());
         providerHttpClients.clear();
-    }
-
-    private static String defaultPathByType(VKAiModelType type) {
-        if (type == null) {
-            return "/v1/chat/completions";
-        }
-        return switch (type) {
-            case CHAT -> "/v1/chat/completions";
-            case EMBEDDING -> "/v1/embeddings";
-            case RERANK -> "/v1/rerank";
-        };
     }
 
     public void setMemoryStore(VKAiMemoryStore store) {
@@ -1154,7 +1148,7 @@ public final class VKAiRuntime {
         if (model.getApiKey() != null && !model.getApiKey().isBlank()) {
             headers.putIfAbsent("Authorization", "Bearer " + model.getApiKey().trim());
         }
-        headers.putIfAbsent("X-Vostok-AI-Provider", model.getProvider());
+        headers.putIfAbsent("X-Vostok-AI-Provider", model.getProvider().code());
         return headers;
     }
 
@@ -1449,4 +1443,5 @@ public final class VKAiRuntime {
             return model == null ? null : model.getModel();
         }
     }
+
 }

@@ -5202,7 +5202,7 @@ Vostok.AI.init(new VKAiConfig()
 // 2) 只注册模型（每个模型自带 provider 信息）
 Vostok.AI.registerModel("chat-main", new VKAiModelConfig()
         .type(VKAiModelType.CHAT)
-        .provider("openai-compatible")
+        .provider(VKAiProvider.OPENAI_COMPATIBLE)
         .baseUrl("https://api.openai.com")
         .path("/v1/chat/completions")
         .apiKey("sk-***")
@@ -5210,7 +5210,7 @@ Vostok.AI.registerModel("chat-main", new VKAiModelConfig()
 
 Vostok.AI.registerModel("embed-main", new VKAiModelConfig()
         .type(VKAiModelType.EMBEDDING)
-        .provider("openai-compatible")
+        .provider(VKAiProvider.OPENAI_COMPATIBLE)
         .baseUrl("https://api.openai.com")
         .path("/v1/embeddings")
         .apiKey("sk-***")
@@ -5218,7 +5218,7 @@ Vostok.AI.registerModel("embed-main", new VKAiModelConfig()
 
 Vostok.AI.registerModel("rerank-main", new VKAiModelConfig()
         .type(VKAiModelType.RERANK)
-        .provider("openai-compatible")
+        .provider(VKAiProvider.OPENAI_COMPATIBLE)
         .baseUrl("https://api.openai.com")
         .path("/v1/rerank")
         .apiKey("sk-***")
@@ -5288,13 +5288,14 @@ Vostok.AI.switchSessionModel(session.getSessionId(), "chat-main");
 ## 12.5 VKAiModelConfig（模型即客户端）
 
 - `type`：`CHAT | EMBEDDING | RERANK`
-- `provider`：provider 标识（默认 `openai-compatible`）
+- `provider`：`VKAiProvider` 枚举（当前仅 `OPENAI_COMPATIBLE`）
 - `baseUrl/path/apiKey/defaultHeaders`
 - `connectTimeoutMs/readTimeoutMs/maxRetries/failOnNon2xx`
 - `model`：provider 侧模型名
 
 说明：
-- `path` 未配置时按类型使用默认值：
+- `path` 优先级最高：显式配置时直接使用
+- `path` 未配置时按 `provider + type` 使用内置默认值：
   - `CHAT -> /v1/chat/completions`
   - `EMBEDDING -> /v1/embeddings`
   - `RERANK -> /v1/rerank`

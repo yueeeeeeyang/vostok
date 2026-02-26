@@ -5,7 +5,7 @@ import java.util.Map;
 
 public class VKAiModelConfig {
     private VKAiModelType type;
-    private String provider = "openai-compatible";
+    private VKAiProvider provider = VKAiProvider.OPENAI_COMPATIBLE;
     private String baseUrl;
     private String path;
     private String apiKey;
@@ -41,14 +41,12 @@ public class VKAiModelConfig {
         return this;
     }
 
-    public String getProvider() {
+    public VKAiProvider getProvider() {
         return provider;
     }
 
-    public VKAiModelConfig provider(String provider) {
-        if (provider != null && !provider.isBlank()) {
-            this.provider = provider.trim();
-        }
+    public VKAiModelConfig provider(VKAiProvider provider) {
+        this.provider = provider == null ? VKAiProvider.OPENAI_COMPATIBLE : provider;
         return this;
     }
 

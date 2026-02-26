@@ -15,6 +15,7 @@ import yueyang.vostok.ai.core.VKAiDataMemoryStore;
 import yueyang.vostok.ai.VKAiConfig;
 import yueyang.vostok.ai.provider.VKAiModelConfig;
 import yueyang.vostok.ai.provider.VKAiModelType;
+import yueyang.vostok.ai.provider.VKAiProvider;
 import yueyang.vostok.ai.rag.VKAiEmbedding;
 import yueyang.vostok.ai.rag.VKAiEmbeddingRequest;
 import yueyang.vostok.ai.VKAiMetrics;
@@ -195,6 +196,22 @@ public class VostokAiTest {
     }
 
     @Test
+    void testProviderEnumDefaultPathAppliedWhenPathMissing() {
+        Vostok.AI.registerModel("default-path-chat", new VKAiModelConfig()
+                .type(VKAiModelType.CHAT)
+                .provider(VKAiProvider.OPENAI_COMPATIBLE)
+                .baseUrl(baseUrl)
+                .apiKey("demo-key")
+                .model("default-path-chat"));
+
+        VKAiChatResponse response = Vostok.AI.chat(new VKAiChatRequest()
+                .model("default-path-chat")
+                .message("user", "path by provider"));
+
+        assertEquals("hello from ai", response.getText());
+    }
+
+    @Test
     void testRetryOn5xxAndMetrics() {
         registerModelSet("retry", "/v1/chat/retry", null, null,
                 "retry-chat", "retry-embed", "retry-rerank");
@@ -298,7 +315,7 @@ public class VostokAiTest {
                 "session-chat", "session-embed", "session-rerank");
         Vostok.AI.registerModel("model-b", new VKAiModelConfig()
                 .type(VKAiModelType.CHAT)
-                .provider("openai-compatible")
+                .provider(VKAiProvider.OPENAI_COMPATIBLE)
                 .baseUrl(baseUrl)
                 .path("/v1/chat/session")
                 .apiKey("demo-key")
@@ -528,14 +545,14 @@ public class VostokAiTest {
                 "layer-chat", "embed-client", "rerank-client");
         Vostok.AI.registerModel("embed-request", new VKAiModelConfig()
                 .type(VKAiModelType.EMBEDDING)
-                .provider("openai-compatible")
+                .provider(VKAiProvider.OPENAI_COMPATIBLE)
                 .baseUrl(baseUrl)
                 .path("/v1/embeddings")
                 .apiKey("demo-key")
                 .model("embed-request"));
         Vostok.AI.registerModel("rerank-request", new VKAiModelConfig()
                 .type(VKAiModelType.RERANK)
-                .provider("openai-compatible")
+                .provider(VKAiProvider.OPENAI_COMPATIBLE)
                 .baseUrl(baseUrl)
                 .path("/v1/rerank")
                 .apiKey("demo-key")
@@ -827,7 +844,7 @@ public class VostokAiTest {
         String chatModelId = profileName + "-chat";
         Vostok.AI.registerModel(chatModelId, new VKAiModelConfig()
                 .type(VKAiModelType.CHAT)
-                .provider("openai-compatible")
+                .provider(VKAiProvider.OPENAI_COMPATIBLE)
                 .baseUrl(baseUrl)
                 .path(resolvedChatPath)
                 .apiKey("demo-key")
@@ -836,7 +853,7 @@ public class VostokAiTest {
         if (embeddingModel != null) {
             Vostok.AI.registerModel(profileName + "-embed", new VKAiModelConfig()
                     .type(VKAiModelType.EMBEDDING)
-                    .provider("openai-compatible")
+                    .provider(VKAiProvider.OPENAI_COMPATIBLE)
                     .baseUrl(baseUrl)
                     .path(resolvedEmbeddingPath)
                     .apiKey("demo-key")
@@ -846,7 +863,7 @@ public class VostokAiTest {
         if (rerankModel != null) {
             Vostok.AI.registerModel(profileName + "-rerank", new VKAiModelConfig()
                     .type(VKAiModelType.RERANK)
-                    .provider("openai-compatible")
+                    .provider(VKAiProvider.OPENAI_COMPATIBLE)
                     .baseUrl(baseUrl)
                     .path(resolvedRerankPath)
                     .apiKey("demo-key")
