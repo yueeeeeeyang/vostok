@@ -15,7 +15,6 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Http`：统一 HTTP Client（命名 Client、鉴权、重试、超时、JSON/表单/文件上传）
 - `Vostok.Util`：通用工具门面（JSON 能力、Provider 注册与切换）
 - `Vostok.AI`：统一 AI Client（命名 Client、Chat/ChatJson、重试、指标、异常模型）
-- `Vostok.Terminal`：终端应用模块（终端工具类 + 组件化 TUI）
 
 项目构建方式为 Maven：`/Users/yueyang/Develop/code/codex/Vostok/pom.xml`。
 
@@ -34,7 +33,6 @@ import yueyang.vostok.log.VKLogConfig;
 import yueyang.vostok.security.VKSecurityConfig;
 import yueyang.vostok.config.VKConfigOptions;
 import yueyang.vostok.file.VKFileConfig;
-import yueyang.vostok.terminal.VKTerminalConfig;
 import yueyang.vostok.web.VKWebConfig;
 
 Vostok.init(cfg -> cfg
@@ -70,13 +68,6 @@ Vostok.init(cfg -> cfg
                 .baseDir("./data/files")
         )
 
-        // Terminal（可选）
-        .terminalConfig(new VKTerminalConfig()
-                .appName("Demo Console")
-                .fps(20)
-                .ansiEnabled(true)
-        )
-
         // Web（可选）
         .webConfig(new VKWebConfig().port(8080))
         .webSetup(web -> web
@@ -106,7 +97,6 @@ Vostok.init(cfg -> cfg
 - `Vostok.Cache` 不依赖 `Vostok.Config`，必须通过 `VKCacheConfig` 或显式 Loader 初始化。
 - `Vostok.Http` 建议显式 `init(...)` 后再使用；如调用相对路径，必须先注册带 `baseUrl` 的命名 Client。
 - `Vostok.AI` 建议显式 `init(...)` 并注册命名 Client；若未指定 client 且注册了多个 Client，会抛出配置异常。
-- `Vostok.Terminal` 在非 TTY 环境会自动降级为普通文本输出；交互式模式需保证标准输入可读。
 - JSON 能力通过 `Vostok.Util` 暴露，默认使用内置 `builtin` 实现；如需 Jackson/Gson/Fastjson 等能力，请业务侧自行实现 `VKJsonProvider` 并注册切换。
 - `Vostok.Http` 默认会对非 `2xx` 响应抛出异常（可通过 `failOnNon2xx(false)` 关闭）。
 - `Vostok.Security` 的检测结果是风险判断，不替代参数化查询、鉴权、最小权限、WAF/主机安全等基础安全控制。
@@ -5539,185 +5529,3 @@ CREATE TABLE vk_ai_session_message (
   created_at BIGINT
 );
 ```
-
-# 13. Terminal 模块
-
-## 13.1 接口定义
-
-```java
-public interface Vostok.Terminal {
-    // 初始化
-    public static void init();
-    public static void init(VKTerminalConfig config);
-    public static void reinit(VKTerminalConfig config);
-    public static boolean started();
-    public static VKTerminalConfig config();
-    public static VKTerminalTheme theme();
-    public static void useTheme(VKTerminalTheme theme);
-    public static void close();
-
-    // 应用
-    public static VKTerminalApp app();
-
-    // 工具
-    public static VKTablePrinter table();
-    public static VKProgressBar progressBar();
-    public static VKSpinner spinner();
-    public static VKConsole console();
-}
-```
-
-## 13.2 使用 Demo
-
-### 13.2.1 终端应用（组件化）
-
-```java
-import yueyang.vostok.Vostok;
-import yueyang.vostok.terminal.VKTerminalConfig;
-import yueyang.vostok.terminal.VKTerminalTheme;
-import yueyang.vostok.terminal.component.*;
-import yueyang.vostok.terminal.layout.*;
-
-Vostok.Terminal.init(new VKTerminalConfig()
-        .appName("Ops Console")
-        .fps(20)
-        .alternateScreen(true)
-        .ansiEnabled(true)
-        .theme(VKTerminalTheme.ocean())
-);
-
-VKVBox root = new VKVBox().spacing(1)
-        .child(new VKTextView("Dashboard").title())
-        .child(new VKDivider())
-        .child(new VKGrid().columns(2).hSpacing(2)
-                .child(new VKPanel("Tasks").child(
-                        new VKListView().items(java.util.List.of("Sync", "Export", "Cleanup")).selectedIndex(0)
-                ))
-                .child(new VKPanel("Stats").child(
-                        new VKTableView().columns("Key", "Value")
-                                .addRow("QPS", "120")
-                                .addRow("Err", "0.1%")
-                ))
-        );
-
-Vostok.Terminal.app()
-        .root(root)
-        .statusBar(new VKStatusBar("READY"))
-        .toast(new VKToast("Saved").level(VKToast.Level.SUCCESS))
-        .run();
-
-// 持续事件循环（推荐用于交互式应用）
-Vostok.Terminal.reinit(new VKTerminalConfig()
-        .interactive(true)
-        .continuousLoop(true)
-        .rawMode(true)
-);
-Vostok.Terminal.app()
-        .root(root)
-        .runLoop();
-```
-
-### 13.2.2 表格、进度条、Spinner、Prompt
-
-```java
-import yueyang.vostok.Vostok;
-import yueyang.vostok.terminal.tool.VKPrompt;
-
-String table = Vostok.Terminal.table()
-        .columns("ID", "Name", "Status")
-        .row(1, "Sync", "Running")
-        .row(2, "Export", "Done")
-        .render();
-System.out.println(table);
-
-String p50 = Vostok.Terminal.progressBar().width(20).render(0.5, "half");
-System.out.println(p50);
-
-String spin = Vostok.Terminal.spinner().render(System.currentTimeMillis() / 100, "Loading");
-System.out.println(spin);
-
-boolean ok = VKPrompt.confirm("Continue", true, System.in, System.out);
-System.out.println(ok);
-```
-
-### 13.2.3 彩色终端日志
-
-```java
-import yueyang.vostok.Vostok;
-
-Vostok.Terminal.init(new VKTerminalConfig().ansiEnabled(true));
-Vostok.Terminal.console().info("service started");
-Vostok.Terminal.console().warn("cpu high");
-Vostok.Terminal.console().error("task failed");
-```
-
-## 13.3 配置详解（VKTerminalConfig）
-
-- `appName`：应用名称。
-- `fps`：渲染帧率（最小 1）。
-- `alternateScreen`：是否启用备用屏幕。
-- `hideCursor`：运行时是否隐藏光标。
-- `ansiEnabled`：是否允许 ANSI 样式输出。
-- `unicodeEnabled`：是否启用 Unicode 边框/字符。
-- `interactive`：是否读取输入事件（默认单帧渲染）。
-- `continuousLoop`：是否开启持续事件循环（`run()` 时生效）。
-- `rawMode`：是否尝试切换终端 raw 模式（便于逐键输入）。
-- `inputPollIntervalMs`：输入轮询间隔（毫秒）。
-- `forceTty`：测试/容器环境可强制按 TTY 行为运行。
-- `width/height`：终端大小回退值（当无法探测时使用）。
-- `input/output`：输入输出流。
-- `theme`：主题对象（`VKTerminalTheme`）。
-
-## 13.4 内置工具类
-
-- `VKAnsi`：ANSI 颜色样式、清屏、光标与备用屏幕控制。
-- `VKTerminal`：终端能力检测（TTY、ANSI、尺寸）。
-- `VKTextWidth`：字符宽度、截断、左右对齐、居中。
-- `VKTablePrinter`：表格渲染（ASCII/圆角/无边框）。
-- `VKProgressBar`：进度条渲染（确定/不确定）。
-- `VKSpinner`：Spinner 动画帧。
-- `VKPrompt`：输入、确认、单选、多选。
-- `VKConsole`：彩色级别日志输出。
-
-## 13.5 内置组件
-
-- 基础：`VKTextView`、`VKDivider`、`VKPanel`。
-- 列表与表格：`VKListView`、`VKTableView`。
-- 输入与表单：`VKInput`、`VKForm`。
-- 反馈：`VKStatusBar`、`VKToast`、`VKModal`。
-- 布局：`VKVBox`、`VKHBox`、`VKGrid`。
-- 焦点与滚动：`TAB` 切换焦点；`VKInput` 支持光标编辑；`VKListView` 支持滚动与翻页。
-
-## 13.6 说明与边界
-
-- `Terminal` 默认适合构建轻量 TUI；复杂交互可在其基础上扩展。
-- 非 TTY 或不支持 ANSI 的场景会自动降级为纯文本输出。
-- `interactive(true)` 时会读取标准输入事件；生产运行请确保输入流可用。
-- `VKTerminalApp` 提供 `invokeLater(...)` / `requestRender()` / `streamText(...)`，可用于异步任务与逐字流式刷屏。
-
-## 13.7 终端聊天 Demo（可运行）
-
-已提供可直接运行的增强聊天界面：
-
-- `src/main/java/yueyang/vostok/terminal/demo/VostokTerminalChatDemo.java`
-
-功能：
-
-- 持续事件循环（`runLoop`）
-- 输入框编辑能力（光标移动、删除、插入）
-- 消息滚动/焦点管理（`TAB` 切焦点，`UP/DOWN/PgUp/PgDn` 滚动）
-- 流式 token 实时刷屏（`streamText` 逐字输出）
-- 内置命令：`/help`、`/clear`、`/time`、`/exit`
-- 默认规则回复（不依赖外部 AI 服务）
-
-运行方式：
-
-```bash
-mvn -f /Users/yueyang/Develop/code/codex/Vostok/pom.xml -DskipTests compile
-java -cp /Users/yueyang/Develop/code/codex/Vostok/target/classes yueyang.vostok.terminal.demo.VostokTerminalChatDemo
-```
-
-说明：
-
-- Demo 默认本地规则回复，便于离线运行。
-- 若要接入真实大模型，可在 `buildReply(...)` 处替换为 `Vostok.AI.chat(...)`，并保留 `streamText(...)` 做流式渲染。

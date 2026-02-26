@@ -9,7 +9,6 @@ import yueyang.vostok.file.VKFileConfig;
 import yueyang.vostok.http.VKHttpConfig;
 import yueyang.vostok.log.VKLogConfig;
 import yueyang.vostok.security.VKSecurityConfig;
-import yueyang.vostok.terminal.VKTerminalConfig;
 import yueyang.vostok.web.VKWebConfig;
 import yueyang.vostok.web.VostokWeb;
 
@@ -26,7 +25,6 @@ public final class VKInitConfig {
     private final VKHttpConfig httpConfig;
     private final VKFileConfig fileConfig;
     private final VKAiConfig aiConfig;
-    private final VKTerminalConfig terminalConfig;
     private final VKWebConfig webConfig;
     private final Consumer<VostokWeb> webSetup;
     private final boolean webStart;
@@ -42,7 +40,6 @@ public final class VKInitConfig {
         this.httpConfig = builder.httpConfig;
         this.fileConfig = builder.fileConfig;
         this.aiConfig = builder.aiConfig;
-        this.terminalConfig = builder.terminalConfig;
         this.webConfig = builder.webConfig;
         this.webSetup = builder.webSetup;
         this.webStart = builder.webStart;
@@ -92,10 +89,6 @@ public final class VKInitConfig {
         return aiConfig;
     }
 
-    public VKTerminalConfig getTerminalConfig() {
-        return terminalConfig;
-    }
-
     public VKWebConfig getWebConfig() {
         return webConfig;
     }
@@ -119,7 +112,6 @@ public final class VKInitConfig {
         private VKHttpConfig httpConfig;
         private VKFileConfig fileConfig;
         private VKAiConfig aiConfig;
-        private VKTerminalConfig terminalConfig;
         private VKWebConfig webConfig;
         private Consumer<VostokWeb> webSetup;
         private boolean webStart;
@@ -181,11 +173,6 @@ public final class VKInitConfig {
 
         public Builder aiConfig(VKAiConfig aiConfig) {
             this.aiConfig = aiConfig;
-            return this;
-        }
-
-        public Builder terminalConfig(VKTerminalConfig terminalConfig) {
-            this.terminalConfig = terminalConfig;
             return this;
         }
 

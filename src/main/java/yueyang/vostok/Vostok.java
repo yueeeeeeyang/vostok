@@ -11,7 +11,6 @@ import yueyang.vostok.web.VostokWeb;
 import yueyang.vostok.http.VostokHttp;
 import yueyang.vostok.util.VostokUtil;
 import yueyang.vostok.ai.VostokAI;
-import yueyang.vostok.terminal.VostokTerminal;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -119,14 +118,6 @@ public final class Vostok {
                     }
                 }
 
-                if (config.getTerminalConfig() != null) {
-                    boolean already = Terminal.started();
-                    Terminal.init(config.getTerminalConfig());
-                    if (!already) {
-                        rollback.add(Terminal::close);
-                    }
-                }
-
                 boolean needWeb = config.getWebConfig() != null
                         || config.getWebSetup() != null
                         || config.isWebStart();
@@ -167,12 +158,6 @@ public final class Vostok {
                     () -> {
                         try {
                             AI.close();
-                        } catch (Exception ignore) {
-                        }
-                    },
-                    () -> {
-                        try {
-                            Terminal.close();
                         } catch (Exception ignore) {
                         }
                     },
@@ -326,11 +311,4 @@ public final class Vostok {
         }
     }
 
-    /**
-     * Terminal entry.
-     */
-    public static final class Terminal extends VostokTerminal {
-        private Terminal() {
-        }
-    }
 }
