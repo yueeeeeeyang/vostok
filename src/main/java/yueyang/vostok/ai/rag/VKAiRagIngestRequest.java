@@ -4,7 +4,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 public class VKAiRagIngestRequest {
-    private String profileName;
     private String model;
     private String documentId;
     private String version = "v1";
@@ -13,15 +12,6 @@ public class VKAiRagIngestRequest {
     private int chunkOverlap = 80;
     private boolean deduplicate = true;
     private final Map<String, String> metadata = new LinkedHashMap<>();
-
-    public String getProfileName() {
-        return profileName;
-    }
-
-    public VKAiRagIngestRequest profile(String profileName) {
-        this.profileName = profileName;
-        return this;
-    }
 
     public String getModel() {
         return model;

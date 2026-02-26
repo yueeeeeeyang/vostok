@@ -1,11 +1,7 @@
 package yueyang.vostok.ai.rag;
 
 public class VKAiRagRequest {
-    private String profileName;
-    private String chatProfileName;
-    private String embeddingProfileName;
-    private String rerankProfileName;
-    private String model;
+    private String chatModel;
     private String embeddingModel;
     private String rerankModel;
     private String query;
@@ -23,48 +19,12 @@ public class VKAiRagRequest {
     private int contextMaxChars = 1800;
     private String systemPrompt;
 
-    public String getProfileName() {
-        return profileName;
+    public String getChatModel() {
+        return chatModel;
     }
 
-    public VKAiRagRequest profile(String profileName) {
-        this.profileName = profileName;
-        return this;
-    }
-
-    public String getChatProfileName() {
-        return chatProfileName;
-    }
-
-    public VKAiRagRequest chatProfile(String chatProfileName) {
-        this.chatProfileName = chatProfileName;
-        return this;
-    }
-
-    public String getEmbeddingProfileName() {
-        return embeddingProfileName;
-    }
-
-    public VKAiRagRequest embeddingProfile(String embeddingProfileName) {
-        this.embeddingProfileName = embeddingProfileName;
-        return this;
-    }
-
-    public String getRerankProfileName() {
-        return rerankProfileName;
-    }
-
-    public VKAiRagRequest rerankProfile(String rerankProfileName) {
-        this.rerankProfileName = rerankProfileName;
-        return this;
-    }
-
-    public String getModel() {
-        return model;
-    }
-
-    public VKAiRagRequest model(String model) {
-        this.model = model;
+    public VKAiRagRequest chatModel(String chatModel) {
+        this.chatModel = chatModel;
         return this;
     }
 

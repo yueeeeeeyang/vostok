@@ -15,8 +15,6 @@ import yueyang.vostok.ai.core.VKAiDataMemoryStore;
 import yueyang.vostok.ai.VKAiConfig;
 import yueyang.vostok.ai.provider.VKAiModelConfig;
 import yueyang.vostok.ai.provider.VKAiModelType;
-import yueyang.vostok.ai.provider.VKAiProfileConfig;
-import yueyang.vostok.ai.provider.VKAiProviderConfig;
 import yueyang.vostok.ai.rag.VKAiEmbedding;
 import yueyang.vostok.ai.rag.VKAiEmbeddingRequest;
 import yueyang.vostok.ai.VKAiMetrics;
@@ -116,7 +114,7 @@ public class VostokAiTest {
                 .rerankCacheTtlMs(30_000)
                 .ragAnswerCacheTtlMs(30_000));
 
-        registerProfile("demo", null, null, null,
+        registerModelSet("demo", null, null, null,
                 "demo-chat", "demo-embed", "demo-rerank");
         Vostok.AI.clearTools();
         Vostok.AI.clearAudits();
@@ -151,7 +149,7 @@ public class VostokAiTest {
     @Test
     void testChatSuccessAndUsage() {
         VKAiChatResponse response = Vostok.AI.chat(new VKAiChatRequest()
-                .profile("demo")
+                .model("demo-chat")
                 .system("You are assistant")
                 .message("user", "hello"));
 
@@ -171,27 +169,26 @@ public class VostokAiTest {
 
     @Test
     void testChatJsonToPojo() {
-        registerProfile("json", "/v1/chat/json", null, null,
+        registerModelSet("json", "/v1/chat/json", null, null,
                 "json-chat", "json-embed", "json-rerank");
 
         ScoreResult result = Vostok.AI.chatJson(new VKAiChatRequest()
-                .profile("json")
-                .message("user", "return json")
-                .model("m-json"), ScoreResult.class);
+                .model("json-chat")
+                .message("user", "return json"), ScoreResult.class);
 
         assertEquals("neo", result.name);
         assertEquals(99, result.score);
     }
 
     @Test
-    void testWithProfileContextAndProfileSelection() {
-        registerProfile("a", "/v1/chat/clientA", null, null,
+    void testModelSelectionAcrossDifferentRegisteredModels() {
+        registerModelSet("a", "/v1/chat/clientA", null, null,
                 "a-chat", "a-embed", "a-rerank");
-        registerProfile("b", "/v1/chat/clientB", null, null,
+        registerModelSet("b", "/v1/chat/clientB", null, null,
                 "b-chat", "b-embed", "b-rerank");
 
-        String a = Vostok.AI.withProfile("a", () -> Vostok.AI.chat(new VKAiChatRequest().message("user", "x")).getText());
-        String b = Vostok.AI.withProfile("b", () -> Vostok.AI.chat(new VKAiChatRequest().message("user", "x")).getText());
+        String a = Vostok.AI.chat(new VKAiChatRequest().model("a-chat").message("user", "x")).getText();
+        String b = Vostok.AI.chat(new VKAiChatRequest().model("b-chat").message("user", "x")).getText();
 
         assertEquals("from-client-a", a);
         assertEquals("from-client-b", b);
@@ -199,11 +196,11 @@ public class VostokAiTest {
 
     @Test
     void testRetryOn5xxAndMetrics() {
-        registerProfile("retry", "/v1/chat/retry", null, null,
+        registerModelSet("retry", "/v1/chat/retry", null, null,
                 "retry-chat", "retry-embed", "retry-rerank");
 
         VKAiChatResponse response = Vostok.AI.chat(new VKAiChatRequest()
-                .profile("retry")
+                .model("retry-chat")
                 .message("user", "retry"));
 
         assertEquals("retry-ok", response.getText());
@@ -217,11 +214,11 @@ public class VostokAiTest {
 
     @Test
     void testFailOnNon2xx() {
-        registerProfile("fail", "/v1/chat/fail", null, null,
+        registerModelSet("fail", "/v1/chat/fail", null, null,
                 "fail-chat", "fail-embed", "fail-rerank");
 
         VKAiException ex = assertThrows(VKAiException.class,
-                () -> Vostok.AI.chat(new VKAiChatRequest().profile("fail").message("user", "x")));
+                () -> Vostok.AI.chat(new VKAiChatRequest().model("fail-chat").message("user", "x")));
 
         assertEquals(VKAiErrorCode.HTTP_STATUS, ex.getCode());
         assertEquals(400, ex.getStatusCode());
@@ -229,11 +226,11 @@ public class VostokAiTest {
 
     @Test
     void testJsonParseError() {
-        registerProfile("invalid", "/v1/chat/invalid", null, null,
+        registerModelSet("invalid", "/v1/chat/invalid", null, null,
                 "invalid-chat", "invalid-embed", "invalid-rerank");
 
         VKAiException ex = assertThrows(VKAiException.class,
-                () -> Vostok.AI.chatJson(new VKAiChatRequest().profile("invalid").message("user", "x"), ScoreResult.class));
+                () -> Vostok.AI.chatJson(new VKAiChatRequest().model("invalid-chat").message("user", "x"), ScoreResult.class));
 
         assertEquals(VKAiErrorCode.JSON_PARSE_ERROR, ex.getCode());
     }
@@ -241,7 +238,7 @@ public class VostokAiTest {
     @Test
     void testChatAsync() throws Exception {
         VKAiChatResponse response = Vostok.AI.chatAsync(new VKAiChatRequest()
-                        .profile("demo")
+                        .model("demo-chat")
                         .message("user", "async"))
                 .get(2, TimeUnit.SECONDS);
 
@@ -250,11 +247,11 @@ public class VostokAiTest {
 
     @Test
     void testChatStreamDeltaReading() {
-        registerProfile("stream", "/v1/chat/stream", null, null,
+        registerModelSet("stream", "/v1/chat/stream", null, null,
                 "stream-chat", "stream-embed", "stream-rerank");
 
         VKAiChatResponse response = Vostok.AI.chat(new VKAiChatRequest()
-                .profile("stream")
+                .model("stream-chat")
                 .stream(true)
                 .message("user", "stream please"));
 
@@ -284,12 +281,12 @@ public class VostokAiTest {
 
     @Test
     void testChatJsonRejectsStream() {
-        registerProfile("stream", "/v1/chat/stream", null, null,
+        registerModelSet("stream", "/v1/chat/stream", null, null,
                 "stream-chat", "stream-embed", "stream-rerank");
 
         VKAiException ex = assertThrows(VKAiException.class,
                 () -> Vostok.AI.chatJson(new VKAiChatRequest()
-                        .profile("stream")
+                        .model("stream-chat")
                         .stream(true)
                         .message("user", "json"), ScoreResult.class));
         assertEquals(VKAiErrorCode.INVALID_ARGUMENT, ex.getCode());
@@ -297,20 +294,27 @@ public class VostokAiTest {
 
     @Test
     void testSessionMemoryAndModelSwitch() {
-        registerProfile("session", "/v1/chat/session", null, null,
+        registerModelSet("session", "/v1/chat/session", null, null,
                 "session-chat", "session-embed", "session-rerank");
+        Vostok.AI.registerModel("model-b", new VKAiModelConfig()
+                .type(VKAiModelType.CHAT)
+                .provider("openai-compatible")
+                .baseUrl(baseUrl)
+                .path("/v1/chat/session")
+                .apiKey("demo-key")
+                .model("model-b"));
 
-        VKAiSession session = Vostok.AI.createSession("session", "model-a");
+        VKAiSession session = Vostok.AI.createSession("session-chat");
         assertNotNull(session.getSessionId());
-        assertEquals("model-a", session.getCurrentModel());
+        assertEquals("session-chat", session.getCurrentModel());
 
         VKAiChatResponse r1 = Vostok.AI.chatSession(session.getSessionId(), "hi");
-        assertTrue(r1.getText().contains("model-a"));
-        assertEquals("model-a", lastSessionModel.get());
+        assertTrue(r1.getText().contains("session-chat"));
+        assertEquals("session-chat", lastSessionModel.get());
         assertEquals(1, lastSessionMsgCount.get());
 
         VKAiChatResponse r2 = Vostok.AI.chatSession(session.getSessionId(), "again");
-        assertTrue(r2.getText().contains("model-a"));
+        assertTrue(r2.getText().contains("session-chat"));
         assertEquals(3, lastSessionMsgCount.get());
 
         Vostok.AI.switchSessionModel(session.getSessionId(), "model-b");
@@ -340,15 +344,15 @@ public class VostokAiTest {
                 .dialect(VKDialectType.MYSQL), "yueyang.vostok");
         try (var conn = java.sql.DriverManager.getConnection(jdbcUrl, "sa", "");
              var stmt = conn.createStatement()) {
-            stmt.execute("CREATE TABLE vk_ai_session (session_id VARCHAR(64) PRIMARY KEY, profile_name VARCHAR(64), current_model VARCHAR(128), created_at BIGINT, updated_at BIGINT, metadata_json VARCHAR(4000))");
+            stmt.execute("CREATE TABLE vk_ai_session (session_id VARCHAR(64) PRIMARY KEY, current_model VARCHAR(128), created_at BIGINT, updated_at BIGINT, metadata_json VARCHAR(4000))");
             stmt.execute("CREATE TABLE vk_ai_session_message (id BIGINT AUTO_INCREMENT PRIMARY KEY, session_id VARCHAR(64), seq BIGINT, role VARCHAR(32), content VARCHAR(4000), model VARCHAR(128), created_at BIGINT)");
         }
 
-        registerProfile("session", "/v1/chat/session", null, null,
+        registerModelSet("session", "/v1/chat/session", null, null,
                 "session-chat", "session-embed", "session-rerank");
         Vostok.AI.setMemoryStore(new VKAiDataMemoryStore());
 
-        VKAiSession session = Vostok.AI.createSession("session", "model-a");
+        VKAiSession session = Vostok.AI.createSession("session-chat");
         Vostok.AI.chatSession(session.getSessionId(), "persist me");
         Vostok.AI.chatSession(session.getSessionId(), "persist me too");
 
@@ -356,24 +360,23 @@ public class VostokAiTest {
         assertEquals(4, messages.size());
 
         VKAiSession loaded = Vostok.AI.session(session.getSessionId());
-        assertEquals("model-a", loaded.getCurrentModel());
-        assertEquals("session", loaded.getProfileName());
+        assertEquals("session-chat", loaded.getCurrentModel());
     }
 
 
     
     @Test
-    void testProfileValidationAndMissingProfile() {
+    void testModelValidationAndMissingModel() {
         VKAiException registerError = assertThrows(VKAiException.class,
-                () -> Vostok.AI.registerProvider("bad", new VKAiProviderConfig()));
+                () -> Vostok.AI.registerModel("bad", new VKAiModelConfig()));
         assertEquals(VKAiErrorCode.CONFIG_ERROR, registerError.getCode());
 
         Vostok.AI.close();
         Vostok.AI.init(new VKAiConfig());
 
-        VKAiException noProfile = assertThrows(VKAiException.class,
+        VKAiException noModel = assertThrows(VKAiException.class,
                 () -> Vostok.AI.chat(new VKAiChatRequest().message("user", "x")));
-        assertEquals(VKAiErrorCode.CONFIG_ERROR, noProfile.getCode());
+        assertEquals(VKAiErrorCode.CONFIG_ERROR, noModel.getCode());
     }
 
     @Test
@@ -390,12 +393,12 @@ public class VostokAiTest {
 
     @Test
     void testChatAutoToolCallingAndAudit() {
-        registerProfile("tool", "/v1/chat/tool", null, null,
+        registerModelSet("tool", "/v1/chat/tool", null, null,
                 "tool-chat", "tool-embed", "tool-rerank");
         Vostok.AI.registerTool(sumTool());
 
         VKAiChatResponse response = Vostok.AI.chat(new VKAiChatRequest()
-                .profile("tool")
+                .model("tool-chat")
                 .allowTool("sum")
                 .message("user", "calc"));
 
@@ -409,13 +412,13 @@ public class VostokAiTest {
 
     @Test
     void testToolDeniedByAllowList() {
-        registerProfile("tool", "/v1/chat/tool", null, null,
+        registerModelSet("tool", "/v1/chat/tool", null, null,
                 "tool-chat", "tool-embed", "tool-rerank");
         Vostok.AI.registerTool(sumTool());
 
         VKAiException ex = assertThrows(VKAiException.class,
                 () -> Vostok.AI.chat(new VKAiChatRequest()
-                        .profile("tool")
+                        .model("tool-chat")
                         .allowTool("other")
                         .message("user", "calc")));
 
@@ -424,12 +427,12 @@ public class VostokAiTest {
 
     @Test
     void testToolNotFound() {
-        registerProfile("tool-missing", "/v1/chat/tool-missing", null, null,
+        registerModelSet("tool-missing", "/v1/chat/tool-missing", null, null,
                 "tool-missing-chat", "tool-missing-embed", "tool-missing-rerank");
 
         VKAiException ex = assertThrows(VKAiException.class,
                 () -> Vostok.AI.chat(new VKAiChatRequest()
-                        .profile("tool-missing")
+                        .model("tool-missing-chat")
                         .allowTool("missing_tool")
                         .message("user", "calc")));
 
@@ -440,7 +443,7 @@ public class VostokAiTest {
     void testSecurityBlockForPrompt() {
         VKAiException ex = assertThrows(VKAiException.class,
                 () -> Vostok.AI.chat(new VKAiChatRequest()
-                        .profile("demo")
+                        .model("demo-chat")
                         .message("user", "<script>alert(1)</script>")));
         assertEquals(VKAiErrorCode.SECURITY_BLOCKED, ex.getCode());
     }
@@ -455,8 +458,8 @@ public class VostokAiTest {
 
     @Test
     void testAuditLimitAndClear() {
-        Vostok.AI.chat(new VKAiChatRequest().profile("demo").message("user", "hello"));
-        Vostok.AI.chat(new VKAiChatRequest().profile("demo").message("user", "hello2"));
+        Vostok.AI.chat(new VKAiChatRequest().model("demo-chat").message("user", "hello"));
+        Vostok.AI.chat(new VKAiChatRequest().model("demo-chat").message("user", "hello2"));
 
         List<VKAiAuditRecord> last = Vostok.AI.audits(1);
         assertEquals(1, last.size());
@@ -468,7 +471,7 @@ public class VostokAiTest {
     @Test
     void testEmbedding() {
         List<VKAiEmbedding> out = Vostok.AI.embed(new VKAiEmbeddingRequest()
-                .profile("demo")
+                .model("demo-embed")
                 .input("java")
                 .input("python"));
         assertEquals(2, out.size());
@@ -477,8 +480,8 @@ public class VostokAiTest {
 
     @Test
     void testEmbeddingCacheHit() {
-        List<VKAiEmbedding> first = Vostok.AI.embed(new VKAiEmbeddingRequest().profile("demo").input("java"));
-        List<VKAiEmbedding> second = Vostok.AI.embed(new VKAiEmbeddingRequest().profile("demo").input("java"));
+        List<VKAiEmbedding> first = Vostok.AI.embed(new VKAiEmbeddingRequest().model("demo-embed").input("java"));
+        List<VKAiEmbedding> second = Vostok.AI.embed(new VKAiEmbeddingRequest().model("demo-embed").input("java"));
         assertEquals(first.get(0).getVector(), second.get(0).getVector());
         assertEquals(1, embeddingCounter.get(), "second embed should hit cache");
     }
@@ -486,7 +489,7 @@ public class VostokAiTest {
     @Test
     void testRerank() {
         VKAiRerankResponse res = Vostok.AI.rerank(new VKAiRerankRequest()
-                .profile("demo")
+                .model("demo-rerank")
                 .query("jvm")
                 .document("python language")
                 .document("java jvm tuning")
@@ -500,13 +503,13 @@ public class VostokAiTest {
     @Test
     void testRerankCacheHit() {
         Vostok.AI.rerank(new VKAiRerankRequest()
-                .profile("demo")
+                .model("demo-rerank")
                 .query("jvm")
                 .document("python language")
                 .document("java jvm tuning")
                 .topK(2));
         Vostok.AI.rerank(new VKAiRerankRequest()
-                .profile("demo")
+                .model("demo-rerank")
                 .query("jvm")
                 .document("python language")
                 .document("java jvm tuning")
@@ -521,16 +524,29 @@ public class VostokAiTest {
                 .auditEnabled(true)
                 .securityCheckEnabled(true)
                 .blockOnSecurityRisk(true));
-        registerProfile("layer", null, null, null,
+        registerModelSet("layer", null, null, null,
                 "layer-chat", "embed-client", "rerank-client");
+        Vostok.AI.registerModel("embed-request", new VKAiModelConfig()
+                .type(VKAiModelType.EMBEDDING)
+                .provider("openai-compatible")
+                .baseUrl(baseUrl)
+                .path("/v1/embeddings")
+                .apiKey("demo-key")
+                .model("embed-request"));
+        Vostok.AI.registerModel("rerank-request", new VKAiModelConfig()
+                .type(VKAiModelType.RERANK)
+                .provider("openai-compatible")
+                .baseUrl(baseUrl)
+                .path("/v1/rerank")
+                .apiKey("demo-key")
+                .model("rerank-request"));
 
-        Vostok.AI.embed(new VKAiEmbeddingRequest().profile("layer").model("embed-request").input("hello"));
+        Vostok.AI.embed(new VKAiEmbeddingRequest().model("embed-request").input("hello"));
         assertEquals("embed-request", lastEmbeddingModel.get());
-        Vostok.AI.embed(new VKAiEmbeddingRequest().profile("layer").input("hello2"));
+        Vostok.AI.embed(new VKAiEmbeddingRequest().model("layer-embed").input("hello2"));
         assertEquals("embed-client", lastEmbeddingModel.get());
 
         Vostok.AI.rerank(new VKAiRerankRequest()
-                .profile("layer")
                 .model("rerank-request")
                 .query("q")
                 .document("a")
@@ -538,7 +554,7 @@ public class VostokAiTest {
                 .topK(1));
         assertEquals("rerank-request", lastRerankModel.get());
         Vostok.AI.rerank(new VKAiRerankRequest()
-                .profile("layer")
+                .model("layer-rerank")
                 .query("q2")
                 .document("a")
                 .document("b")
@@ -548,29 +564,29 @@ public class VostokAiTest {
 
     @Test
     void testRagHealthCheckSuccessAndConfigErrorMapping() {
-        Vostok.AI.healthCheckRag("demo", true);
+        Vostok.AI.healthCheckRag("demo-embed", "demo-rerank", true);
         assertNotNull(lastEmbeddingModel.get());
         assertNotNull(lastRerankModel.get());
 
-        registerProfile("bad-rag", null, null, null,
+        registerModelSet("bad-rag", null, null, null,
                 "bad-chat", "bad-embed", "bad-rerank");
 
-        VKAiException ex = assertThrows(VKAiException.class, () -> Vostok.AI.healthCheckRag("bad-rag", false));
+        VKAiException ex = assertThrows(VKAiException.class, () -> Vostok.AI.healthCheckRag("bad-rag-embed", null, false));
         assertEquals(VKAiErrorCode.CONFIG_ERROR, ex.getCode());
         assertTrue(ex.getMessage().contains("precheck failed at embedding"));
     }
 
     @Test
-    void testRagCanUseDifferentProfilesForChatEmbeddingRerank() {
-        registerProfile("rag-chat", "/v1/chat/rag-alt", null, null,
+    void testRagCanUseDifferentModelsForChatEmbeddingRerank() {
+        registerModelSet("rag-chat", "/v1/chat/rag-alt", null, null,
                 "rag-chat", "rag-chat-embed", "rag-chat-rerank");
-        registerProfile("rag-embed", null, "/v1/embeddings-alt", null,
+        registerModelSet("rag-embed", null, "/v1/embeddings-alt", null,
                 "rag-embed-chat", "rag-embed", "rag-embed-rerank");
-        registerProfile("rag-rerank", null, null, "/v1/rerank-alt",
+        registerModelSet("rag-rerank", null, null, "/v1/rerank-alt",
                 "rag-rerank-chat", "rag-rerank-embed", "rag-rerank");
 
         List<VKAiEmbedding> docs = Vostok.AI.embed(new VKAiEmbeddingRequest()
-                .profile("rag-embed")
+                .model("rag-embed-embed")
                 .input("java runs on jvm")
                 .input("python uses interpreter"));
         Vostok.AI.upsertVectorDocs(List.of(
@@ -579,10 +595,9 @@ public class VostokAiTest {
         ));
 
         VKAiRagResponse response = Vostok.AI.rag(new VKAiRagRequest()
-                .profile("demo")
-                .chatProfile("rag-chat")
-                .embeddingProfile("rag-embed")
-                .rerankProfile("rag-rerank")
+                .chatModel("rag-chat-chat")
+                .embeddingModel("rag-embed-embed")
+                .rerankModel("rag-rerank-rerank")
                 .query("what runs on jvm?")
                 .topK(1));
 
@@ -606,10 +621,10 @@ public class VostokAiTest {
 
     @Test
     void testRagPipeline() {
-        registerProfile("rag", "/v1/chat/rag", "/v1/embeddings", "/v1/rerank",
+        registerModelSet("rag", "/v1/chat/rag", "/v1/embeddings", "/v1/rerank",
                 "rag-chat", "rag-embed", "rag-rerank");
 
-        List<VKAiEmbedding> docs = Vostok.AI.embed(new VKAiEmbeddingRequest().profile("rag")
+        List<VKAiEmbedding> docs = Vostok.AI.embed(new VKAiEmbeddingRequest().model("rag-embed")
                 .input("java runs on jvm")
                 .input("python uses interpreter"));
 
@@ -619,7 +634,9 @@ public class VostokAiTest {
         ));
 
         VKAiRagResponse response = Vostok.AI.rag(new VKAiRagRequest()
-                .profile("rag")
+                .chatModel("rag-chat")
+                .embeddingModel("rag-embed")
+                .rerankModel("rag-rerank")
                 .query("what runs on jvm?")
                 .topK(1));
 
@@ -631,9 +648,9 @@ public class VostokAiTest {
 
     @Test
     void testRagAnswerCacheHit() {
-        registerProfile("rag", "/v1/chat/rag", "/v1/embeddings", "/v1/rerank",
+        registerModelSet("rag", "/v1/chat/rag", "/v1/embeddings", "/v1/rerank",
                 "rag-chat", "rag-embed", "rag-rerank");
-        List<VKAiEmbedding> docs = Vostok.AI.embed(new VKAiEmbeddingRequest().profile("rag")
+        List<VKAiEmbedding> docs = Vostok.AI.embed(new VKAiEmbeddingRequest().model("rag-embed")
                 .input("java runs on jvm")
                 .input("python uses interpreter"));
         Vostok.AI.upsertVectorDocs(List.of(
@@ -641,18 +658,18 @@ public class VostokAiTest {
                 new VKAiVectorDoc("doc-py", "python uses interpreter", docs.get(1).getVector(), Map.of())
         ));
 
-        Vostok.AI.rag(new VKAiRagRequest().profile("rag").query("what runs on jvm?").topK(1));
-        Vostok.AI.rag(new VKAiRagRequest().profile("rag").query("what runs on jvm?").topK(1));
+        Vostok.AI.rag(new VKAiRagRequest().chatModel("rag-chat").embeddingModel("rag-embed").rerankModel("rag-rerank").query("what runs on jvm?").topK(1));
+        Vostok.AI.rag(new VKAiRagRequest().chatModel("rag-chat").embeddingModel("rag-embed").rerankModel("rag-rerank").query("what runs on jvm?").topK(1));
         assertEquals(1, ragChatCounter.get(), "second rag answer should hit cache");
     }
 
     @Test
     void testRagIngestChunkOverlapDedupAndVersion() {
-        registerProfile("rag", "/v1/chat/rag", "/v1/embeddings", "/v1/rerank",
+        registerModelSet("rag", "/v1/chat/rag", "/v1/embeddings", "/v1/rerank",
                 "rag-chat", "rag-embed", "rag-rerank");
 
         VKAiRagIngestResult v1 = Vostok.AI.ingestRagDocument(new VKAiRagIngestRequest()
-                .profile("rag")
+                .model("rag-embed")
                 .documentId("doc-1")
                 .version("v1")
                 .chunkSize(12)
@@ -665,7 +682,7 @@ public class VostokAiTest {
         assertTrue(v1.getInsertedChunks() < v1.getTotalChunks());
 
         VKAiRagIngestResult v2 = Vostok.AI.ingestRagDocument(new VKAiRagIngestRequest()
-                .profile("rag")
+                .model("rag-embed")
                 .documentId("doc-1")
                 .version("v2")
                 .chunkSize(64)
@@ -689,7 +706,9 @@ public class VostokAiTest {
         ));
 
         VKAiRagResponse response = Vostok.AI.rag(new VKAiRagRequest()
-                .profile("demo")
+                .chatModel("demo-chat")
+                .embeddingModel("demo-embed")
+                .rerankModel("demo-rerank")
                 .query("rarekeyword")
                 .topK(1)
                 .rerankEnabled(false)
@@ -703,7 +722,7 @@ public class VostokAiTest {
     @Test
     void testHistoryTrimOnChatRequest() {
         Vostok.AI.chat(new VKAiChatRequest()
-                .profile("demo")
+                .model("demo-chat")
                 .historyMaxMessages(3)
                 .historyMaxChars(120)
                 .message("user", "m1")
@@ -718,7 +737,7 @@ public class VostokAiTest {
 
     @Test
     void testRagLightQueryRewrite() {
-        registerProfile("rag", "/v1/chat/rag", "/v1/embeddings", "/v1/rerank",
+        registerModelSet("rag", "/v1/chat/rag", "/v1/embeddings", "/v1/rerank",
                 "rag-chat", "rag-embed", "rag-rerank");
         Vostok.AI.upsertVectorDocs(List.of(
                 new VKAiVectorDoc("q1", "java runs on jvm", List.of(0.95, 0.05), Map.of()),
@@ -729,7 +748,9 @@ public class VostokAiTest {
                 + "我们正在讨论服务端架构演进、部署方式、日志和监控等。请问到底什么运行在jvm上，"
                 + "并且给出关键结论和依据。";
         Vostok.AI.rag(new VKAiRagRequest()
-                .profile("rag")
+                .chatModel("rag-chat")
+                .embeddingModel("rag-embed")
+                .rerankModel("rag-rerank")
                 .query(longQuery)
                 .topK(2)
                 .dynamicTopKEnabled(false));
@@ -749,7 +770,9 @@ public class VostokAiTest {
         ));
 
         VKAiRagResponse response = Vostok.AI.rag(new VKAiRagRequest()
-                .profile("demo")
+                .chatModel("demo-chat")
+                .embeddingModel("demo-embed")
+                .rerankModel("demo-rerank")
                 .query("jvm")
                 .topK(4)
                 .queryRewriteEnabled(false)
@@ -760,7 +783,7 @@ public class VostokAiTest {
 
     @Test
     void testRagMergeSimilarChunksAndContextCompression() {
-        registerProfile("rag", "/v1/chat/rag", "/v1/embeddings", "/v1/rerank",
+        registerModelSet("rag", "/v1/chat/rag", "/v1/embeddings", "/v1/rerank",
                 "rag-chat", "rag-embed", "rag-rerank");
         String longA = "partA java jvm " + "alpha ".repeat(40);
         String longB = "partB java jvm " + "beta ".repeat(40);
@@ -773,7 +796,9 @@ public class VostokAiTest {
         ));
 
         VKAiRagResponse response = Vostok.AI.rag(new VKAiRagRequest()
-                .profile("rag")
+                .chatModel("rag-chat")
+                .embeddingModel("rag-embed")
+                .rerankModel("rag-rerank")
                 .query("java jvm")
                 .topK(4)
                 .queryRewriteEnabled(false)
@@ -788,56 +813,45 @@ public class VostokAiTest {
         assertTrue(lastRagUserPrompt.get().length() < 320);
     }
 
-    private void registerProfile(String profileName,
+    private void registerModelSet(String profileName,
                                  String chatPath,
                                  String embeddingPath,
                                  String rerankPath,
                                  String chatModel,
                                  String embeddingModel,
                                  String rerankModel) {
-        String providerName = profileName + "-provider";
-        VKAiProviderConfig provider = new VKAiProviderConfig()
-                .baseUrl(baseUrl)
-                .apiKey("demo-key");
-        if (chatPath != null) {
-            provider.chatPath(chatPath);
-        }
-        if (embeddingPath != null) {
-            provider.embeddingPath(embeddingPath);
-        }
-        if (rerankPath != null) {
-            provider.rerankPath(rerankPath);
-        }
-        Vostok.AI.registerProvider(providerName, provider);
+        String resolvedChatPath = chatPath == null ? "/v1/chat/completions" : chatPath;
+        String resolvedEmbeddingPath = embeddingPath == null ? "/v1/embeddings" : embeddingPath;
+        String resolvedRerankPath = rerankPath == null ? "/v1/rerank" : rerankPath;
 
         String chatModelId = profileName + "-chat";
         Vostok.AI.registerModel(chatModelId, new VKAiModelConfig()
                 .type(VKAiModelType.CHAT)
-                .provider(providerName)
+                .provider("openai-compatible")
+                .baseUrl(baseUrl)
+                .path(resolvedChatPath)
+                .apiKey("demo-key")
                 .model(chatModel));
 
-        String embeddingModelId = null;
         if (embeddingModel != null) {
-            embeddingModelId = profileName + "-embed";
-            Vostok.AI.registerModel(embeddingModelId, new VKAiModelConfig()
+            Vostok.AI.registerModel(profileName + "-embed", new VKAiModelConfig()
                     .type(VKAiModelType.EMBEDDING)
-                    .provider(providerName)
+                    .provider("openai-compatible")
+                    .baseUrl(baseUrl)
+                    .path(resolvedEmbeddingPath)
+                    .apiKey("demo-key")
                     .model(embeddingModel));
         }
 
-        String rerankModelId = null;
         if (rerankModel != null) {
-            rerankModelId = profileName + "-rerank";
-            Vostok.AI.registerModel(rerankModelId, new VKAiModelConfig()
+            Vostok.AI.registerModel(profileName + "-rerank", new VKAiModelConfig()
                     .type(VKAiModelType.RERANK)
-                    .provider(providerName)
+                    .provider("openai-compatible")
+                    .baseUrl(baseUrl)
+                    .path(resolvedRerankPath)
+                    .apiKey("demo-key")
                     .model(rerankModel));
         }
-
-        Vostok.AI.registerProfile(profileName, new VKAiProfileConfig()
-                .chatModel(chatModelId)
-                .embeddingModel(embeddingModelId)
-                .rerankModel(rerankModelId));
     }
 
     private VKAiTool sumTool() {

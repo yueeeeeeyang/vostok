@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.Set;
 
 public class VKAiChatRequest {
-    private String profileName;
     private String systemPrompt;
     private final List<VKAiMessage> messages = new ArrayList<>();
     private Double temperature;
@@ -17,15 +16,6 @@ public class VKAiChatRequest {
     private boolean historyTrimEnabled = true;
     private Integer historyMaxMessages;
     private Integer historyMaxChars;
-
-    public String getProfileName() {
-        return profileName;
-    }
-
-    public VKAiChatRequest profile(String profileName) {
-        this.profileName = profileName;
-        return this;
-    }
 
     public String getSystemPrompt() {
         return systemPrompt;

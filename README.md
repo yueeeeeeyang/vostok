@@ -5123,95 +5123,70 @@ long crc = Vostok.Util.crc32("hello".getBytes(StandardCharsets.UTF_8));
 
 ## 12.0 说明与注意事项
 
-- 当前第三期提供 `Chat/ChatJson`、多 Client、基础重试、指标、`Tool Calling`、审计日志与基础安全策略，并新增 `Embedding / Rerank / Vector Store / RAG`。
-- AI 包结构按职责拆分为：
-  - `yueyang.vostok.ai`：统一门面与通用模型
-  - `yueyang.vostok.ai.core`：运行时编排
-  - `yueyang.vostok.ai.provider`：Provider 客户端配置
-  - `yueyang.vostok.ai.tool`：工具调用模型与接口
-  - `yueyang.vostok.ai.prompt`：提示词模板与注册器
-  - `yueyang.vostok.ai.rag`：Embedding/Rerank/Vector/RAG 模型与实现
-  - `yueyang.vostok.ai.exception`：异常模型
-- 建议使用 OpenAI 兼容协议 Provider（默认 `chatPath=/v1/chat/completions`）。
-- AI 传输层已统一迁移到 `Vostok.Http`：
-  - 非流式（chat/embed/rerank）走 `Vostok.Http.execute(...)`
-  - 流式 chat 走 `Vostok.Http.openSse(...)`
-  - 统一复用 `Vostok.Http` 的连接池、超时/限流/熔断与流式 watchdog 能力
-- 当存在多个命名 Profile 时，必须通过 `request.profile(name)` 或 `withProfile(name, ...)` 指定上下文。
-- `chatJson(...)` 会将模型文本结果按 JSON 反序列化为目标类型；如格式不合法会抛 `JSON_PARSE_ERROR`。
-- 当启用安全策略且 `blockOnSecurityRisk=true` 时，Prompt/Tool 参数命中风险会直接阻断（`SECURITY_BLOCKED`）。
+- AI 模块已采用 **Model-only** 组织方式：仅需 `registerModel(...)`，不再注册 Provider/Profile。
+- 每个 `VKAiModelConfig` 自带连接信息（`baseUrl/path/apiKey/headers/timeout/retry`）与模型类型（`CHAT/EMBEDDING/RERANK`）。
+- `chat/embed/rerank/rag` 均通过已注册模型名路由。
+- `rag(...)` 需要在请求中显式指定链路模型：`chatModel + embeddingModel + rerankModel(可选)`。
+- AI 传输层统一使用 `Vostok.Http`：
+  - 非流式：`Vostok.Http.execute(...)`
+  - 流式：`Vostok.Http.openSse(...)`
+- `chatJson(...)` 不支持 `stream=true`。
 
-## 12.1 接口定义
+## 12.1 包结构
+
+- `yueyang.vostok.ai`：统一门面与通用模型
+- `yueyang.vostok.ai.core`：运行时编排
+- `yueyang.vostok.ai.provider`：模型类型与模型配置
+- `yueyang.vostok.ai.tool`：工具调用接口与模型
+- `yueyang.vostok.ai.prompt`：提示词模板与注册器
+- `yueyang.vostok.ai.rag`：Embedding/Rerank/Vector/RAG 模型与实现
+- `yueyang.vostok.ai.exception`：异常模型
+
+## 12.2 门面接口（核心）
 
 ```java
 public interface Vostok.AI {
-    public static void init();
-    public static void init(VKAiConfig config);
-    public static void reinit(VKAiConfig config);
-    public static boolean started();
-    public static VKAiConfig config();
-    public static void close();
+    static void init();
+    static void init(VKAiConfig config);
+    static void reinit(VKAiConfig config);
+    static void close();
 
-    public static void registerProvider(String name, VKAiProviderConfig config);
-    public static void registerModel(String name, VKAiModelConfig config);
-    public static void registerProfile(String name, VKAiProfileConfig config);
-    public static void withProfile(String name, Runnable action);
-    public static <T> T withProfile(String name, Supplier<T> supplier);
-    public static Set<String> profileNames();
-    public static String currentProfileName();
+    static void registerModel(String name, VKAiModelConfig config);
 
-    public static void setMemoryStore(VKAiMemoryStore store);
-    public static VKAiSession createSession(String profileName);
-    public static VKAiSession createSession(String profileName, String model);
-    public static VKAiSession session(String sessionId);
-    public static VKAiSession switchSessionModel(String sessionId, String model);
-    public static List<VKAiSessionMessage> sessionMessages(String sessionId);
-    public static VKAiChatResponse chatSession(String sessionId, String userText);
-    public static void deleteSession(String sessionId);
+    static VKAiChatResponse chat(VKAiChatRequest request);
+    static CompletableFuture<VKAiChatResponse> chatAsync(VKAiChatRequest request);
+    static <T> T chatJson(VKAiChatRequest request, Class<T> type);
 
-    public static VKAiChatResponse chat(VKAiChatRequest request);
-    public static CompletableFuture<VKAiChatResponse> chatAsync(VKAiChatRequest request);
+    static List<VKAiEmbedding> embed(VKAiEmbeddingRequest request);
+    static VKAiRerankResponse rerank(VKAiRerankRequest request);
+    static VKAiRagResponse rag(VKAiRagRequest request);
+    static VKAiRagIngestResult ingestRagDocument(VKAiRagIngestRequest request);
 
-    public static <T> T chatJson(VKAiChatRequest request, Class<T> type);
-    public static <T> CompletableFuture<T> chatJsonAsync(VKAiChatRequest request, Class<T> type);
+    static void healthCheckRag(String embeddingModel, String rerankModel);
+    static void healthCheckRag(String embeddingModel, String rerankModel, boolean includeRerank);
 
-    public static void registerTool(VKAiTool tool);
-    public static void clearTools();
-    public static Set<String> toolNames();
-    public static VKAiToolCallResult callTool(VKAiToolCall call);
+    static VKAiSession createSession(String model);
+    static VKAiChatResponse chatSession(String sessionId, String userText);
+    static VKAiSession switchSessionModel(String sessionId, String model);
 
-    public static List<VKAiEmbedding> embed(VKAiEmbeddingRequest request);
-    public static VKAiRerankResponse rerank(VKAiRerankRequest request);
+    static void registerTool(VKAiTool tool);
+    static VKAiToolCallResult callTool(VKAiToolCall call);
 
-    public static void setVectorStore(VKAiVectorStore store);
-    public static void upsertVectorDocs(List<VKAiVectorDoc> docs);
-    public static List<VKAiVectorHit> searchVector(List<Double> queryVector, int topK);
-    public static List<VKAiVectorHit> searchKeywords(String query, int topK);
-    public static VKAiRagIngestResult ingestRagDocument(VKAiRagIngestRequest request);
-    public static void clearVectorStore();
-    public static VKAiRagResponse rag(VKAiRagRequest request);
-    public static void healthCheckRag(String profileName);
-    public static void healthCheckRag(String profileName, boolean includeRerank);
-
-    public static List<VKAiAuditRecord> audits(int limit);
-    public static void clearAudits();
-
-    public static VKAiMetrics metrics();
-    public static void resetMetrics();
+    static VKAiMetrics metrics();
+    static void resetMetrics();
 }
 ```
 
-## 12.2 使用 Demo
+## 12.3 快速使用
 
 ```java
 import yueyang.vostok.Vostok;
 import yueyang.vostok.ai.*;
 import yueyang.vostok.ai.provider.*;
-import yueyang.vostok.ai.tool.*;
 import yueyang.vostok.ai.rag.*;
 import yueyang.vostok.cache.*;
 
-// 0) 初始化 Cache（RAG 一级缓存依赖 Vostok.Cache）
+// 0) 初始化 Cache（RAG 缓存依赖）
 Vostok.Cache.init(new VKCacheConfig()
         .providerType(VKCacheProviderType.MEMORY)
         .codec("string"));
@@ -5222,297 +5197,143 @@ Vostok.AI.init(new VKAiConfig()
         .readTimeoutMs(30000)
         .maxRetries(1)
         .retryBackoffMs(150)
-        .ragCacheEnabled(true)
-        .embeddingCacheTtlMs(6 * 60 * 60 * 1000L)
-        .rerankCacheTtlMs(30 * 60 * 1000L)
-        .ragAnswerCacheTtlMs(10 * 60 * 1000L)
-        .ragRerankTimeoutMs(1500));
+        .ragCacheEnabled(true));
 
-// 2) 注册 Provider / Model / Profile
-Vostok.AI.registerProvider("openai-provider", new VKAiProviderConfig()
-        .baseUrl("https://api.openai.com")
-        .apiKey("sk-***"));
-Vostok.AI.registerModel("gpt4o-mini", new VKAiModelConfig()
+// 2) 只注册模型（每个模型自带 provider 信息）
+Vostok.AI.registerModel("chat-main", new VKAiModelConfig()
         .type(VKAiModelType.CHAT)
-        .provider("openai-provider")
+        .provider("openai-compatible")
+        .baseUrl("https://api.openai.com")
+        .path("/v1/chat/completions")
+        .apiKey("sk-***")
         .model("gpt-4o-mini"));
-Vostok.AI.registerModel("embed3-small", new VKAiModelConfig()
+
+Vostok.AI.registerModel("embed-main", new VKAiModelConfig()
         .type(VKAiModelType.EMBEDDING)
-        .provider("openai-provider")
+        .provider("openai-compatible")
+        .baseUrl("https://api.openai.com")
+        .path("/v1/embeddings")
+        .apiKey("sk-***")
         .model("text-embedding-3-small"));
-Vostok.AI.registerModel("rerank-bge", new VKAiModelConfig()
+
+Vostok.AI.registerModel("rerank-main", new VKAiModelConfig()
         .type(VKAiModelType.RERANK)
-        .provider("openai-provider")
+        .provider("openai-compatible")
+        .baseUrl("https://api.openai.com")
+        .path("/v1/rerank")
+        .apiKey("sk-***")
         .model("bge-reranker-v2-m3"));
-Vostok.AI.registerProfile("openai-default", new VKAiProfileConfig()
-        .chatModel("gpt4o-mini")
-        .embeddingModel("embed3-small")
-        .rerankModel("rerank-bge"));
 
 // 3) Chat
-VKAiChatResponse r = Vostok.AI.chat(new VKAiChatRequest()
-        .profile("openai-default")
+VKAiChatResponse chat = Vostok.AI.chat(new VKAiChatRequest()
+        .model("chat-main")
         .system("You are a concise assistant")
-        .historyTrimEnabled(true)
-        .historyMaxMessages(12)
-        .historyMaxChars(4000)
         .message("user", "Hello"));
-System.out.println(r.getText());
 
-// 3.1) Chat 流式（返回类型不变，直接消费增量）
-VKAiChatResponse sr = Vostok.AI.chat(new VKAiChatRequest()
-        .profile("openai-default")
-        .stream(true)
-        .message("user", "stream demo"));
-try (VKAiChatDeltaStream ds = sr.stream()) {
-    while (ds.hasNext(30_000)) {
-        System.out.print(ds.next().getContentDelta());
-    }
-}
-
-// 4) ChatJson
-class Summary {
-    public String title;
-    public int score;
-}
-Summary summary = Vostok.AI.chatJson(new VKAiChatRequest()
-        .profile("openai-default")
-        .system("Return JSON only")
-        .message("user", "{" + "\\\"title\\\":\\\"Demo\\\",\\\"score\\\":95}"), Summary.class);
-
-// 5) 多 profile 上下文
-String text = Vostok.AI.withProfile("openai-default", () ->
-        Vostok.AI.chat(new VKAiChatRequest().message("user", "ping")).getText());
-
-// 5.1) 会话记忆（默认内存）
-VKAiSession session = Vostok.AI.createSession("openai-default", "gpt4o-mini");
-VKAiChatResponse s1 = Vostok.AI.chatSession(session.getSessionId(), "我叫Tom");
-VKAiChatResponse s2 = Vostok.AI.chatSession(session.getSessionId(), "我叫什么名字?");
-System.out.println(s2.getText());
-
-// 5.2) 会话切换模型（历史对话自动延续）
-Vostok.AI.switchSessionModel(session.getSessionId(), "gpt-4.1-mini");
-VKAiChatResponse s3 = Vostok.AI.chatSession(session.getSessionId(), "继续刚才的话题");
-System.out.println(s3.getText());
-
-// 5.3) 切换为 Vostok.Data 持久化存储
-// 需要先初始化 Vostok.Data，并准备表 vk_ai_session / vk_ai_session_message
-Vostok.AI.setMemoryStore(new yueyang.vostok.ai.core.VKAiDataMemoryStore());
-
-// 6) 注册工具并手动调用
-Vostok.AI.registerTool(new VKAiTool() {
-    public String name() { return "sum"; }
-    public String description() { return "sum two integers"; }
-    public String inputJsonSchema() { return "{\"type\":\"object\",\"properties\":{\"a\":{\"type\":\"integer\"},\"b\":{\"type\":\"integer\"}}}"; }
-    public String outputJsonSchema() { return "{\"type\":\"object\",\"properties\":{\"result\":{\"type\":\"integer\"}}}"; }
-    public VKAiToolResult invoke(String inputJson) {
-        Map<?, ?> in = Vostok.Util.fromJson(inputJson, Map.class);
-        int a = ((Number) in.getOrDefault("a", 0)).intValue();
-        int b = ((Number) in.getOrDefault("b", 0)).intValue();
-        return VKAiToolResult.ofJson("{\"result\":" + (a + b) + "}");
-    }
-});
-VKAiToolCallResult toolResult = Vostok.AI.callTool(new VKAiToolCall("call-1", "sum", "{\"a\":2,\"b\":3}"));
-System.out.println(toolResult.getOutputJson());
-
-// 7) Chat 中自动工具调用（Provider 返回 tool_calls 时执行）
-VKAiChatResponse tr = Vostok.AI.chat(new VKAiChatRequest()
-        .profile("openai-default")
-        .allowTool("sum")
-        .message("user", "calc 2+3"));
-System.out.println(tr.getToolResults().size());
-
-// 8) 审计
-List<VKAiAuditRecord> audits = Vostok.AI.audits(20);
-System.out.println(audits.size());
-
-// 9) Embedding + Vector Store + RAG
+// 4) Embedding + RAG
 List<VKAiEmbedding> vectors = Vostok.AI.embed(new VKAiEmbeddingRequest()
-        .profile("openai-default")
+        .model("embed-main")
         .input("java runs on jvm")
         .input("python uses interpreter"));
 
 Vostok.AI.upsertVectorDocs(List.of(
-        new VKAiVectorDoc("doc-java", "java runs on jvm", vectors.get(0).getVector(), Map.of("lang", "java")),
-        new VKAiVectorDoc("doc-py", "python uses interpreter", vectors.get(1).getVector(), Map.of("lang", "python"))
+        new VKAiVectorDoc("doc-java", "java runs on jvm", vectors.get(0).getVector(), Map.of()),
+        new VKAiVectorDoc("doc-py", "python uses interpreter", vectors.get(1).getVector(), Map.of())
 ));
 
-// 9.1) 文档切片入库（带重叠窗口/去重/版本）
-VKAiRagIngestResult ingest = Vostok.AI.ingestRagDocument(new VKAiRagIngestRequest()
-        .profile("openai-default")
-        .documentId("kb-java")
-        .version("2026-02-24")
-        .chunkSize(500)
-        .chunkOverlap(80)
-        .deduplicate(true)
-        .text("... long document ..."));
-System.out.println(ingest.getInsertedChunks());
-
 VKAiRagResponse rag = Vostok.AI.rag(new VKAiRagRequest()
-        .profile("openai-default") // 默认 profile
-        .chatProfile("openai-default") // 可选：chat 链路 profile
-        .embeddingProfile("openai-default") // 可选：embedding 链路 profile
-        .rerankProfile("openai-default") // 可选：rerank 链路 profile
-        .model("gpt4o-mini")
-        .embeddingModel("embed3-small")
-        .rerankModel("rerank-bge")
+        .chatModel("chat-main")
+        .embeddingModel("embed-main")
+        .rerankModel("rerank-main")
         .query("what runs on jvm?")
-        .topK(2)
-        .queryRewriteEnabled(true)
-        .dynamicTopKEnabled(true)
-        .mergeSimilarChunksEnabled(true)
-        .contextCompressionEnabled(true)
-        .contextMaxCharsPerChunk(280)
-        .contextMaxChars(1800));
-System.out.println(rag.getAnswer().getText());
-
-// 9.2) 启动前预检（强烈建议）
-Vostok.AI.healthCheckRag("openai-default", true); // true=同时预检 embedding + rerank
-
-// 10) Rerank
-VKAiRerankResponse rerank = Vostok.AI.rerank(new VKAiRerankRequest()
-        .profile("openai-default")
-        .query("jvm")
-        .document("python language")
-        .document("java jvm tuning")
         .topK(2));
 
-// 11) 指标
-VKAiMetrics m = Vostok.AI.metrics();
-System.out.println(m.totalCalls());
+// 5) 会话记忆
+VKAiSession session = Vostok.AI.createSession("chat-main");
+Vostok.AI.chatSession(session.getSessionId(), "我叫Tom");
+Vostok.AI.switchSessionModel(session.getSessionId(), "chat-main");
 ```
 
-## 12.3 配置详解
+## 12.4 请求参数要点
 
-### 12.3.1 VKAiConfig（全局）
+### 12.4.1 Chat
 
-- `connectTimeoutMs`：连接超时。
-- `readTimeoutMs`：单次请求超时。
-- `maxRetries`：最大重试次数。
-- `retryBackoffMs` / `maxRetryBackoffMs`：重试退避。
-- `retryOnStatuses`：按 HTTP 状态码重试（默认含 `429/500/502/503/504`）。
-- `retryOnNetworkError` / `retryOnTimeout`：网络错误与超时重试开关。
-- `failOnNon2xx`：非 2xx 是否抛异常。
-- `metricsEnabled`：是否统计指标。
-- `toolCallingEnabled`：是否启用工具调用。
-- `securityCheckEnabled`：是否启用输入安全扫描。
-- `blockOnSecurityRisk`：命中风险是否阻断。
-- `auditEnabled`：是否记录审计日志。
-- `ragCacheEnabled`：是否启用 RAG 缓存（依赖 `Vostok.Cache` 已初始化）。
-- `embeddingCacheTtlMs/rerankCacheTtlMs/ragAnswerCacheTtlMs`：Embedding、Rerank、RAG答案缓存 TTL。
-- `ragRerankTimeoutMs`：RAG 内 rerank 超时阈值；超时自动降级为不 rerank。
-- `maxToolCallsPerRequest`：单次 chat 最多执行工具数量。
-- `maxAuditRecords`：审计记录内存上限。
+`VKAiChatRequest` 关键字段：
 
-### 12.3.2 Token 优化参数（请求级）
+- `model`：已注册 CHAT 模型名
+- `system/message(...)`
+- `stream`：流式开关
+- `historyTrimEnabled/historyMaxMessages/historyMaxChars`：历史裁剪（降 token）
+- `allowTool(...)`：工具白名单
 
-- `VKAiChatRequest.historyTrimEnabled/historyMaxMessages/historyMaxChars`：发送到模型前自动裁剪历史消息，降低上下文 token。
-- `VKAiChatRequest.stream`：开启后 `chat(...)` 走 SSE 流式；`VKAiChatResponse` 通过 `stream()` 读取增量。
-- `VKAiRagRequest.queryRewriteEnabled`：轻量查询重写（从长文本中提炼检索 query）。
-- `VKAiRagRequest.dynamicTopKEnabled`：按问题复杂度动态调整 `topK`（简单问题减少片段数）。
-- `VKAiRagRequest.mergeSimilarChunksEnabled`：合并同文档相邻/高相似片段，减少重复上下文。
-- `VKAiRagRequest.contextCompressionEnabled`：上下文压缩开关。
-- `VKAiRagRequest.contextMaxCharsPerChunk/contextMaxChars`：单片段与总上下文字符预算。
+### 12.4.2 RAG
 
-### 12.3.3 Provider / Model / Profile
+`VKAiRagRequest` 关键字段：
 
-- `VKAiProviderConfig`：连接与鉴权（`baseUrl/apiKey/path/timeout/retry/headers`）。
-- `VKAiModelConfig`：模型定义（`type + provider + model`）。
-- `VKAiProfileConfig`：业务默认组合（`chatModel + embeddingModel + rerankModel`）。
+- `chatModel`：已注册 CHAT 模型名（必填）
+- `embeddingModel`：已注册 EMBEDDING 模型名（必填）
+- `rerankModel`：已注册 RERANK 模型名（`rerankEnabled=true` 时必填）
+- `query/topK`
+- `queryRewriteEnabled/dynamicTopKEnabled/mergeSimilarChunksEnabled/contextCompressionEnabled`
 
-## 12.4 错误模型
+### 12.4.3 Ingest
 
-`VKAiException` 搭配 `VKAiErrorCode`：
+`VKAiRagIngestRequest` 关键字段：
 
-- `INVALID_ARGUMENT`：参数错误。
-- `CONFIG_ERROR`：配置缺失或 profile/model/provider 不存在。
-- `STATE_ERROR`：线程中断等运行状态错误。
-- `NETWORK_ERROR`：网络 I/O 错误。
-- `TIMEOUT`：请求超时。
-- `HTTP_STATUS`：非 2xx 且开启失败即抛。
-- `SERIALIZATION_ERROR`：Provider 响应 JSON 结构不符合预期。
-- `JSON_PARSE_ERROR`：`chatJson(...)` 反序列化失败。
-- `TOOL_NOT_FOUND`：请求调用的工具未注册。
-- `TOOL_DENIED`：工具不在请求允许名单或全局被禁用。
-- `TOOL_EXECUTION_ERROR`：工具执行异常。
-- `SECURITY_BLOCKED`：输入被安全策略阻断。
+- `model`：已注册 EMBEDDING 模型名
+- `documentId/version/text`
+- `chunkSize/chunkOverlap`
+- `deduplicate`
 
-## 12.5 指标说明
+## 12.5 VKAiModelConfig（模型即客户端）
 
-`VKAiMetrics` 当前统计：
+- `type`：`CHAT | EMBEDDING | RERANK`
+- `provider`：provider 标识（默认 `openai-compatible`）
+- `baseUrl/path/apiKey/defaultHeaders`
+- `connectTimeoutMs/readTimeoutMs/maxRetries/failOnNon2xx`
+- `model`：provider 侧模型名
 
-- `totalCalls/successCalls/failedCalls`：总调用、成功、失败。
-- `retriedCalls`：重试次数。
-- `timeoutCalls/networkErrorCalls`：超时与网络失败次数。
-- `totalCostMs`：总耗时。
-- `totalPromptTokens/totalCompletionTokens/totalTokens`：Token 汇总。
-- `statusCounts`：HTTP 状态码分布。
+说明：
+- `path` 未配置时按类型使用默认值：
+  - `CHAT -> /v1/chat/completions`
+  - `EMBEDDING -> /v1/embeddings`
+  - `RERANK -> /v1/rerank`
 
-## 12.6 Tool Calling / 安全 / 审计说明
+## 12.6 启动前预检
 
-- `Tool Calling`：当 Provider 返回 `choices[0].message.tool_calls` 时，运行时会按顺序执行工具并写入 `VKAiChatResponse.getToolResults()`。
-- 流式说明：
-  1) `stream=true` 时 `VKAiChatResponse` 不聚合 `text`，请通过 `response.stream()` 读取 `delta`。
-  2) `chatJson(...)` 不支持 `stream=true`。
-  3) 流式内部通过 `Vostok.Http.openSse(...)` 事件驱动消费，增量到达即写入 `delta`，不聚合整段响应字符串。
-- 工具白名单：通过 `VKAiChatRequest.allowTool(...)` 声明本次请求允许调用的工具；不在白名单会抛 `TOOL_DENIED`。
-- 安全策略：当前对 Prompt 与 Tool 参数执行 XSS/命令注入/路径穿越检测；命中后按 `blockOnSecurityRisk` 决定是否阻断。
-- 审计日志：`CHAT_REQUEST / CHAT_RESPONSE / TOOL_CALL / TOOL_DENIED / CHAT_SECURITY_BLOCK ...` 可通过 `audits(limit)` 读取。
+```java
+// 预检 embedding + rerank
+Vostok.AI.healthCheckRag("embed-main", "rerank-main", true);
 
-## 12.7 Embedding / Rerank / RAG 说明
+// 仅预检 embedding
+Vostok.AI.healthCheckRag("embed-main", null, false);
+```
 
-- `embed(...)`：调用 Provider 向量接口，返回 `List<VKAiEmbedding>`。
-- `rerank(...)`：调用 Provider 重排接口，返回按分数排序的文档索引与分数。
-- `VKAiVectorStore`：向量存储抽象，默认实现为内存版 `VKAiInMemoryVectorStore`。
-- `upsertVectorDocs/searchVector/searchKeywords/clearVectorStore`：向量与关键词（BM25）检索能力。
-- `ingestRagDocument(...)`：内置文档切片、重叠窗口、去重、版本替换（同 `documentId` 新版本会清理旧版本切片）。
-- `rag(...)`：默认检索增强链路（自动）：
-  1) 对 query 做 embedding
-  2) 混合召回：向量检索 + BM25 关键词检索
-  3) 候选去重（按文本归一化）
-  4) 调用 rerank 重排
-  5) 拼接 context 并调用 chat 生成最终回答
-- 模型配置分层（从高到低）：
-  1) 请求级：`VKAiRagRequest.model/embeddingModel/rerankModel`（模型ID，可直接覆盖）
-  2) Profile 级：`VKAiProfileConfig.chatModel/embeddingModel/rerankModel`
-- Provider 路由分层（RAG 内部）：
-  1) `VKAiRagRequest.chatProfile/embeddingProfile/rerankProfile`（分别指定三段链路 Profile）
-  2) 未指定时回退 `VKAiRagRequest.profile`
-  3) 由 Profile -> Model -> Provider 决定各自 `baseUrl + path`
-- 启动前预检建议：
-  1) 服务启动后执行 `Vostok.AI.healthCheckRag(profile, true)`，尽早发现模型名或路径配置错误
-  2) 若仅使用向量检索，可用 `healthCheckRag(profile, false)` 只预检 embedding
-- 第一阶段成本/延迟优化：
-  1) 通过 `Vostok.Cache` 缓存 embedding/rerank/rag-answer
-  2) rerank 超时自动降级，避免长尾阻塞
-  3) 长 query 轻量重写，避免无关语料参与检索
-  4) 动态 topK + 相似片段合并，减少重复召回
-  5) 上下文压缩与历史消息裁剪，降低 prompt token
-- 生产建议：
-  1) 使用持久化向量库（如 pgvector/ES/Milvus 自定义实现 `VKAiVectorStore`）
-  2) 配置合理 chunk size/overlap，避免上下文断裂
-  3) 将 `topK` 与提示词模板按业务场景调优
+## 12.7 错误模型
 
-## 12.8 会话记忆（Session Memory）
+`VKAiException` + `VKAiErrorCode`：
 
-- `createSession(profileName[, model])`：创建会话，返回 `sessionId`。
-- `chatSession(sessionId, userText)`：按会话上下文连续对话，自动存储 `user/assistant` 消息。
-- `switchSessionModel(sessionId, model)`：切换会话模型，历史消息不丢失，后续对话自动续上。
-- `sessionMessages(sessionId)`：读取会话历史消息。
-- `deleteSession(sessionId)`：删除会话与历史。
+- `INVALID_ARGUMENT`：参数错误
+- `CONFIG_ERROR`：模型未注册、模型类型不匹配、配置缺失
+- `NETWORK_ERROR` / `TIMEOUT` / `HTTP_STATUS`
+- `SERIALIZATION_ERROR` / `JSON_PARSE_ERROR`
+- `TOOL_NOT_FOUND` / `TOOL_DENIED` / `TOOL_EXECUTION_ERROR`
+- `SECURITY_BLOCKED`
 
-默认行为：
-- 默认使用内存存储（`VKAiInMemoryMemoryStore`）。
-- 默认会将会话全部历史消息参与后续对话组装（`chatSession` 内部关闭 history trim）。
+## 12.8 会话存储
 
-切换到 `Vostok.Data` 持久化：
-- `Vostok.AI.setMemoryStore(new yueyang.vostok.ai.core.VKAiDataMemoryStore())`
-- 需要先初始化 `Vostok.Data`，并准备以下表结构（可按方言微调）：
+- 默认：内存存储 `VKAiInMemoryMemoryStore`
+- 可切换：`VKAiDataMemoryStore`（依赖 `Vostok.Data`）
+
+```java
+Vostok.AI.setMemoryStore(new yueyang.vostok.ai.core.VKAiDataMemoryStore());
+```
+
+`Vostok.Data` 持久化表结构示例：
 
 ```sql
 CREATE TABLE vk_ai_session (
   session_id VARCHAR(64) PRIMARY KEY,
-  profile_name VARCHAR(64),
   current_model VARCHAR(128),
   created_at BIGINT,
   updated_at BIGINT,

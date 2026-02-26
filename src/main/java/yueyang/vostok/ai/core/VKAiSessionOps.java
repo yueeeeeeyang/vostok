@@ -15,11 +15,10 @@ final class VKAiSessionOps {
     private VKAiSessionOps() {
     }
 
-    static VKAiSession createSession(VKAiMemoryStore store, String profileName, String modelName) {
+    static VKAiSession createSession(VKAiMemoryStore store, String modelName) {
         long now = System.currentTimeMillis();
         VKAiSession session = new VKAiSession()
                 .sessionId(UUID.randomUUID().toString().replace("-", ""))
-                .profileName(profileName)
                 .currentModel(modelName)
                 .createdAt(now)
                 .updatedAt(now);
@@ -74,7 +73,6 @@ final class VKAiSessionOps {
         store.appendMessage(userMsg);
 
         VKAiChatRequest request = new VKAiChatRequest()
-                .profile(session.getProfileName())
                 .model(session.getCurrentModel())
                 .historyTrimEnabled(false);
         for (VKAiSessionMessage msg : history) {

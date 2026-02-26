@@ -5,7 +5,6 @@ import java.util.Map;
 
 public class VKAiSession {
     private String sessionId;
-    private String profileName;
     private String currentModel;
     private long createdAt;
     private long updatedAt;
@@ -17,15 +16,6 @@ public class VKAiSession {
 
     public VKAiSession sessionId(String sessionId) {
         this.sessionId = sessionId;
-        return this;
-    }
-
-    public String getProfileName() {
-        return profileName;
-    }
-
-    public VKAiSession profileName(String profileName) {
-        this.profileName = profileName;
         return this;
     }
 
@@ -78,7 +68,6 @@ public class VKAiSession {
     public VKAiSession copy() {
         return new VKAiSession()
                 .sessionId(sessionId)
-                .profileName(profileName)
                 .currentModel(currentModel)
                 .createdAt(createdAt)
                 .updatedAt(updatedAt)

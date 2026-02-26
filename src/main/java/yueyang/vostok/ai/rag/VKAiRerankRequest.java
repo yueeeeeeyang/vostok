@@ -4,20 +4,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class VKAiRerankRequest {
-    private String profileName;
     private String model;
     private String query;
     private final List<String> documents = new ArrayList<>();
     private Integer topK;
-
-    public String getProfileName() {
-        return profileName;
-    }
-
-    public VKAiRerankRequest profile(String profileName) {
-        this.profileName = profileName;
-        return this;
-    }
 
     public String getModel() {
         return model;

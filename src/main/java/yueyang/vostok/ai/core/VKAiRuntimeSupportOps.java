@@ -14,18 +14,6 @@ final class VKAiRuntimeSupportOps {
     private VKAiRuntimeSupportOps() {
     }
 
-    static String firstNonBlank(String... values) {
-        if (values == null) {
-            return null;
-        }
-        for (String value : values) {
-            if (value != null && !value.isBlank()) {
-                return value.trim();
-            }
-        }
-        return null;
-    }
-
     static String shortHash(String raw) {
         String digest = VKAiRagOps.sha256Hex(raw == null ? "" : raw);
         return digest.length() > 24 ? digest.substring(0, 24) : digest;
@@ -41,7 +29,7 @@ final class VKAiRuntimeSupportOps {
         sb.append(chatClientName).append('|')
                 .append(embeddingClientName).append('|')
                 .append(rerankClientName).append('|')
-                .append(request.getModel()).append('|')
+                .append(request.getChatModel()).append('|')
                 .append(request.getEmbeddingModel()).append('|')
                 .append(request.getRerankModel()).append('|')
                 .append(request.getQuery()).append('|')

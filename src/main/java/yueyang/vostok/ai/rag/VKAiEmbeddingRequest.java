@@ -4,18 +4,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class VKAiEmbeddingRequest {
-    private String profileName;
     private String model;
     private final List<String> inputs = new ArrayList<>();
-
-    public String getProfileName() {
-        return profileName;
-    }
-
-    public VKAiEmbeddingRequest profile(String profileName) {
-        this.profileName = profileName;
-        return this;
-    }
 
     public String getModel() {
         return model;
