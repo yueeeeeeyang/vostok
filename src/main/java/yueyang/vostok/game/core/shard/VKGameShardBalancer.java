@@ -76,10 +76,15 @@ public final class VKGameShardBalancer {
         return costMs >= config.getHotRoomCostThresholdMs();
     }
 
+    /**
+     * 热点评分（P2 #13）：三因子权重改为从 VKGameConfig 读取，不再硬编码 8.0/2.0/1.0。
+     * 默认值保持与原逻辑一致（命令权重 8、队列权重 2、耗时权重 1）。
+     */
     public double hotRoomScore(int processedCommands, int queuedCommands, long costNanos) {
-        return processedCommands * 8.0d
-                + queuedCommands * 2.0d
-                + TimeUnit.NANOSECONDS.toMillis(costNanos);
+        VKGameConfig config = configSupplier.get();
+        return processedCommands * config.getHotRoomScoreCommandWeight()
+                + queuedCommands * config.getHotRoomScoreQueueWeight()
+                + TimeUnit.NANOSECONDS.toMillis(costNanos) * config.getHotRoomScoreCostWeight();
     }
 
     public List<VKGameShardMetrics> buildShardMetrics(VKGameTickStats.TickShardStat[] shardStats) {

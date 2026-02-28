@@ -28,6 +28,13 @@ public class VKGameRoom {
     private final AtomicLong drainingSinceAt = new AtomicLong(-1L);
     private final AtomicLong closedAt = new AtomicLong(-1L);
     private final AtomicReference<String> lifecycleReason = new AtomicReference<>("");
+    // 最近一次被 Tick 跳过时的全局帧序号（0=从未被跳过），用于下帧优先调度被饥饿的房间
+    private final AtomicLong lastSkippedTickNo = new AtomicLong(0L);
+    // 最近一次被 Tick 实际处理时的全局帧序号（0=从未被处理），用于同等 lastSkippedTickNo 时的次级排序：
+    // 处理帧序号越小的房间越优先，确保跳过组内先被跳过的房间优先、避免连续得分相同房间长期垄断。
+    private final AtomicLong lastProcessedTickNo = new AtomicLong(0L);
+    // 连续发生逻辑异常的 Tick 次数（仅统计 onTick/onCommand 异常），超阈值后触发隔离
+    private final AtomicInteger consecutiveLogicErrors = new AtomicInteger(0);
 
     public VKGameRoom(String roomId, String gameType) {
         this.roomId = roomId;
@@ -85,11 +92,21 @@ public class VKGameRoom {
             touch();
             return existing;
         }
+        // 先乐观检查（快速拒绝大多数超容请求），再通过 putIfAbsent 做原子插入。
+        // 插入后若 size 超过上限（并发加入导致的 TOCTOU），立即回滚并返回 null。
         if (players.size() >= maxPlayersPerRoom) {
             return null;
         }
         VKGamePlayerSession created = new VKGamePlayerSession(playerId);
         VKGamePlayerSession prev = players.putIfAbsent(playerId, created);
+        if (prev == null) {
+            // 本线程成功插入了新玩家；检查插入后容量是否仍合法
+            if (players.size() > maxPlayersPerRoom) {
+                // 并发超容：回滚插入，拒绝此次加入
+                players.remove(playerId, created);
+                return null;
+            }
+        }
         VKGamePlayerSession out = prev == null ? created : prev;
         out.setOnline(true);
         if (players.size() > 0) {
@@ -97,6 +114,29 @@ public class VKGameRoom {
         }
         touch();
         return out;
+    }
+
+    /**
+     * 快照恢复专用（P1 #6）：将已构建好的 session（携带原始 token/joinedAt）直接写入玩家表，
+     * 不触发 onPlayerJoin 回调，恢复的 session 初始为离线状态。
+     */
+    public VKGamePlayerSession restorePlayerSession(VKGamePlayerSession session, int maxPlayersPerRoom) {
+        if (session == null) {
+            return null;
+        }
+        if (players.size() >= maxPlayersPerRoom) {
+            return null;
+        }
+        VKGamePlayerSession prev = players.putIfAbsent(session.getPlayerId(), session);
+        if (prev == null) {
+            if (players.size() > maxPlayersPerRoom) {
+                players.remove(session.getPlayerId(), session);
+                return null;
+            }
+            emptySinceAt.set(-1L);
+            return session;
+        }
+        return prev;
     }
 
     public VKGamePlayerSession leavePlayer(String playerId) {
@@ -172,6 +212,11 @@ public class VKGameRoom {
                 if (empty) {
                     break;
                 }
+                // 本轮剩余权重槽对应的队列均为空，提前归零以触发下次迭代的轮次重置，
+                // 避免因权重值较大而对空队列做大量无效 poll（最坏 O(h+n+l) 次浪费）。
+                hLeft = 0;
+                nLeft = 0;
+                lLeft = 0;
                 continue;
             }
             queuedCommands.decrementAndGet();
@@ -262,5 +307,29 @@ public class VKGameRoom {
 
     public Map<String, Object> attributes() {
         return attributes;
+    }
+
+    public long getLastSkippedTickNo() {
+        return lastSkippedTickNo.get();
+    }
+
+    public void setLastSkippedTickNo(long tickNo) {
+        lastSkippedTickNo.set(tickNo);
+    }
+
+    public long getLastProcessedTickNo() {
+        return lastProcessedTickNo.get();
+    }
+
+    public void setLastProcessedTickNo(long tickNo) {
+        lastProcessedTickNo.set(tickNo);
+    }
+
+    public int incrementAndGetConsecutiveErrors() {
+        return consecutiveLogicErrors.incrementAndGet();
+    }
+
+    public void resetConsecutiveErrors() {
+        consecutiveLogicErrors.set(0);
     }
 }

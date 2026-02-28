@@ -28,6 +28,7 @@ import yueyang.vostok.game.exception.VKGameErrorCode;
 import yueyang.vostok.game.exception.VKGameException;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -68,6 +69,8 @@ public final class VKGameRuntime {
     private final AtomicLong roomSeq = new AtomicLong(1L);
     private final AtomicLong matchRoomSeq = new AtomicLong(1L);
     private final AtomicLong matchEventSeq = new AtomicLong(1L);
+    // 全局帧序号：每次 tickOnce 自增，用于 Tick 跳过公平性排序
+    private final AtomicLong globalTickSeq = new AtomicLong(0L);
 
     private final VKGameRuntimeMetrics runtimeMetrics = new VKGameRuntimeMetrics();
     private final AtomicReference<List<VKGameShardMetrics>> lastShardMetrics = new AtomicReference<>(List.of());
@@ -239,7 +242,7 @@ public final class VKGameRuntime {
 
     /**
      * 启动恢复：在 logic 注册后按 gameType 恢复快照房间。
-     * 说明：恢复时仅还原基础房间状态（tick/玩家列表/attributes 字符串值），
+     * 说明：恢复时还原基础房间状态（tick/玩家列表含 sessionToken+joinedAt/attributes 类型化值），
      * 不自动回放 WAL 命令，避免对业务逻辑产生不可控副作用。
      */
     private void recoverRoomsByGameType(String gameType) {
@@ -274,12 +277,16 @@ public final class VKGameRuntime {
             if (snapshot.attributes != null && !snapshot.attributes.isEmpty()) {
                 room.attributes().putAll(snapshot.attributes);
             }
+            // 恢复玩家 session（P1 #6）：携带原始 sessionToken + joinedAt，
+            // 保证断线玩家重启后能凭原 token 重连，恢复的 session 初始状态为离线。
             if (snapshot.players != null && !snapshot.players.isEmpty()) {
-                for (String playerId : snapshot.players) {
-                    if (playerId == null || playerId.isBlank()) {
+                for (VKGameRoomPersistence.PlayerSessionInfo psi : snapshot.players) {
+                    if (psi == null || psi.playerId == null || psi.playerId.isBlank()) {
                         continue;
                     }
-                    room.joinPlayer(playerId, config.getMaxPlayersPerRoom());
+                    VKGamePlayerSession session = new VKGamePlayerSession(
+                            psi.playerId, psi.sessionToken, psi.joinedAt);
+                    room.restorePlayerSession(session, config.getMaxPlayersPerRoom());
                 }
             }
             room.touch();
@@ -770,6 +777,8 @@ public final class VKGameRuntime {
         final long timeoutNs = timeoutMs <= 0L ? Long.MAX_VALUE : TimeUnit.MILLISECONDS.toNanos(timeoutMs);
         final long deadlineNs = timeoutNs == Long.MAX_VALUE ? Long.MAX_VALUE : tickStartNs + timeoutNs;
         final long now = System.currentTimeMillis();
+        // 全局帧序号自增，用于标记本帧被跳过的房间，保证下帧优先处理
+        final long currentTickNo = globalTickSeq.incrementAndGet();
 
         if (!snapshot.isEmpty()) {
             final ExecutorService workers = tickWorkers;
@@ -787,6 +796,22 @@ public final class VKGameRuntime {
                     shards[idx] = bucket;
                 }
                 bucket.add(room);
+            }
+
+            // 双关键字排序确保公平调度（P1 #8）：
+            // 主键：lastSkippedTickNo 降序 —— 被跳过时间越新（全局帧序号越大）的房间越优先；
+            // 次键：lastProcessedTickNo 升序 —— 主键相同时，上次实际处理帧序号越小（越久没被处理）的房间越优先；
+            //        解决多房间同帧同时被跳过导致次序固化、后序房间长期饥饿的问题。
+            // 两个关键字均使用 Long.compareUnsigned 以正确处理 globalTickSeq 溢出。
+            for (ArrayList<VKGameRoom> bucket : shards) {
+                if (bucket != null && bucket.size() > 1) {
+                    bucket.sort((a, b) -> {
+                        int cmp = Long.compareUnsigned(b.getLastSkippedTickNo(), a.getLastSkippedTickNo());
+                        if (cmp != 0) return cmp;
+                        // 次级：处理帧序号越小的优先（越久没被处理的优先）
+                        return Long.compareUnsigned(a.getLastProcessedTickNo(), b.getLastProcessedTickNo());
+                    });
+                }
             }
 
             VKGameTickStats.TickShardStat[] shardStats = new VKGameTickStats.TickShardStat[shardCount];
@@ -807,7 +832,7 @@ public final class VKGameRuntime {
                         if (bucket == null || bucket.isEmpty()) {
                             continue;
                         }
-                        processShard(bucket, shardStats[i], now, deadlineNs, timedOut, skippedRooms);
+                        processShard(bucket, shardStats[i], now, deadlineNs, timedOut, skippedRooms, currentTickNo);
                     }
                 } else {
                     CountDownLatch latch = new CountDownLatch(taskCount);
@@ -819,7 +844,7 @@ public final class VKGameRuntime {
                         VKGameTickStats.TickShardStat stat = shardStats[i];
                         Runnable task = () -> {
                             try {
-                                processShard(bucket, stat, now, deadlineNs, timedOut, skippedRooms);
+                                processShard(bucket, stat, now, deadlineNs, timedOut, skippedRooms, currentTickNo);
                             } finally {
                                 latch.countDown();
                             }
@@ -1072,15 +1097,24 @@ public final class VKGameRuntime {
                               long now,
                               long deadlineNs,
                               AtomicBoolean timedOut,
-                              AtomicLong skippedRooms) {
+                              AtomicLong skippedRooms,
+                              long currentTickNo) {
         for (int i = 0; i < bucket.size(); i++) {
             if (deadlineExceeded(deadlineNs)) {
                 timedOut.set(true);
                 skippedRooms.addAndGet(bucket.size() - i);
+                // 标记本帧被跳过的房间，下帧优先处理以保证公平性
+                for (int j = i; j < bucket.size(); j++) {
+                    bucket.get(j).setLastSkippedTickNo(currentTickNo);
+                }
                 break;
             }
             if (timedOut.get()) {
                 skippedRooms.addAndGet(bucket.size() - i);
+                // 标记本帧被跳过的房间，下帧优先处理以保证公平性
+                for (int j = i; j < bucket.size(); j++) {
+                    bucket.get(j).setLastSkippedTickNo(currentTickNo);
+                }
                 break;
             }
 
@@ -1088,6 +1122,10 @@ public final class VKGameRuntime {
             VKGameTickStats.RoomProcessResult result = processRoom(room, now, deadlineNs, timedOut);
             if (result.timeoutBeforeRoom) {
                 skippedRooms.addAndGet(bucket.size() - i);
+                // 标记本帧被跳过的房间（含当前房间），下帧优先处理以保证公平性
+                for (int j = i; j < bucket.size(); j++) {
+                    bucket.get(j).setLastSkippedTickNo(currentTickNo);
+                }
                 break;
             }
             if (result.timeoutDuringRoom) {
@@ -1097,6 +1135,8 @@ public final class VKGameRuntime {
                 continue;
             }
 
+            // 记录本帧实际处理过的房间，作为次级排序依据（同 lastSkippedTickNo 时，处理越久之前的优先）
+            room.setLastProcessedTickNo(currentTickNo);
             stat.commandsProcessed += result.commandsProcessed;
             stat.costNanos += result.costNanos;
             stat.processedRooms++;
@@ -1138,6 +1178,7 @@ public final class VKGameRuntime {
         long startNs = System.nanoTime();
         int processed = 0;
         boolean timeoutDuringRoom = false;
+        boolean anyErrorThisTick = false;
         long frameTickNo = room.getCurrentTick() + 1L;
 
         List<VKGameCommand> drained = room.drainCommands(
@@ -1153,16 +1194,36 @@ public final class VKGameRuntime {
             }
             runtimeMetrics.onCommandProcessed();
             processed++;
-            safeInvoke(() -> logic.onCommand(room, command), "onCommand");
+            if (!safeInvoke(() -> logic.onCommand(room, command), "onCommand")) {
+                anyErrorThisTick = true;
+            }
             roomPersistence.appendWal(room, command, frameTickNo, now);
         }
 
         if (!timeoutDuringRoom && !deadlineExceeded(deadlineNs)) {
             long tickNo = room.nextTick();
-            safeInvoke(() -> logic.onTick(room, tickNo), "onTick");
+            if (!safeInvoke(() -> logic.onTick(room, tickNo), "onTick")) {
+                anyErrorThisTick = true;
+            }
             roomPersistence.maybeSnapshot(room, tickNo);
         } else {
             timeoutDuringRoom = true;
+        }
+        // WAL 批量 flush（P1 #7）：本帧所有命令写入缓冲后统一 flush，而非每条命令单独系统调用
+        if (processed > 0) {
+            roomPersistence.flushWal(roomId);
+        }
+
+        // 连续逻辑异常隔离：超过阈值后将房间标记为 DRAINING，防止坏房间持续消耗 Tick 资源
+        int threshold = config.getRoomMaxConsecutiveLogicErrors();
+        if (anyErrorThisTick) {
+            int errCount = room.incrementAndGetConsecutiveErrors();
+            if (threshold > 0 && errCount >= threshold) {
+                lifecycleManager.markRoomDraining(room, VKGameLifecycleReason.LOGIC_ERROR.code(), now);
+                runtimeMetrics.onRoomClosedByLogicError();
+            }
+        } else {
+            room.resetConsecutiveErrors();
         }
 
         long costNanos = System.nanoTime() - startNs;
@@ -1378,6 +1439,8 @@ public final class VKGameRuntime {
         if (room != null) {
             commandGovernor.removeRoom(room.getRoomId());
             roomPersistence.saveSnapshot(room);
+            // 关闭 WAL writer，flush 缓冲并释放文件句柄（P1 #7）
+            roomPersistence.closeWal(room.getRoomId());
             cleanupJoinTokensByRoom(room.getRoomId());
             messageCenter.onRoomClosed(room.getRoomId());
         }
@@ -1391,11 +1454,17 @@ public final class VKGameRuntime {
         }
     }
 
-    private void safeInvoke(Runnable action, String stage) {
+    /**
+     * 安全执行游戏逻辑回调：捕获所有异常并记录日志，返回 true 表示执行成功，false 表示捕获到异常。
+     * 已有调用方可忽略返回值，向后兼容。
+     */
+    private boolean safeInvoke(Runnable action, String stage) {
         try {
             action.run();
+            return true;
         } catch (Throwable t) {
             logRuntime(stage, t);
+            return false;
         }
     }
 

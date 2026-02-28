@@ -61,9 +61,24 @@ public final class VKGameCommandGovernor {
             return RejectReason.NONE;
         }
 
-        long skew = Math.abs(nowMs - command.getTimestampMs());
-        if (config.getMaxClientTimestampSkewMs() > 0 && skew > config.getMaxClientTimestampSkewMs()) {
-            return RejectReason.TIME_SKEW;
+        // 时间戳偏差校验（P0 #2）：
+        // 直接用 nowMs - cmdTs 存在整数溢出风险（如 cmdTs=Long.MIN_VALUE 时结果为负）。
+        // nowMs 来自 System.currentTimeMillis()，永远 >= 0；客户端正常时间戳同样 >= 0。
+        // 因此：负数 cmdTs 必定超出任何合理偏差阈值，直接拒绝。
+        // 对于非负 cmdTs，nowMs 和 cmdTs 符号相同，减法结果不会跨越最大正值，安全比较。
+        long maxSkew = config.getMaxClientTimestampSkewMs();
+        if (maxSkew > 0) {
+            long cmdTs = command.getTimestampMs();
+            if (cmdTs < 0) {
+                // 负数时间戳（含 Long.MIN_VALUE）在 nowMs >= 0 时偏差无限大，直接拒绝
+                return RejectReason.TIME_SKEW;
+            }
+            // 此时 cmdTs >= 0，nowMs >= 0，减法不会产生溢出绕环
+            boolean tooOld = cmdTs < nowMs && (nowMs - cmdTs) > maxSkew;
+            boolean tooNew = cmdTs > nowMs && (cmdTs - nowMs) > maxSkew;
+            if (tooOld || tooNew) {
+                return RejectReason.TIME_SKEW;
+            }
         }
 
         PlayerCommandState state = state(room.getRoomId(), command.getPlayerId());
@@ -76,16 +91,19 @@ public final class VKGameCommandGovernor {
         }
 
         int limit = Math.max(1, config.getMaxCommandsPerSecondPerPlayer());
-        long ws = state.windowStartMs.get();
-        if (ws <= 0L || nowMs - ws >= 1000L) {
-            state.windowStartMs.set(nowMs);
-            state.windowCount.set(1);
-            return RejectReason.NONE;
-        }
-
-        int count = state.windowCount.incrementAndGet();
-        if (count > limit) {
-            return RejectReason.RATE_LIMIT;
+        // 对单个玩家的窗口状态加锁，消除多线程并发重置窗口时的 race condition：
+        // 若不加锁，多个线程同时看到过期窗口各自将 count 置 1 并全部放行，绕过 QPS 限制。
+        synchronized (state) {
+            long ws = state.windowStartMs.get();
+            if (ws <= 0L || nowMs - ws >= 1000L) {
+                state.windowStartMs.set(nowMs);
+                state.windowCount.set(1);
+                return RejectReason.NONE;
+            }
+            int count = state.windowCount.incrementAndGet();
+            if (count > limit) {
+                return RejectReason.RATE_LIMIT;
+            }
         }
         return RejectReason.NONE;
     }

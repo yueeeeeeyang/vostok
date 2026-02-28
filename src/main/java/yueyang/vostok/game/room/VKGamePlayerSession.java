@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class VKGamePlayerSession {
     private final String playerId;
     private final long joinedAt;
-    private final String sessionToken = UUID.randomUUID().toString().replace("-", "");
+    private final String sessionToken;
     private final AtomicLong lastActiveAt = new AtomicLong(System.currentTimeMillis());
     private final AtomicLong disconnectedAt = new AtomicLong(-1L);
     private final Map<String, Object> attributes = new ConcurrentHashMap<>();
@@ -17,6 +17,21 @@ public class VKGamePlayerSession {
     public VKGamePlayerSession(String playerId) {
         this.playerId = playerId;
         this.joinedAt = System.currentTimeMillis();
+        this.sessionToken = UUID.randomUUID().toString().replace("-", "");
+    }
+
+    /**
+     * 快照恢复构造器（P1 #6）：从持久化快照还原 sessionToken 和 joinedAt，
+     * 保证断线玩家重启后仍能凭原 token 重连。恢复的 session 初始为离线状态。
+     */
+    public VKGamePlayerSession(String playerId, String sessionToken, long joinedAt) {
+        this.playerId = playerId;
+        this.sessionToken = (sessionToken == null || sessionToken.isBlank())
+                ? UUID.randomUUID().toString().replace("-", "")
+                : sessionToken;
+        this.joinedAt = joinedAt > 0 ? joinedAt : System.currentTimeMillis();
+        this.online = false;
+        this.disconnectedAt.set(System.currentTimeMillis());
     }
 
     public String getPlayerId() {

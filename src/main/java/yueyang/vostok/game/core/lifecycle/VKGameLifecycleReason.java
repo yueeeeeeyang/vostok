@@ -9,7 +9,8 @@ public enum VKGameLifecycleReason {
     IDLE_TIMEOUT("idle_timeout"),
     EMPTY_TIMEOUT("empty_timeout"),
     MAX_LIFETIME("max_lifetime"),
-    DRAIN_TIMEOUT("drain_timeout");
+    DRAIN_TIMEOUT("drain_timeout"),
+    LOGIC_ERROR("logic_error");
 
     private final String code;
 

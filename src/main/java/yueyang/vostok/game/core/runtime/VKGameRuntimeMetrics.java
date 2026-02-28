@@ -23,6 +23,7 @@ public final class VKGameRuntimeMetrics {
     private final AtomicLong roomClosedByEmpty = new AtomicLong();
     private final AtomicLong roomClosedByLifetime = new AtomicLong();
     private final AtomicLong roomClosedByDrainTimeout = new AtomicLong();
+    private final AtomicLong roomClosedByLogicError = new AtomicLong();
 
     private final AtomicLong playerJoined = new AtomicLong();
     private final AtomicLong playerLeft = new AtomicLong();
@@ -84,6 +85,7 @@ public final class VKGameRuntimeMetrics {
             case EMPTY_TIMEOUT -> roomClosedByEmpty.incrementAndGet();
             case MAX_LIFETIME -> roomClosedByLifetime.incrementAndGet();
             case DRAIN_TIMEOUT -> roomClosedByDrainTimeout.incrementAndGet();
+            case LOGIC_ERROR -> roomClosedByLogicError.incrementAndGet();
             default -> {
                 // manual / custom reason
             }
@@ -176,6 +178,10 @@ public final class VKGameRuntimeMetrics {
         messagesExpired.incrementAndGet();
     }
 
+    public void onRoomClosedByLogicError() {
+        roomClosedByLogicError.incrementAndGet();
+    }
+
     public void onShardImbalance() {
         shardImbalanceEvents.incrementAndGet();
     }
@@ -227,7 +233,8 @@ public final class VKGameRuntimeMetrics {
                 messagesAcked.get(),
                 messagesExpired.get(),
                 shardImbalanceEvents.get(),
-                shardMigrations.get()
+                shardMigrations.get(),
+                roomClosedByLogicError.get()
         );
     }
 
@@ -245,6 +252,7 @@ public final class VKGameRuntimeMetrics {
         roomClosedByEmpty.set(0L);
         roomClosedByLifetime.set(0L);
         roomClosedByDrainTimeout.set(0L);
+        roomClosedByLogicError.set(0L);
 
         playerJoined.set(0L);
         playerLeft.set(0L);

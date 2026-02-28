@@ -42,6 +42,7 @@ public record VKGameMetrics(
         long messagesAcked,
         long messagesExpired,
         long shardImbalanceEvents,
-        long shardMigrations
+        long shardMigrations,
+        long roomClosedByLogicError
 ) {
 }

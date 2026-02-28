@@ -198,7 +198,9 @@ public final class VKGameMessageCenter {
                 continue;
             }
             VKGameMessage message = state.message;
-            if (message.getSeq() <= fromSeq) {
+            // 使用无符号比较应对 AtomicLong 溢出场景：seq 在 Long.MAX_VALUE 后回绕至负数，
+            // 有符号比较 (seq <= fromSeq) 会把新产生的大序列号错误地视为"旧消息"而跳过。
+            if (Long.compareUnsigned(message.getSeq(), fromSeq) <= 0) {
                 continue;
             }
             if (!canAccess(pid, message)) {
@@ -337,14 +339,20 @@ public final class VKGameMessageCenter {
             } catch (Throwable t) {
                 logger.accept("message_notify", t);
             } finally {
-                int nextAttempts = attempts + 1;
-                state.pushAttemptsByPlayer.put(playerId, nextAttempts);
-                long nextDelay = nextBackoff(cfg, nextAttempts);
-                state.nextPushAtByPlayer.put(playerId, nowMs + nextDelay);
-                if (success && !message.getType().isRequireAck()) {
-                    // 非 ACK 消息只要推送成功一次就停止重试。
-                    state.pushAttemptsByPlayer.put(playerId, maxAttempts);
+                // 仅在成功推送时计入 pushAttempts（P1 #9）：
+                // 若把异常失败也计入 maxAttempts，最终会因失败次数耗尽而永远放弃推送，
+                // 即使消息从未被成功送达。失败时只更新下次重试时间，不消耗成功次数配额。
+                if (success) {
+                    int nextAttempts = attempts + 1;
+                    state.pushAttemptsByPlayer.put(playerId, nextAttempts);
+                    if (!message.getType().isRequireAck()) {
+                        // 非 ACK 消息只要推送成功一次就停止重试。
+                        state.pushAttemptsByPlayer.put(playerId, maxAttempts);
+                    }
                 }
+                // 无论成功与否，均按退避策略安排下次尝试时间
+                long nextDelay = nextBackoff(cfg, success ? attempts + 1 : attempts);
+                state.nextPushAtByPlayer.put(playerId, nowMs + nextDelay);
             }
         }
     }

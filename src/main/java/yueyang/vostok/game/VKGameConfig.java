@@ -62,7 +62,14 @@ public class VKGameConfig {
     private int maxShardMigrationsPerTick = 1;
     private long shardMigrationCooldownMs = 3000L;
 
+    private int roomMaxConsecutiveLogicErrors = 10;
+
     private long shutdownWaitMs = 3000L;
+
+    // 热点评分权重（P2 #13）：原先硬编码在 VKGameShardBalancer.hotRoomScore，现可通过配置调整
+    private double hotRoomScoreCommandWeight = 8.0;
+    private double hotRoomScoreQueueWeight = 2.0;
+    private double hotRoomScoreCostWeight = 1.0;
 
     public VKGameConfig copy() {
         return new VKGameConfig()
@@ -118,7 +125,11 @@ public class VKGameConfig {
                 .shardImbalanceThreshold(shardImbalanceThreshold)
                 .maxShardMigrationsPerTick(maxShardMigrationsPerTick)
                 .shardMigrationCooldownMs(shardMigrationCooldownMs)
-                .shutdownWaitMs(shutdownWaitMs);
+                .roomMaxConsecutiveLogicErrors(roomMaxConsecutiveLogicErrors)
+                .shutdownWaitMs(shutdownWaitMs)
+                .hotRoomScoreCommandWeight(hotRoomScoreCommandWeight)
+                .hotRoomScoreQueueWeight(hotRoomScoreQueueWeight)
+                .hotRoomScoreCostWeight(hotRoomScoreCostWeight);
     }
 
     public boolean isEnabled() {
@@ -593,12 +604,48 @@ public class VKGameConfig {
         return this;
     }
 
+    public int getRoomMaxConsecutiveLogicErrors() {
+        return roomMaxConsecutiveLogicErrors;
+    }
+
+    public VKGameConfig roomMaxConsecutiveLogicErrors(int roomMaxConsecutiveLogicErrors) {
+        this.roomMaxConsecutiveLogicErrors = Math.max(0, roomMaxConsecutiveLogicErrors);
+        return this;
+    }
+
     public long getShutdownWaitMs() {
         return shutdownWaitMs;
     }
 
     public VKGameConfig shutdownWaitMs(long shutdownWaitMs) {
         this.shutdownWaitMs = Math.max(0L, shutdownWaitMs);
+        return this;
+    }
+
+    public double getHotRoomScoreCommandWeight() {
+        return hotRoomScoreCommandWeight;
+    }
+
+    public VKGameConfig hotRoomScoreCommandWeight(double hotRoomScoreCommandWeight) {
+        this.hotRoomScoreCommandWeight = Math.max(0.0, hotRoomScoreCommandWeight);
+        return this;
+    }
+
+    public double getHotRoomScoreQueueWeight() {
+        return hotRoomScoreQueueWeight;
+    }
+
+    public VKGameConfig hotRoomScoreQueueWeight(double hotRoomScoreQueueWeight) {
+        this.hotRoomScoreQueueWeight = Math.max(0.0, hotRoomScoreQueueWeight);
+        return this;
+    }
+
+    public double getHotRoomScoreCostWeight() {
+        return hotRoomScoreCostWeight;
+    }
+
+    public VKGameConfig hotRoomScoreCostWeight(double hotRoomScoreCostWeight) {
+        this.hotRoomScoreCostWeight = Math.max(0.0, hotRoomScoreCostWeight);
         return this;
     }
 }
