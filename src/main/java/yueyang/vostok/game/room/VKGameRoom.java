@@ -15,6 +15,10 @@ public class VKGameRoom {
     private final String roomId;
     private final String gameType;
     private final long createdAt;
+    // 是否启用帧同步模式：创建房间时指定，运行时只读。
+    // 帧同步模式下，每帧结束后将本帧所有玩家输入打包广播给客户端；
+    // 与状态同步模式（默认）并不互斥，onTick/onCommand 回调仍然执行。
+    private final boolean frameSyncEnabled;
     private final AtomicLong lastActiveAt = new AtomicLong(System.currentTimeMillis());
     private final AtomicLong emptySinceAt = new AtomicLong(System.currentTimeMillis());
     private final AtomicLong tick = new AtomicLong(0L);
@@ -35,10 +39,21 @@ public class VKGameRoom {
     private final AtomicLong lastProcessedTickNo = new AtomicLong(0L);
     // 连续发生逻辑异常的 Tick 次数（仅统计 onTick/onCommand 异常），超阈值后触发隔离
     private final AtomicInteger consecutiveLogicErrors = new AtomicInteger(0);
+    // P0-2: 上次实际执行 onTick 的时刻（毫秒）；仅 tick 线程写/读，volatile 保证可见性
+    private volatile long lastTickedAtMs = 0L;
+    // P1-4: 上次执行 applyLifecyclePolicy 的时刻（毫秒）；idle/drain 超时秒级，无需每帧检查
+    private volatile long lastLifecycleCheckAt = 0L;
+    // P1-5: 上次执行 cleanupHostedSessions 的时刻（毫秒）；reconnectGraceMs 默认 60s，每帧清理纯浪费
+    private volatile long lastSessionCleanupAt = 0L;
 
     public VKGameRoom(String roomId, String gameType) {
+        this(roomId, gameType, false);
+    }
+
+    public VKGameRoom(String roomId, String gameType, boolean frameSyncEnabled) {
         this.roomId = roomId;
         this.gameType = gameType;
+        this.frameSyncEnabled = frameSyncEnabled;
         this.createdAt = System.currentTimeMillis();
     }
 
@@ -48,6 +63,10 @@ public class VKGameRoom {
 
     public String getGameType() {
         return gameType;
+    }
+
+    public boolean isFrameSyncEnabled() {
+        return frameSyncEnabled;
     }
 
     public long getCreatedAt() {
@@ -331,5 +350,29 @@ public class VKGameRoom {
 
     public void resetConsecutiveErrors() {
         consecutiveLogicErrors.set(0);
+    }
+
+    public long getLastTickedAtMs() {
+        return lastTickedAtMs;
+    }
+
+    public void setLastTickedAtMs(long ms) {
+        lastTickedAtMs = ms;
+    }
+
+    public long getLastLifecycleCheckAt() {
+        return lastLifecycleCheckAt;
+    }
+
+    public void setLastLifecycleCheckAt(long ms) {
+        lastLifecycleCheckAt = ms;
+    }
+
+    public long getLastSessionCleanupAt() {
+        return lastSessionCleanupAt;
+    }
+
+    public void setLastSessionCleanupAt(long ms) {
+        lastSessionCleanupAt = ms;
     }
 }

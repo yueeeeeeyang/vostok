@@ -18,12 +18,16 @@ import yueyang.vostok.game.room.VKGamePlayerSession;
 import yueyang.vostok.game.room.VKGameRoom;
 import yueyang.vostok.game.shard.VKGameShardMetrics;
 import yueyang.vostok.game.core.command.VKGameCommandGovernor;
+import yueyang.vostok.game.core.frame.VKGameFrameBroadcaster;
 import yueyang.vostok.game.core.lifecycle.VKGameLifecycleManager;
 import yueyang.vostok.game.core.lifecycle.VKGameLifecycleReason;
 import yueyang.vostok.game.core.match.VKGameMatchmaker;
 import yueyang.vostok.game.core.message.VKGameMessageCenter;
 import yueyang.vostok.game.core.persistence.VKGameRoomPersistence;
 import yueyang.vostok.game.core.shard.VKGameShardBalancer;
+import yueyang.vostok.game.frame.VKGameFrame;
+import yueyang.vostok.game.frame.VKGameFrameInput;
+import yueyang.vostok.game.frame.VKGameFrameNotifier;
 import yueyang.vostok.game.exception.VKGameErrorCode;
 import yueyang.vostok.game.exception.VKGameException;
 
@@ -81,11 +85,18 @@ public final class VKGameRuntime {
     private final VKGameMatchmaker matchmaker;
     private final VKGameRoomPersistence roomPersistence;
     private final VKGameMessageCenter messageCenter;
+    // 帧同步广播器：独立于消息中心，直接回调应用层，避免业务消息队列对帧数据的干扰
+    private final VKGameFrameBroadcaster frameBroadcaster;
 
     private volatile VKGameConfig config = new VKGameConfig();
     private volatile ScheduledExecutorService ticker;
     private volatile ExecutorService tickWorkers;
     private volatile boolean initialized;
+
+    // P1-3: 缓存分片桶，仅 ticker 单线程访问，无并发竞争；shardCount 不变时复用桶避免每帧 O(N) 分配
+    @SuppressWarnings("unchecked")
+    private ArrayList<VKGameRoom>[] cachedShards = new ArrayList[0];
+    private int cachedShardCount = 0;
 
     private static final class VKGameMatchResultState {
         volatile VKGameMatchResult result;
@@ -150,6 +161,7 @@ public final class VKGameRuntime {
                 this::roomContainsPlayer,
                 this::logRuntime
         );
+        this.frameBroadcaster = new VKGameFrameBroadcaster();
     }
 
     public static VKGameRuntime getInstance() {
@@ -210,6 +222,7 @@ public final class VKGameRuntime {
             joinTokenByTicket.clear();
             roomPersistence.clear();
             messageCenter.clear();
+            frameBroadcaster.clear();
             lastShardMetrics.set(List.of());
             runtimeMetrics.reset();
             roomSeq.set(1L);
@@ -295,10 +308,27 @@ public final class VKGameRuntime {
 
     public VKGameRoom createRoom(String gameType) {
         String roomId = "room-" + roomSeq.getAndIncrement();
-        return createRoom(roomId, gameType);
+        return createRoom(roomId, gameType, false);
+    }
+
+    public VKGameRoom createRoom(String gameType, boolean frameSyncEnabled) {
+        String roomId = "room-" + roomSeq.getAndIncrement();
+        return createRoom(roomId, gameType, frameSyncEnabled);
     }
 
     public VKGameRoom createRoom(String roomId, String gameType) {
+        return createRoom(roomId, gameType, false);
+    }
+
+    /**
+     * 建房核心方法。
+     *
+     * @param roomId          房间 ID（非空）
+     * @param gameType        游戏类型（必须已注册对应 logic）
+     * @param frameSyncEnabled 是否启用帧同步模式；true 时每帧结束后将玩家输入打包广播，
+     *                         与状态同步模式并不互斥，onTick/onCommand 回调仍然执行
+     */
+    public VKGameRoom createRoom(String roomId, String gameType, boolean frameSyncEnabled) {
         ensureInit();
         String rid = normalizeName(roomId, "Room id is blank");
         String gtype = normalizeName(gameType, "Game type is blank");
@@ -311,7 +341,7 @@ public final class VKGameRuntime {
                     "Room limit exceeded: " + config.getMaxRooms());
         }
 
-        VKGameRoom created = new VKGameRoom(rid, gtype);
+        VKGameRoom created = new VKGameRoom(rid, gtype, frameSyncEnabled);
         VKGameRoom prev = rooms.putIfAbsent(rid, created);
         if (prev != null) {
             throw new VKGameException(VKGameErrorCode.ROOM_EXISTS, "Room already exists: " + rid);
@@ -735,6 +765,61 @@ public final class VKGameRuntime {
         messageCenter.unbindNotifier(playerId);
     }
 
+    /**
+     * 绑定帧同步广播回调（房间级）。
+     *
+     * <p>帧同步模式的房间每帧 {@code onTick} 完成后，将本帧所有玩家输入通过此回调推送给应用层。
+     * 应用层负责将帧数据经由网络协议广播给房间内所有在线客户端。
+     *
+     * <p>此回调与 {@code VKGameMessageNotifier} 完全隔离，数据走独立广播链路，
+     * 不经消息中心排队，保证帧数据延迟不受业务消息影响。
+     *
+     * @param roomId   帧同步房间 ID
+     * @param notifier 帧回调；传 null 等效于解绑
+     * @throws VKGameException INVALID_ARGUMENT — roomId 为空；STATE_ERROR — 房间不存在或未开启帧同步
+     */
+    public void bindFrameNotifier(String roomId, VKGameFrameNotifier notifier) {
+        ensureInit();
+        String rid = normalizeName(roomId, "Room id is blank");
+        VKGameRoom room = rooms.get(rid);
+        if (room == null || room.isClosed()) {
+            throw new VKGameException(VKGameErrorCode.ROOM_NOT_FOUND, "Room not found: " + rid);
+        }
+        if (!room.isFrameSyncEnabled()) {
+            throw new VKGameException(VKGameErrorCode.STATE_ERROR,
+                    "Room is not in frame sync mode: " + rid);
+        }
+        frameBroadcaster.bindNotifier(rid, notifier);
+    }
+
+    /**
+     * 解绑帧同步广播回调（房间级）。
+     */
+    public void unbindFrameNotifier(String roomId) {
+        ensureInit();
+        String rid = normalizeName(roomId, "Room id is blank");
+        frameBroadcaster.unbindNotifier(rid);
+    }
+
+    /**
+     * 拉取帧同步历史帧（供断线重连或慢客户端追帧）。
+     *
+     * <p>环形缓冲区最多保留最近 {@code frameSyncHistoryCapacity} 帧（默认 300 帧），
+     * 超出范围的旧帧已被覆盖，返回列表可能少于 {@code limit}。
+     *
+     * @param roomId      帧同步房间 ID
+     * @param fromFrameNo 期望的起始帧序号（含，从 1 开始）
+     * @param limit       最多返回帧数
+     * @return 历史帧列表；房间不存在、未开启帧同步或尚无历史时返回空列表
+     */
+    public List<VKGameFrame> pollFrames(String roomId, long fromFrameNo, int limit) {
+        ensureInit();
+        if (roomId == null || roomId.isBlank()) {
+            return List.of();
+        }
+        return frameBroadcaster.pollFrames(roomId.trim(), fromFrameNo, Math.max(1, limit));
+    }
+
     private VKGameMatchResultState loadAliveMatchResultState(String ticketId, long nowMs) {
         VKGameMatchResultState state = matchResults.get(ticketId);
         if (state == null) {
@@ -771,7 +856,6 @@ public final class VKGameRuntime {
             return;
         }
 
-        ArrayList<VKGameRoom> snapshot = new ArrayList<>(rooms.values());
         final long tickStartNs = System.nanoTime();
         final long timeoutMs = config.getTickTimeoutMs();
         final long timeoutNs = timeoutMs <= 0L ? Long.MAX_VALUE : TimeUnit.MILLISECONDS.toNanos(timeoutMs);
@@ -780,23 +864,27 @@ public final class VKGameRuntime {
         // 全局帧序号自增，用于标记本帧被跳过的房间，保证下帧优先处理
         final long currentTickNo = globalTickSeq.incrementAndGet();
 
-        if (!snapshot.isEmpty()) {
+        if (!rooms.isEmpty()) {
             final ExecutorService workers = tickWorkers;
             final int shardCount = Math.max(1, config.getTickWorkerThreads());
             final AtomicBoolean timedOut = new AtomicBoolean(false);
             final AtomicLong skippedRooms = new AtomicLong();
 
-            @SuppressWarnings("unchecked")
-            ArrayList<VKGameRoom>[] shards = (ArrayList<VKGameRoom>[]) new ArrayList<?>[shardCount];
-            for (VKGameRoom room : snapshot) {
-                int idx = shardBalancer.shardIndexForRoom(room.getRoomId(), shardCount);
-                ArrayList<VKGameRoom> bucket = shards[idx];
-                if (bucket == null) {
-                    bucket = new ArrayList<>();
-                    shards[idx] = bucket;
-                }
-                bucket.add(room);
+            // P1-3: 复用分片桶（仅在 shardCount 变化时重新分配，否则直接 clear 复用，消除每帧 O(N) 分配）
+            if (cachedShardCount != shardCount) {
+                cachedShards = new ArrayList[shardCount];
+                cachedShardCount = shardCount;
             }
+            for (int i = 0; i < shardCount; i++) {
+                if (cachedShards[i] == null) cachedShards[i] = new ArrayList<>();
+                else cachedShards[i].clear();
+            }
+            // 直接迭代 rooms.values()（ConcurrentHashMap 弱一致迭代，无需快照）
+            for (VKGameRoom room : rooms.values()) {
+                int idx = shardBalancer.shardIndexForRoom(room.getRoomId(), shardCount);
+                cachedShards[idx].add(room);
+            }
+            ArrayList<VKGameRoom>[] shards = cachedShards;
 
             // 双关键字排序确保公平调度（P1 #8）：
             // 主键：lastSkippedTickNo 降序 —— 被跳过时间越新（全局帧序号越大）的房间越优先；
@@ -1163,7 +1251,17 @@ public final class VKGameRuntime {
             return VKGameTickStats.RoomProcessResult.skipped();
         }
 
-        lifecycleManager.applyLifecyclePolicy(room, now);
+        // P0-2: 时间门 —— 距上次 onTick 未满一个 tick 周期则跳过，防止排序抖动导致同一房间两次 onTick 间隔缩短
+        long minIntervalMs = Math.max(1L, 1000L / Math.max(1, config.getTickRate()));
+        if (now - room.getLastTickedAtMs() < minIntervalMs) {
+            return VKGameTickStats.RoomProcessResult.skipped();
+        }
+
+        // P1-4: 生命周期策略最多每秒检查一次（idle/drain 超时是秒级，不需要每帧调用）
+        if (now - room.getLastLifecycleCheckAt() >= 1000L) {
+            lifecycleManager.applyLifecyclePolicy(room, now);
+            room.setLastLifecycleCheckAt(now);
+        }
         if (room.isClosed() || rooms.get(roomId) != room) {
             return VKGameTickStats.RoomProcessResult.skipped();
         }
@@ -1173,13 +1271,21 @@ public final class VKGameRuntime {
             return VKGameTickStats.RoomProcessResult.skipped();
         }
 
-        cleanupHostedSessions(room, now, logic);
+        // P1-5: 断线会话清理最多每秒执行一次（reconnectGraceMs 默认 60s，每帧清理纯浪费）
+        if (config.isSessionHostingEnabled() && now - room.getLastSessionCleanupAt() >= 1000L) {
+            cleanupHostedSessions(room, now, logic);
+            room.setLastSessionCleanupAt(now);
+        }
 
         long startNs = System.nanoTime();
         int processed = 0;
         boolean timeoutDuringRoom = false;
         boolean anyErrorThisTick = false;
         long frameTickNo = room.getCurrentTick() + 1L;
+
+        // 帧同步模式：预先分配输入收集列表；仅在帧同步模式下才分配，避免状态同步模式的额外开销
+        final boolean frameSyncEnabled = room.isFrameSyncEnabled();
+        List<VKGameFrameInput> frameInputs = frameSyncEnabled ? new ArrayList<>() : null;
 
         List<VKGameCommand> drained = room.drainCommands(
                 config.getMaxCommandsPerTick(),
@@ -1198,6 +1304,16 @@ public final class VKGameRuntime {
                 anyErrorThisTick = true;
             }
             roomPersistence.appendWal(room, command, frameTickNo, now);
+            // 帧同步：收集已通过治理验证、实际执行的玩家输入（不含因超时被丢弃的命令）
+            if (frameInputs != null) {
+                frameInputs.add(new VKGameFrameInput(
+                        command.getPlayerId(),
+                        command.getType(),
+                        command.getPayload(),
+                        command.getClientSeq(),
+                        command.getTimestampMs()
+                ));
+            }
         }
 
         if (!timeoutDuringRoom && !deadlineExceeded(deadlineNs)) {
@@ -1205,7 +1321,30 @@ public final class VKGameRuntime {
             if (!safeInvoke(() -> logic.onTick(room, tickNo), "onTick")) {
                 anyErrorThisTick = true;
             }
+            // 帧同步广播：在 onTick 完成后、当前帧所有操作结束时触发，
+            // 通过独立广播通道发送，不经消息中心，避免被业务消息影响。
+            // 仅在 onTick 成功完成（无超时）时广播，保证客户端收到的是完整帧。
+            if (frameSyncEnabled && frameInputs != null) {
+                boolean hasInputs = !frameInputs.isEmpty();
+                if (hasInputs || config.isFrameSyncBroadcastEmptyFrames()) {
+                    VKGameFrame frame = new VKGameFrame(
+                            roomId,
+                            tickNo,
+                            now,
+                            hasInputs ? List.copyOf(frameInputs) : List.of()
+                    );
+                    try {
+                        frameBroadcaster.broadcastFrame(frame, config.getFrameSyncHistoryCapacity());
+                        runtimeMetrics.onFrameSyncBroadcast();
+                    } catch (Throwable t) {
+                        runtimeMetrics.onFrameSyncBroadcastError();
+                        logRuntime("frame_broadcast", t);
+                    }
+                }
+            }
             roomPersistence.maybeSnapshot(room, tickNo);
+            // P0-2: 记录本次 onTick 时刻，供下帧时间门使用
+            room.setLastTickedAtMs(now);
         } else {
             timeoutDuringRoom = true;
         }
@@ -1387,7 +1526,8 @@ public final class VKGameRuntime {
         }
         long intervalMs = Math.max(1L, 1000L / Math.max(1, config.getTickRate()));
         ScheduledExecutorService createdTicker = Executors.newSingleThreadScheduledExecutor(new GameTickerThreadFactory());
-        createdTicker.scheduleAtFixedRate(() -> {
+        // P0-1: 使用 scheduleWithFixedDelay 替代 scheduleAtFixedRate，避免 tick 超时后立即连发下一帧
+        createdTicker.scheduleWithFixedDelay(() -> {
             try {
                 tickOnceInternal();
             } catch (Throwable t) {
@@ -1443,6 +1583,8 @@ public final class VKGameRuntime {
             roomPersistence.closeWal(room.getRoomId());
             cleanupJoinTokensByRoom(room.getRoomId());
             messageCenter.onRoomClosed(room.getRoomId());
+            // 清理帧同步广播器：解绑 notifier 并释放该房间的历史帧缓冲区
+            frameBroadcaster.onRoomClosed(room.getRoomId());
         }
         notifyRoomClose(room);
     }

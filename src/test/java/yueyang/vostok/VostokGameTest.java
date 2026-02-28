@@ -35,6 +35,8 @@ import java.nio.file.Path;
 import java.io.IOException;
 import yueyang.vostok.game.core.shard.VKGameShardBalancer;
 import yueyang.vostok.game.core.runtime.VKGameRuntimeMetrics;
+import yueyang.vostok.game.frame.VKGameFrame;
+import yueyang.vostok.game.frame.VKGameFrameInput;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -113,7 +115,7 @@ public class VostokGameTest {
     }
 
     @Test
-    void testTickAllRoomsEveryFrameWithShards() {
+    void testTickAllRoomsEveryFrameWithShards() throws InterruptedException {
         Map<String, AtomicInteger> roomTicks = new ConcurrentHashMap<>();
         AtomicInteger commandCount = new AtomicInteger();
 
@@ -142,6 +144,8 @@ public class VostokGameTest {
         assertEquals(1, roomTicks.get("r2").get());
 
         game.submit("r1", new VKGameCommand("p1", "move", null));
+        // P0-2: 时间门要求两次 onTick 之间至少间隔一个 tick 周期（默认 20Hz = 50ms），测试中需等待
+        Thread.sleep(55);
         Vostok.Game.tickOnce();
 
         assertEquals(2, roomTicks.get("r1").get());
@@ -724,7 +728,7 @@ public class VostokGameTest {
     }
 
     @Test
-    void testPrioritySchedulingInsideRoom() {
+    void testPrioritySchedulingInsideRoom() throws InterruptedException {
         List<String> processed = Collections.synchronizedList(new ArrayList<>());
 
         var game = Vostok.Game.init(new VKGameConfig()
@@ -752,6 +756,8 @@ public class VostokGameTest {
         Vostok.Game.tickOnce();
         assertEquals(List.of("H1", "H2", "N1"), processed);
 
+        // P0-2: 等待最小 tick 间隔后再执行第二帧
+        Thread.sleep(55);
         Vostok.Game.tickOnce();
         assertEquals("L1", processed.get(3));
     }
@@ -843,7 +849,7 @@ public class VostokGameTest {
     }
 
     @Test
-    void testLogicErrorIsolation() {
+    void testLogicErrorIsolation() throws InterruptedException {
         int threshold = 3;
 
         var game = Vostok.Game.init(new VKGameConfig()
@@ -864,7 +870,9 @@ public class VostokGameTest {
         game.join("error-room", "p1");
 
         // 连续触发 threshold 次逻辑异常，第 threshold 次应触发隔离
+        // P0-2: 时间门要求每次 onTick 之间至少间隔一个 tick 周期（默认 50ms），循环中需等待
         for (int i = 0; i < threshold; i++) {
+            if (i > 0) Thread.sleep(55);
             Vostok.Game.tickOnce();
         }
 
@@ -1273,5 +1281,336 @@ public class VostokGameTest {
                 }
             });
         }
+    }
+
+    // ===== 帧同步测试 =====
+
+    /**
+     * 正常路径：帧同步房间在每帧结束后触发 notifier，notifier 收到的帧包含正确的玩家输入。
+     */
+    @Test
+    void testFrameSyncModeBasicBroadcast() {
+        var game = Vostok.Game.init(new VKGameConfig()
+                .autoStartTicker(false)
+                .antiCheatEnabled(false));
+
+        game.registerLogic("fs", new VKGameLogic() {});
+
+        VKGameRoom room = game.createRoom("fs-room-1", "fs", true);
+        assertTrue(room.isFrameSyncEnabled());
+
+        List<VKGameFrame> received = new ArrayList<>();
+        game.bindFrameNotifier("fs-room-1", received::add);
+
+        game.join("fs-room-1", "p1");
+        game.join("fs-room-1", "p2");
+        game.submit("fs-room-1", new VKGameCommand("p1", "move", Map.of("x", 1)));
+        game.submit("fs-room-1", new VKGameCommand("p2", "attack", Map.of("target", "p1")));
+
+        Vostok.Game.tickOnce();
+
+        assertEquals(1, received.size(), "帧同步房间每帧应触发一次 notifier");
+        VKGameFrame frame = received.get(0);
+        assertEquals("fs-room-1", frame.roomId());
+        assertEquals(1L, frame.frameNo());
+        assertEquals(2, frame.inputs().size(), "本帧有 2 条输入");
+
+        // 验证输入内容
+        VKGameFrameInput input0 = frame.inputs().get(0);
+        assertEquals("p1", input0.playerId());
+        assertEquals("move", input0.commandType());
+
+        VKGameFrameInput input1 = frame.inputs().get(1);
+        assertEquals("p2", input1.playerId());
+        assertEquals("attack", input1.commandType());
+
+        // 指标检查
+        assertEquals(1L, Vostok.Game.metrics().frameSyncFramesBroadcast());
+        assertEquals(0L, Vostok.Game.metrics().frameSyncBroadcastErrors());
+    }
+
+    /**
+     * 边界条件：默认情况下（frameSyncBroadcastEmptyFrames=false），无输入的帧不触发 notifier。
+     */
+    @Test
+    void testFrameSyncModeEmptyFrameNotBroadcastedByDefault() {
+        var game = Vostok.Game.init(new VKGameConfig()
+                .autoStartTicker(false)
+                .antiCheatEnabled(false)
+                .frameSyncBroadcastEmptyFrames(false));
+
+        game.registerLogic("fs", new VKGameLogic() {});
+        game.createRoom("fs-room-empty", "fs", true);
+        game.join("fs-room-empty", "p1");
+
+        List<VKGameFrame> received = new ArrayList<>();
+        game.bindFrameNotifier("fs-room-empty", received::add);
+
+        // 不提交任何命令，触发空帧
+        Vostok.Game.tickOnce();
+
+        assertEquals(0, received.size(), "无输入时默认不广播空帧");
+        assertEquals(0L, Vostok.Game.metrics().frameSyncFramesBroadcast());
+    }
+
+    /**
+     * 边界条件：开启 frameSyncBroadcastEmptyFrames=true 时，静默帧也会被广播。
+     */
+    @Test
+    void testFrameSyncModeEmptyFrameBroadcastedWhenEnabled() {
+        var game = Vostok.Game.init(new VKGameConfig()
+                .autoStartTicker(false)
+                .antiCheatEnabled(false)
+                .frameSyncBroadcastEmptyFrames(true));
+
+        game.registerLogic("fs", new VKGameLogic() {});
+        game.createRoom("fs-empty-on", "fs", true);
+        game.join("fs-empty-on", "p1");
+
+        List<VKGameFrame> received = new ArrayList<>();
+        game.bindFrameNotifier("fs-empty-on", received::add);
+
+        Vostok.Game.tickOnce();
+
+        assertEquals(1, received.size(), "开启静默帧广播后，无输入帧也应触发 notifier");
+        assertEquals(0, received.get(0).inputs().size(), "静默帧输入列表为空");
+        assertEquals(1L, Vostok.Game.metrics().frameSyncFramesBroadcast());
+    }
+
+    /**
+     * 正常路径：pollFrames 能从历史缓冲区中读取已广播的帧（供断线重连客户端追帧）。
+     */
+    @Test
+    void testFrameSyncModePollFrameHistory() throws InterruptedException {
+        var game = Vostok.Game.init(new VKGameConfig()
+                .autoStartTicker(false)
+                .antiCheatEnabled(false)
+                .tickRate(1000)   // 高 tickRate：时间门 minIntervalMs = 1ms，快速推进多帧
+                .frameSyncHistoryCapacity(50)
+                .frameSyncBroadcastEmptyFrames(true));
+
+        game.registerLogic("fs", new VKGameLogic() {});
+        game.createRoom("fs-hist", "fs", true);
+        game.join("fs-hist", "p1");
+
+        // 推进 3 帧，每帧间隔 2ms 以满足时间门
+        for (int i = 0; i < 3; i++) {
+            if (i > 0) Thread.sleep(2L);
+            game.submit("fs-hist", new VKGameCommand("p1", "tick-" + i, null));
+            Vostok.Game.tickOnce();
+        }
+
+        // 从帧序号 1 开始拉取，最多 10 帧
+        List<VKGameFrame> history = game.pollFrames("fs-hist", 1L, 10);
+        assertEquals(3, history.size(), "共广播了 3 帧，pollFrames 应能全部取到");
+        assertEquals(1L, history.get(0).frameNo());
+        assertEquals(2L, history.get(1).frameNo());
+        assertEquals(3L, history.get(2).frameNo());
+
+        // 从中间帧开始拉取
+        List<VKGameFrame> partial = game.pollFrames("fs-hist", 2L, 10);
+        assertEquals(2, partial.size());
+        assertEquals(2L, partial.get(0).frameNo());
+    }
+
+    /**
+     * 边界条件：历史缓冲区容量限制，超出容量后旧帧被覆盖，pollFrames 返回有效范围内的帧。
+     */
+    @Test
+    void testFrameSyncModeHistoryCapacityEviction() throws InterruptedException {
+        int capacity = 5;
+        int totalTicks = 8;
+        var game = Vostok.Game.init(new VKGameConfig()
+                .autoStartTicker(false)
+                .antiCheatEnabled(false)
+                .tickRate(1000)
+                .frameSyncHistoryCapacity(capacity)
+                .frameSyncBroadcastEmptyFrames(true));
+
+        game.registerLogic("fs", new VKGameLogic() {});
+        game.createRoom("fs-cap", "fs", true);
+        game.join("fs-cap", "p1");
+
+        // 推进 8 帧，超出容量 5
+        for (int i = 0; i < totalTicks; i++) {
+            if (i > 0) Thread.sleep(2L);
+            Vostok.Game.tickOnce();
+        }
+
+        // 从帧 1 开始请求，但帧 1~3 已被覆盖，只能返回帧 4~8
+        List<VKGameFrame> history = game.pollFrames("fs-cap", 1L, 100);
+        assertFalse(history.isEmpty(), "应有帧返回");
+        // 确保返回的帧序号在有效范围内（最新 capacity 帧）
+        long minExpected = totalTicks - capacity + 1; // = 4
+        assertTrue(history.get(0).frameNo() >= minExpected,
+                "旧帧已被覆盖，返回帧序号应 >= " + minExpected);
+        // 最新帧序号应为 totalTicks
+        assertEquals((long) totalTicks, history.get(history.size() - 1).frameNo());
+    }
+
+    /**
+     * 边界条件：pollFrames 对非帧同步房间（无历史缓冲区）返回空列表，不抛异常。
+     */
+    @Test
+    void testFrameSyncModePollFramesOnNonFrameSyncRoom() {
+        var game = Vostok.Game.init(new VKGameConfig().autoStartTicker(false));
+        game.registerLogic("fs", new VKGameLogic() {});
+        game.createRoom("normal-room", "fs"); // 非帧同步房间
+
+        List<VKGameFrame> result = game.pollFrames("normal-room", 1L, 10);
+        assertNotNull(result);
+        assertTrue(result.isEmpty(), "非帧同步房间无历史缓冲区，应返回空列表");
+    }
+
+    /**
+     * 异常路径：对非帧同步房间绑定 frameNotifier 应抛出 STATE_ERROR 异常。
+     */
+    @Test
+    void testFrameSyncModeBindNotifierOnNonFrameSyncRoomThrows() {
+        var game = Vostok.Game.init(new VKGameConfig().autoStartTicker(false));
+        game.registerLogic("fs", new VKGameLogic() {});
+        game.createRoom("normal-room2", "fs"); // 非帧同步房间
+
+        VKGameException ex = assertThrows(VKGameException.class,
+                () -> game.bindFrameNotifier("normal-room2", frame -> {}));
+        assertEquals(VKGameErrorCode.STATE_ERROR, ex.getCode());
+    }
+
+    /**
+     * 正常路径：状态同步房间（默认）不受帧同步代码影响，指标保持 0。
+     */
+    @Test
+    void testStateSyncRoomNotAffectedByFrameSync() {
+        var game = Vostok.Game.init(new VKGameConfig()
+                .autoStartTicker(false)
+                .antiCheatEnabled(false));
+
+        game.registerLogic("ss", new VKGameLogic() {});
+        game.createRoom("ss-room", "ss"); // 默认状态同步
+        game.join("ss-room", "p1");
+        game.submit("ss-room", new VKGameCommand("p1", "move", null));
+        Vostok.Game.tickOnce();
+
+        assertEquals(0L, Vostok.Game.metrics().frameSyncFramesBroadcast(),
+                "状态同步房间不应触发帧同步广播");
+    }
+
+    /**
+     * 并发场景：多个帧同步房间同时处理，各房间的帧广播互不干扰，帧序号各自独立自增。
+     */
+    @Test
+    void testFrameSyncModeConcurrentRooms() throws InterruptedException {
+        int roomCount = 4;
+        int ticksPerRoom = 5;
+
+        var game = Vostok.Game.init(new VKGameConfig()
+                .autoStartTicker(false)
+                .antiCheatEnabled(false)
+                .tickRate(1000)        // 高 tickRate：时间门 1ms，便于快速推进多帧
+                .tickWorkerThreads(4)
+                .frameSyncBroadcastEmptyFrames(true));
+
+        game.registerLogic("fs", new VKGameLogic() {});
+
+        // 每个房间独立的帧计数器
+        ConcurrentHashMap<String, List<VKGameFrame>> framesPerRoom = new ConcurrentHashMap<>();
+        for (int i = 0; i < roomCount; i++) {
+            String roomId = "fs-concurrent-" + i;
+            game.createRoom(roomId, "fs", true);
+            game.join(roomId, "p1");
+            List<VKGameFrame> frames = Collections.synchronizedList(new ArrayList<>());
+            framesPerRoom.put(roomId, frames);
+            game.bindFrameNotifier(roomId, frames::add);
+        }
+
+        // 推进 ticksPerRoom 帧，每帧间隔 2ms
+        for (int t = 0; t < ticksPerRoom; t++) {
+            if (t > 0) Thread.sleep(2L);
+            Vostok.Game.tickOnce();
+        }
+
+        // 验证每个房间都独立收到 ticksPerRoom 帧，帧序号从 1 开始单调递增
+        for (int i = 0; i < roomCount; i++) {
+            String roomId = "fs-concurrent-" + i;
+            List<VKGameFrame> frames = framesPerRoom.get(roomId);
+            assertEquals(ticksPerRoom, frames.size(),
+                    roomId + " 应收到 " + ticksPerRoom + " 帧");
+            for (int f = 0; f < frames.size(); f++) {
+                assertEquals(f + 1L, frames.get(f).frameNo(),
+                        roomId + " 第 " + (f + 1) + " 帧序号错误");
+                assertEquals(roomId, frames.get(f).roomId());
+            }
+        }
+
+        long totalBroadcast = Vostok.Game.metrics().frameSyncFramesBroadcast();
+        assertEquals((long) roomCount * ticksPerRoom, totalBroadcast,
+                "总广播帧数应等于 房间数 × 帧数");
+    }
+
+    /**
+     * 正常路径：解绑 notifier 后，后续帧仍写入历史缓冲区，但不触发回调。
+     */
+    @Test
+    void testFrameSyncModeUnbindNotifier() {
+        var game = Vostok.Game.init(new VKGameConfig()
+                .autoStartTicker(false)
+                .antiCheatEnabled(false)
+                .frameSyncBroadcastEmptyFrames(true));
+
+        game.registerLogic("fs", new VKGameLogic() {});
+        game.createRoom("fs-unbind", "fs", true);
+        game.join("fs-unbind", "p1");
+
+        List<VKGameFrame> received = new ArrayList<>();
+        game.bindFrameNotifier("fs-unbind", received::add);
+
+        Vostok.Game.tickOnce(); // 帧 1：绑定状态，应触发回调
+        assertEquals(1, received.size());
+
+        game.unbindFrameNotifier("fs-unbind");
+        Vostok.Game.tickOnce(); // 帧 2：已解绑，不触发回调
+        Vostok.Game.tickOnce(); // 帧 3：已解绑，不触发回调
+
+        assertEquals(1, received.size(), "解绑后不应再触发 notifier");
+
+        // 解绑后历史仍可查询（帧 1~3 都在缓冲区）
+        List<VKGameFrame> history = game.pollFrames("fs-unbind", 1L, 10);
+        assertEquals(3, history.size(), "解绑 notifier 不影响历史缓冲区写入");
+    }
+
+    /**
+     * 正常路径：帧同步模式下，createRoom 自动生成 ID 的版本也正常工作。
+     */
+    @Test
+    void testFrameSyncModeAutoGeneratedRoomId() {
+        var game = Vostok.Game.init(new VKGameConfig()
+                .autoStartTicker(false)
+                .antiCheatEnabled(false));
+
+        game.registerLogic("fs", new VKGameLogic() {});
+        VKGameRoom room = game.createRoom("fs", true); // 自动生成 roomId
+        assertNotNull(room);
+        assertTrue(room.isFrameSyncEnabled());
+        assertTrue(room.getRoomId().startsWith("room-"));
+
+        game.join(room.getRoomId(), "p1");
+        List<VKGameFrame> received = new ArrayList<>();
+        game.bindFrameNotifier(room.getRoomId(), received::add);
+        game.submit(room.getRoomId(), new VKGameCommand("p1", "cmd", null));
+        Vostok.Game.tickOnce();
+
+        assertEquals(1, received.size());
+        assertEquals(room.getRoomId(), received.get(0).roomId());
+    }
+
+    /**
+     * 边界条件：pollFrames 对不存在的房间不抛异常，返回空列表。
+     */
+    @Test
+    void testFrameSyncModePollFramesNonExistentRoom() {
+        Vostok.Game.init(new VKGameConfig().autoStartTicker(false));
+        List<VKGameFrame> result = Vostok.Game.init().pollFrames("non-existent", 1L, 10);
+        assertNotNull(result);
+        assertTrue(result.isEmpty());
     }
 }

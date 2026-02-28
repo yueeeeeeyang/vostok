@@ -55,6 +55,10 @@ public final class VKGameRuntimeMetrics {
     private final AtomicLong shardImbalanceEvents = new AtomicLong();
     private final AtomicLong shardMigrations = new AtomicLong();
 
+    // 帧同步指标
+    private final AtomicLong frameSyncFramesBroadcast = new AtomicLong();
+    private final AtomicLong frameSyncBroadcastErrors = new AtomicLong();
+
     public void onTickDone(long tickCostMs) {
         tickCount.incrementAndGet();
         updateMax(maxTickCostMs, tickCostMs);
@@ -190,6 +194,14 @@ public final class VKGameRuntimeMetrics {
         shardMigrations.incrementAndGet();
     }
 
+    public void onFrameSyncBroadcast() {
+        frameSyncFramesBroadcast.incrementAndGet();
+    }
+
+    public void onFrameSyncBroadcastError() {
+        frameSyncBroadcastErrors.incrementAndGet();
+    }
+
     public VKGameMetrics snapshot(boolean started, int roomCount, int logicCount, int pendingMatchRequests) {
         return new VKGameMetrics(
                 started,
@@ -234,7 +246,9 @@ public final class VKGameRuntimeMetrics {
                 messagesExpired.get(),
                 shardImbalanceEvents.get(),
                 shardMigrations.get(),
-                roomClosedByLogicError.get()
+                roomClosedByLogicError.get(),
+                frameSyncFramesBroadcast.get(),
+                frameSyncBroadcastErrors.get()
         );
     }
 
@@ -283,6 +297,9 @@ public final class VKGameRuntimeMetrics {
 
         shardImbalanceEvents.set(0L);
         shardMigrations.set(0L);
+
+        frameSyncFramesBroadcast.set(0L);
+        frameSyncBroadcastErrors.set(0L);
     }
 
     private static void updateMax(AtomicLong target, long candidate) {

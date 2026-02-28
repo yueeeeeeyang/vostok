@@ -71,6 +71,12 @@ public class VKGameConfig {
     private double hotRoomScoreQueueWeight = 2.0;
     private double hotRoomScoreCostWeight = 1.0;
 
+    // 帧同步配置
+    // 帧历史环形缓冲区容量：每个帧同步房间最多保留最近 N 帧供断线客户端追赶，超出容量后旧帧被覆盖
+    private int frameSyncHistoryCapacity = 300;
+    // 是否广播无输入的空帧（静默帧）；true 时即使本帧无任何玩家指令也触发 notifier
+    private boolean frameSyncBroadcastEmptyFrames = false;
+
     public VKGameConfig copy() {
         return new VKGameConfig()
                 .enabled(enabled)
@@ -129,7 +135,9 @@ public class VKGameConfig {
                 .shutdownWaitMs(shutdownWaitMs)
                 .hotRoomScoreCommandWeight(hotRoomScoreCommandWeight)
                 .hotRoomScoreQueueWeight(hotRoomScoreQueueWeight)
-                .hotRoomScoreCostWeight(hotRoomScoreCostWeight);
+                .hotRoomScoreCostWeight(hotRoomScoreCostWeight)
+                .frameSyncHistoryCapacity(frameSyncHistoryCapacity)
+                .frameSyncBroadcastEmptyFrames(frameSyncBroadcastEmptyFrames);
     }
 
     public boolean isEnabled() {
@@ -646,6 +654,34 @@ public class VKGameConfig {
 
     public VKGameConfig hotRoomScoreCostWeight(double hotRoomScoreCostWeight) {
         this.hotRoomScoreCostWeight = Math.max(0.0, hotRoomScoreCostWeight);
+        return this;
+    }
+
+    public int getFrameSyncHistoryCapacity() {
+        return frameSyncHistoryCapacity;
+    }
+
+    /**
+     * 设置帧同步历史缓冲区容量（帧数）。
+     * 每个帧同步房间最多保留最近 N 帧，供断线客户端追帧。最小值 10。
+     */
+    public VKGameConfig frameSyncHistoryCapacity(int frameSyncHistoryCapacity) {
+        this.frameSyncHistoryCapacity = Math.max(10, frameSyncHistoryCapacity);
+        return this;
+    }
+
+    public boolean isFrameSyncBroadcastEmptyFrames() {
+        return frameSyncBroadcastEmptyFrames;
+    }
+
+    /**
+     * 是否广播无输入的静默帧。
+     * 设为 true 时，即使本帧无任何玩家指令，也会触发 {@link yueyang.vostok.game.frame.VKGameFrameNotifier}
+     * 并写入历史缓冲区，客户端可据此对齐帧序号。
+     * 默认 false（只广播有输入的帧），节省带宽。
+     */
+    public VKGameConfig frameSyncBroadcastEmptyFrames(boolean frameSyncBroadcastEmptyFrames) {
+        this.frameSyncBroadcastEmptyFrames = frameSyncBroadcastEmptyFrames;
         return this;
     }
 }

@@ -2,6 +2,8 @@ package yueyang.vostok.game;
 
 import yueyang.vostok.game.command.VKGameCommand;
 import yueyang.vostok.game.core.runtime.VKGameRuntime;
+import yueyang.vostok.game.frame.VKGameFrame;
+import yueyang.vostok.game.frame.VKGameFrameNotifier;
 import yueyang.vostok.game.match.VKGameMatchNotifier;
 import yueyang.vostok.game.match.VKGameMatchRequest;
 import yueyang.vostok.game.match.VKGameMatchResult;
@@ -76,11 +78,39 @@ public class VostokGame {
     }
 
     public VKGameRoom createRoom(String roomId, String gameType) {
-        return RUNTIME.createRoom(roomId, gameType);
+        return RUNTIME.createRoom(roomId, gameType, false);
     }
 
     public VKGameRoom createRoom(String gameType) {
-        return RUNTIME.createRoom(gameType);
+        return RUNTIME.createRoom(gameType, false);
+    }
+
+    /**
+     * 创建帧同步房间。
+     *
+     * <p>帧同步模式下，每帧 {@code onTick} 完成后，引擎将本帧所有玩家输入打包为
+     * {@link VKGameFrame} 并通过 {@link VKGameFrameNotifier} 广播给应用层。
+     * 广播通道与消息中心（{@code VKGameMessageNotifier}）完全隔离，
+     * 避免业务消息队列对帧数据延迟的影响。
+     *
+     * <p>{@code onTick}/{@code onCommand} 回调仍然执行（与状态同步模式并不互斥），
+     * 可用于服务端反作弊或权威状态维护。
+     *
+     * @param roomId          房间 ID
+     * @param gameType        游戏类型（须已注册对应 logic）
+     * @param frameSyncEnabled 是否启用帧同步模式
+     */
+    public VKGameRoom createRoom(String roomId, String gameType, boolean frameSyncEnabled) {
+        return RUNTIME.createRoom(roomId, gameType, frameSyncEnabled);
+    }
+
+    /**
+     * 创建帧同步房间（自动生成房间 ID）。
+     *
+     * @see #createRoom(String, String, boolean)
+     */
+    public VKGameRoom createRoom(String gameType, boolean frameSyncEnabled) {
+        return RUNTIME.createRoom(gameType, frameSyncEnabled);
     }
 
     public boolean removeRoom(String roomId) {
@@ -186,5 +216,47 @@ public class VostokGame {
     public VostokGame unbindMessageNotifier(String playerId) {
         RUNTIME.unbindMessageNotifier(playerId);
         return this;
+    }
+
+    /**
+     * 绑定帧同步广播回调（房间级）。
+     *
+     * <p>每帧 {@code onTick} 完成后触发，应用层在回调中将帧数据经由网络协议广播给客户端。
+     * 回调在 Tick Worker 线程中同步调用，实现应尽量快速返回（建议仅做序列化与异步发送）。
+     *
+     * @param roomId   帧同步房间 ID
+     * @param notifier 帧回调
+     * @return this（链式调用）
+     * @throws yueyang.vostok.game.exception.VKGameException STATE_ERROR — 房间未启用帧同步模式
+     */
+    public VostokGame bindFrameNotifier(String roomId, VKGameFrameNotifier notifier) {
+        RUNTIME.bindFrameNotifier(roomId, notifier);
+        return this;
+    }
+
+    /**
+     * 解绑帧同步广播回调。
+     *
+     * @param roomId 房间 ID
+     * @return this（链式调用）
+     */
+    public VostokGame unbindFrameNotifier(String roomId) {
+        RUNTIME.unbindFrameNotifier(roomId);
+        return this;
+    }
+
+    /**
+     * 拉取帧同步历史帧（供断线重连或慢客户端追帧）。
+     *
+     * <p>环形缓冲区保留最近 N 帧（{@code frameSyncHistoryCapacity}，默认 300），
+     * 超出范围的旧帧已被覆盖，返回帧数可能少于 {@code limit}。
+     *
+     * @param roomId      帧同步房间 ID
+     * @param fromFrameNo 期望的起始帧序号（含，从 1 开始）
+     * @param limit       最多返回帧数
+     * @return 历史帧列表；若尚无历史则返回空列表
+     */
+    public List<VKGameFrame> pollFrames(String roomId, long fromFrameNo, int limit) {
+        return RUNTIME.pollFrames(roomId, fromFrameNo, limit);
     }
 }

@@ -43,6 +43,9 @@ public record VKGameMetrics(
         long messagesExpired,
         long shardImbalanceEvents,
         long shardMigrations,
-        long roomClosedByLogicError
+        long roomClosedByLogicError,
+        // 帧同步指标
+        long frameSyncFramesBroadcast,   // 成功广播的帧总数（含写入历史缓冲区的帧）
+        long frameSyncBroadcastErrors    // notifier 回调抛出异常的次数
 ) {
 }
