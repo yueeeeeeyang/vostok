@@ -6,6 +6,8 @@ import yueyang.vostok.config.VKConfigOptions;
 import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.event.VKEventConfig;
 import yueyang.vostok.file.VKFileConfig;
+import yueyang.vostok.game.VKGameConfig;
+import yueyang.vostok.game.VostokGame;
 import yueyang.vostok.http.VKHttpConfig;
 import yueyang.vostok.log.VKLogConfig;
 import yueyang.vostok.security.VKSecurityConfig;
@@ -22,11 +24,13 @@ public final class VKInitConfig {
     private final String[] dataPackages;
     private final VKCacheConfig cacheConfig;
     private final VKEventConfig eventConfig;
+    private final VKGameConfig gameConfig;
     private final VKHttpConfig httpConfig;
     private final VKFileConfig fileConfig;
     private final VKAiConfig aiConfig;
     private final VKWebConfig webConfig;
     private final Consumer<VostokWeb> webSetup;
+    private final Consumer<VostokGame> gameSetup;
     private final boolean webStart;
 
     private VKInitConfig(Builder builder) {
@@ -37,11 +41,13 @@ public final class VKInitConfig {
         this.dataPackages = builder.dataPackages == null ? new String[0] : builder.dataPackages.clone();
         this.cacheConfig = builder.cacheConfig;
         this.eventConfig = builder.eventConfig;
+        this.gameConfig = builder.gameConfig;
         this.httpConfig = builder.httpConfig;
         this.fileConfig = builder.fileConfig;
         this.aiConfig = builder.aiConfig;
         this.webConfig = builder.webConfig;
         this.webSetup = builder.webSetup;
+        this.gameSetup = builder.gameSetup;
         this.webStart = builder.webStart;
     }
 
@@ -81,6 +87,10 @@ public final class VKInitConfig {
         return httpConfig;
     }
 
+    public VKGameConfig getGameConfig() {
+        return gameConfig;
+    }
+
     public VKFileConfig getFileConfig() {
         return fileConfig;
     }
@@ -97,6 +107,10 @@ public final class VKInitConfig {
         return webSetup;
     }
 
+    public Consumer<VostokGame> getGameSetup() {
+        return gameSetup;
+    }
+
     public boolean isWebStart() {
         return webStart;
     }
@@ -109,11 +123,13 @@ public final class VKInitConfig {
         private String[] dataPackages = new String[0];
         private VKCacheConfig cacheConfig;
         private VKEventConfig eventConfig;
+        private VKGameConfig gameConfig;
         private VKHttpConfig httpConfig;
         private VKFileConfig fileConfig;
         private VKAiConfig aiConfig;
         private VKWebConfig webConfig;
         private Consumer<VostokWeb> webSetup;
+        private Consumer<VostokGame> gameSetup;
         private boolean webStart;
 
         public Builder configOptions(VKConfigOptions configOptions) {
@@ -161,6 +177,11 @@ public final class VKInitConfig {
             return this;
         }
 
+        public Builder gameConfig(VKGameConfig gameConfig) {
+            this.gameConfig = gameConfig;
+            return this;
+        }
+
         public Builder httpConfig(VKHttpConfig httpConfig) {
             this.httpConfig = httpConfig;
             return this;
@@ -183,6 +204,11 @@ public final class VKInitConfig {
 
         public Builder webSetup(Consumer<VostokWeb> webSetup) {
             this.webSetup = webSetup;
+            return this;
+        }
+
+        public Builder gameSetup(Consumer<VostokGame> gameSetup) {
+            this.gameSetup = gameSetup;
             return this;
         }
 

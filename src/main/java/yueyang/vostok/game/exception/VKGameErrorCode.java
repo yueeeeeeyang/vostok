@@ -1,0 +1,16 @@
+package yueyang.vostok.game.exception;
+
+public enum VKGameErrorCode {
+    INVALID_ARGUMENT,
+    CONFIG_ERROR,
+    NOT_INITIALIZED,
+    ROOM_NOT_FOUND,
+    ROOM_EXISTS,
+    ROOM_LIMIT_EXCEEDED,
+    PLAYER_LIMIT_EXCEEDED,
+    LOGIC_NOT_FOUND,
+    QUEUE_FULL,
+    COMMAND_REJECTED,
+    MATCHMAKING_ERROR,
+    STATE_ERROR
+}

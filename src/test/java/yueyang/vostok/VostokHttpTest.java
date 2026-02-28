@@ -493,6 +493,9 @@ public class VostokHttpTest {
         exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=UTF-8");
         exchange.sendResponseHeaders(200, 0);
         try {
+            // Emit one comment line to force the stream into active SSE mode, then stay idle.
+            exchange.getResponseBody().write(": keep-alive\n".getBytes(StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
             Thread.sleep(500);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

@@ -2,7 +2,7 @@
 
 ---
 
-Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合十二个模块能力：
+Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vostok`，聚合十三个模块能力：
 
 - `Vostok.Data`：基于 JDBC 的数据访问（CRUD、事务、查询、多数据源、连接池）
 - `Vostok.Web`：基于 NIO Reactor 的 Web 服务器（路由、中间件、静态资源、自动 CRUD API）
@@ -12,6 +12,7 @@ Vostok 是一个面向 `JDK 17+` 的轻量 Java 框架，提供统一门面 `Vos
 - `Vostok.Security`：安全检测工具集（SQL 注入、XSS、命令注入、路径穿越、响应脱敏、文件魔数与脚本上传检测）
 - `Vostok.Event`：进程内事件总线（统一 `publish(...)`，监听器支持同步/异步）
 - `Vostok.Cache`：统一缓存访问（支持 Redis 或内存 Provider、内置连接池、可扩展编解码器）
+- `Vostok.Game`：游戏服务端引擎（全房间 Tick、分片线程池、房间生命周期、热点迁移）
 - `Vostok.Http`：统一 HTTP Client（命名 Client、鉴权、重试、超时、JSON/表单/文件上传）
 - `Vostok.Util`：通用工具门面（JSON 能力、Provider 注册与切换）
 - `Vostok.AI`：统一 AI Client（命名 Client、Chat/ChatJson、重试、指标、异常模型）
@@ -95,6 +96,7 @@ Vostok.init(cfg -> cfg
 - `Vostok.Security` 为主动调用型模块，不会自动接入 `Data/Web` 执行链路，需要在业务代码中显式调用。
 - `Vostok.Event` 仅提供一个发布方法 `publish(...)`；同步/异步行为由监听器注册模式决定。
 - `Vostok.Cache` 不依赖 `Vostok.Config`，必须通过 `VKCacheConfig` 或显式 Loader 初始化。
+- `Vostok.Game` 建议显式 `init(...)` 后使用；若关闭自动 ticker（`autoStartTicker(false)`），需业务侧手动驱动 `tickOnce()`。
 - `Vostok.Http` 建议显式 `init(...)` 后再使用；如调用相对路径，必须先注册带 `baseUrl` 的命名 Client。
 - `Vostok.AI` 建议显式 `init(...)` 并注册命名 Client；若未指定 client 且注册了多个 Client，会抛出配置异常。
 - JSON 能力通过 `Vostok.Util` 暴露，默认使用内置 `builtin` 实现；如需 Jackson/Gson/Fastjson 等能力，请业务侧自行实现 `VKJsonProvider` 并注册切换。
@@ -5456,3 +5458,241 @@ CREATE TABLE vk_ai_session_message (
   created_at BIGINT
 );
 ```
+
+---
+
+# 13. Game 模块
+
+`Vostok.Game` 提供游戏服务端运行时能力，适合房间制对局场景。当前特性：
+
+- 全房间每帧触发 `onTick(...)`
+- 分片线程池并行处理（`tickWorkerThreads`）
+- 热点房间识别与分片迁移（负载失衡时自动重分配）
+- Tick 超时保护（`tickTimeoutMs`）
+- 房间生命周期管理（空闲/空房/最大寿命/drain 超时）
+- 断线重连与会话托管
+- 撮合建房（Matchmaking）
+- 撮合通知链路：推送（Notifier）+ 轮询（Poll）+ ACK 确认
+- 统一消息接口（玩家消息/系统消息统一发布、推送、轮询、ACK）
+- 入房凭证闭环（`joinToken`）
+- 通知可靠性增强（`eventId/version` + 指数退避重推）
+- 房间状态持久化（Snapshot + WAL）与启动恢复
+
+## 13.1 接口定义
+
+```java
+public interface Vostok.Game {
+    // 生命周期
+    public static VostokGame init();
+    public static VostokGame init(VKGameConfig config);
+    public static void reinit(VKGameConfig config);
+    public static boolean started();
+    public static VKGameConfig config();
+    public static VKGameMetrics metrics();
+    public static List<VKGameShardMetrics> shardMetrics();
+    public static void tickOnce();
+    public static void close();
+
+    // 逻辑注册
+    public VostokGame registerLogic(String gameType, VKGameLogic logic);
+    public VostokGame unregisterLogic(String gameType);
+    public Set<String> logicNames();
+
+    // 房间管理
+    public VKGameRoom createRoom(String gameType);
+    public VKGameRoom createRoom(String roomId, String gameType);
+    public boolean removeRoom(String roomId);
+    public boolean drainRoom(String roomId, String reason);
+    public VKGameRoom room(String roomId);
+    public Set<String> roomIds();
+
+    // 玩家与命令
+    public VKGamePlayerSession join(String roomId, String playerId);
+    public VKGamePlayerSession joinWithToken(String roomId, String playerId, String joinToken);
+    public VKGamePlayerSession leave(String roomId, String playerId);
+    public VKGamePlayerSession disconnect(String roomId, String playerId);
+    public VKGamePlayerSession reconnect(String roomId, String playerId, String sessionToken);
+    public void submit(String roomId, VKGameCommand command);
+    public boolean trySubmit(String roomId, VKGameCommand command);
+
+    // 撮合
+    public String enqueueMatch(VKGameMatchRequest request);
+    public boolean cancelMatch(String ticketId);
+    public int pendingMatchCount(String gameType);
+    public VostokGame bindMatchNotifier(String playerId, VKGameMatchNotifier notifier);
+    public VostokGame unbindMatchNotifier(String playerId);
+    public VKGameMatchResult pollMatchResult(String ticketId);
+    public VKGameMatchResult ackMatchFound(String ticketId, String playerId);
+
+    // 统一消息（玩家消息 + 系统消息）
+    public List<VKGameMessage> publishMessages(List<VKGameMessagePublishCommand> commands);
+    public List<VKGameMessage> pollMessages(
+            String playerId,
+            VKGameMessageScope scope,
+            String scopeId,
+            long fromSeq,
+            int limit,
+            List<VKGameMessageType> types
+    );
+    public int ackMessages(String playerId, List<String> messageIds);
+    public VostokGame bindMessageNotifier(String playerId, VKGameMessageNotifier notifier);
+    public VostokGame unbindMessageNotifier(String playerId);
+}
+```
+
+## 13.2 使用 Demo
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.game.VKGameConfig;
+import yueyang.vostok.game.VKGameLogic;
+import yueyang.vostok.game.VKGameMetrics;
+import yueyang.vostok.game.command.VKGameCommand;
+import yueyang.vostok.game.match.VKGameMatchRequest;
+import yueyang.vostok.game.match.VKGameMatchResult;
+import yueyang.vostok.game.match.VKGameMatchStatus;
+import yueyang.vostok.game.message.VKGameMessage;
+import yueyang.vostok.game.message.VKGameMessagePublishCommand;
+import yueyang.vostok.game.message.VKGameMessageScope;
+import yueyang.vostok.game.message.VKGameMessageType;
+import yueyang.vostok.game.room.VKGameRoom;
+
+import java.util.List;
+import java.util.Map;
+
+public class GameDemo {
+    public static void main(String[] args) {
+        Vostok.Game.init(new VKGameConfig()
+                .autoStartTicker(false)          // 手动驱动 tick
+                .tickRate(20)
+                .tickWorkerThreads(4)            // 分片线程池
+                .tickTimeoutMs(50)               // 单帧预算
+                .sessionHostingEnabled(true)     // 断线会话托管
+                .roomEmptyTimeoutMs(60_000)      // 空房回收
+                .roomDrainTimeoutMs(15_000)
+                .matchmakingEnabled(true)        // 开启撮合
+                .matchmakingRoomSize(2)
+                .matchResultTtlMs(120_000)
+                .matchJoinRequiresToken(true)
+                .roomPersistenceEnabled(true)
+                .roomSnapshotEveryTicks(20)
+                .hotRoomCommandThreshold(256)
+                .shardImbalanceThreshold(1.6));
+
+        Vostok.Game.init().registerLogic("battle", new VKGameLogic() {
+            @Override
+            public void onRoomStart(VKGameRoom room) {
+                room.attributes().put("state", "waiting");
+            }
+
+            @Override
+            public void onCommand(VKGameRoom room, VKGameCommand command) {
+                room.attributes().put("lastCmd", command.getType());
+            }
+
+            @Override
+            public void onTick(VKGameRoom room, long tickNo) {
+                // 每帧更新
+                room.attributes().put("tick", tickNo);
+            }
+
+            @Override
+            public void onRoomDraining(VKGameRoom room, String reason) {
+                // 可在这里通知玩家房间进入摘流
+            }
+        });
+
+        // 建房 + 入房 + 投递命令
+        Vostok.Game.init().createRoom("room-1001", "battle");
+        Vostok.Game.init().join("room-1001", "u1");
+        Vostok.Game.init().submit("room-1001", new VKGameCommand("u1", "move", Map.of("x", 1, "y", 2)));
+
+        // 手动推进一帧
+        Vostok.Game.tickOnce();
+
+        // 观察指标
+        VKGameMetrics m = Vostok.Game.metrics();
+        var shard = Vostok.Game.shardMetrics();
+        System.out.println("tickCount=" + m.tickCount() + ", shardSize=" + shard.size());
+
+        // 进入维护摘流（停止新命令，等待生命周期策略关闭）
+        Vostok.Game.init().drainRoom("room-1001", "maintenance");
+
+        // ===== 撮合 + 通知 =====
+        Vostok.Game.init().bindMatchNotifier("u1", result -> {
+            // 服务端推送给客户端：ticketId/roomId/joinToken
+            System.out.println("MATCH_FOUND room=" + result.getRoomId());
+        });
+
+        String ticket = Vostok.Game.init().enqueueMatch(new VKGameMatchRequest("u1", "battle", 1200, "cn"));
+        Vostok.Game.init().enqueueMatch(new VKGameMatchRequest("u2", "battle", 1210, "cn"));
+        Vostok.Game.tickOnce(); // 触发撮合
+
+        // 若客户端漏收推送，可走轮询兜底
+        VKGameMatchResult polled = Vostok.Game.init().pollMatchResult(ticket);
+        if (polled != null && polled.getStatus() == VKGameMatchStatus.FOUND) {
+            // 客户端拿 joinToken 进房，成功后切房间 UI，再回 ACK
+            Vostok.Game.init().joinWithToken(polled.getRoomId(), "u1", polled.getJoinToken());
+            Vostok.Game.init().ackMatchFound(ticket, "u1");
+        }
+
+        // ===== 统一消息接口（玩家消息 + 系统消息）=====
+        Vostok.Game.init().bindMessageNotifier("u1", message -> {
+            System.out.println("PUSH type=" + message.getType() + ", content=" + message.getContent());
+        });
+
+        Vostok.Game.init().publishMessages(List.of(
+                VKGameMessagePublishCommand.playerChat("room-1001", "u1", "hello room"),
+                new VKGameMessagePublishCommand(
+                        VKGameMessageType.SYSTEM_ALERT,
+                        VKGameMessageScope.PLAYER,
+                        "u1",
+                        "SYSTEM",
+                        "维护提醒",
+                        "请在 30 秒内返回大厅",
+                        null,
+                        0L
+                )
+        ));
+
+        List<VKGameMessage> playerMsgs = Vostok.Game.init().pollMessages(
+                "u1",
+                VKGameMessageScope.PLAYER,
+                "u1",
+                0L,
+                20,
+                List.of(VKGameMessageType.SYSTEM_ALERT, VKGameMessageType.SYSTEM_NOTICE)
+        );
+        if (!playerMsgs.isEmpty()) {
+            Vostok.Game.init().ackMessages("u1", playerMsgs.stream().map(VKGameMessage::getMessageId).toList());
+        }
+
+        Vostok.Game.close();
+    }
+}
+```
+
+## 13.3 关键配置建议
+
+- 低并发开发环境：`tickWorkerThreads = 1~2`，`tickTimeoutMs = 0`（关闭预算）
+- 线上常规场景：`tickWorkerThreads = CPU核数`，`tickTimeoutMs = 30~80`
+- 高负载场景：
+  - 适当降低 `maxCommandsPerTick`，避免单房间吃满帧预算
+  - 调低 `hotRoomCommandThreshold`，更快触发热点迁移
+  - 设置 `shardMigrationCooldownMs` 防止热点房间来回抖动
+
+## 13.4 包结构（按功能拆分）
+
+- `yueyang.vostok.game`：对外入口与配置/逻辑/指标（`VostokGame`、`VKGameConfig`、`VKGameLogic`、`VKGameMetrics`）。
+- `yueyang.vostok.game.command`：命令模型（`VKGameCommand`、`VKGameCommandPriority`）。
+- `yueyang.vostok.game.match`：匹配模型（`VKGameMatchRequest`、`VKGameMatchResult`、`VKGameMatchStatus`、`VKGameMatchNotifier`）。
+- `yueyang.vostok.game.message`：统一消息模型（`VKGameMessage*`）。
+- `yueyang.vostok.game.room`：房间与玩家会话模型（`VKGameRoom`、`VKGamePlayerSession`、`VKGameRoomState`）。
+- `yueyang.vostok.game.shard`：分片观测模型（`VKGameShardMetrics`）。
+- `yueyang.vostok.game.core.runtime`：运行时编排（`VKGameRuntime`、`VKGameRuntimeMetrics`、`VKGameTickStats`）。
+- `yueyang.vostok.game.core.command`：命令治理与反作弊（`VKGameCommandGovernor`）。
+- `yueyang.vostok.game.core.lifecycle`：房间生命周期（`VKGameLifecycleManager`、`VKGameLifecycleReason`）。
+- `yueyang.vostok.game.core.match`：撮合引擎（`VKGameMatchmaker`）。
+- `yueyang.vostok.game.core.message`：统一消息中心（`VKGameMessageCenter`，支持发布/推送/轮询/ACK）。
+- `yueyang.vostok.game.core.persistence`：房间持久化（`VKGameRoomPersistence`，Snapshot + WAL）。
+- `yueyang.vostok.game.core.shard`：分片负载与热点迁移（`VKGameShardBalancer`）。

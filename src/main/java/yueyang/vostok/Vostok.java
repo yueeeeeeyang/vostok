@@ -5,6 +5,7 @@ import yueyang.vostok.cache.VostokCache;
 import yueyang.vostok.config.VostokConfig;
 import yueyang.vostok.event.VostokEvent;
 import yueyang.vostok.file.VostokFile;
+import yueyang.vostok.game.VostokGame;
 import yueyang.vostok.log.VostokLog;
 import yueyang.vostok.security.VostokSecurity;
 import yueyang.vostok.web.VostokWeb;
@@ -94,6 +95,18 @@ public final class Vostok {
                     }
                 }
 
+                boolean needGame = config.getGameConfig() != null || config.getGameSetup() != null;
+                if (needGame) {
+                    boolean already = Game.started();
+                    var game = config.getGameConfig() == null ? Game.init() : Game.init(config.getGameConfig());
+                    if (config.getGameSetup() != null) {
+                        config.getGameSetup().accept(game);
+                    }
+                    if (!already) {
+                        rollback.add(Game::close);
+                    }
+                }
+
                 if (config.getHttpConfig() != null) {
                     boolean already = Http.started();
                     Http.init(config.getHttpConfig());
@@ -158,6 +171,12 @@ public final class Vostok {
                     () -> {
                         try {
                             AI.close();
+                        } catch (Exception ignore) {
+                        }
+                    },
+                    () -> {
+                        try {
+                            Game.close();
                         } catch (Exception ignore) {
                         }
                     },
@@ -284,6 +303,14 @@ public final class Vostok {
      */
     public static final class Event extends VostokEvent {
         private Event() {
+        }
+    }
+
+    /**
+     * Game entry.
+     */
+    public static final class Game extends VostokGame {
+        private Game() {
         }
     }
 
