@@ -198,18 +198,36 @@ public final class VostokCrudOps {
         VKAssert.isTrue(!idValues.isEmpty(), "Id list is empty");
 
         EntityMeta meta = MetaRegistry.get(entityClass);
+        // 使用 DELETE_BY_ID 单行模板 + JDBC batch，与 batchUpdate 保持一致，实现逐行结果判断
+        SqlTemplate tpl = VostokInternal.currentTemplateCache().get(meta, SqlTemplateType.DELETE_BY_ID);
+        String sql = tpl.getSql();
+
         List<VKBatchItemResult> items = new ArrayList<>();
         int baseIndex = 0;
         for (List<?> chunk : VostokInternal.split(idValues, VostokInternal.currentConfig().getBatchSize())) {
-            String sql = VostokInternal.buildDeleteInSql(meta, chunk.size());
+            // 每个 idValue 封装为单行参数数组
+            List<Object[]> paramsList = new ArrayList<>(chunk.size());
+            for (Object idValue : chunk) {
+                paramsList.add(tpl.bindId(idValue));
+            }
             try {
-                int count = VostokInternal.currentExecutor().executeUpdate(sql, chunk.toArray());
-                for (int i = 0; i < chunk.size(); i++) {
-                    items.add(new VKBatchItemResult(baseIndex + i, count > 0, 1, null, null));
+                VKBatchResult result = VostokInternal.currentExecutor().executeBatch(sql, paramsList, false);
+                int[] counts = result.getCounts();
+                for (int i = 0; i < counts.length; i++) {
+                    // counts[i] >= 0 表示该行成功（1=已删除，0=id 不存在）
+                    items.add(new VKBatchItemResult(baseIndex + i, counts[i] >= 0, counts[i], null, null));
                 }
             } catch (SQLException e) {
-                for (int i = 0; i < chunk.size(); i++) {
-                    items.add(new VKBatchItemResult(baseIndex + i, false, 0, null, e.getMessage()));
+                // 批量执行失败时降级为逐行执行，以获取每行的精确结果
+                try {
+                    VKBatchDetailResult detail = VostokInternal.currentExecutor().executeBatchDetailedFallback(sql, paramsList, false);
+                    for (VKBatchItemResult item : detail.getItems()) {
+                        items.add(new VKBatchItemResult(baseIndex + item.getIndex(), item.isSuccess(), item.getCount(), null, item.getError()));
+                    }
+                } catch (SQLException ex) {
+                    for (int i = 0; i < chunk.size(); i++) {
+                        items.add(new VKBatchItemResult(baseIndex + i, false, 0, null, ex.getMessage()));
+                    }
                 }
                 VostokInternal.handleBatchError("SQL batch delete failed: " + sql, e);
             }

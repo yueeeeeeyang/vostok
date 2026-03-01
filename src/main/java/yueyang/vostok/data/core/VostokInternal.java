@@ -123,20 +123,6 @@ final class VostokInternal {
         }
     }
 
-    static String buildDeleteInSql(EntityMeta meta, int size) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("DELETE FROM ").append(meta.getTableName())
-                .append(" WHERE ").append(meta.getIdField().getColumnName()).append(" IN (");
-        for (int i = 0; i < size; i++) {
-            if (i > 0) {
-                sb.append(", ");
-            }
-            sb.append("?");
-        }
-        sb.append(")");
-        return sb.toString();
-    }
-
     static void handleBatchError(String message, SQLException e) {
         if (currentConfig().getBatchFailStrategy() == VKBatchFailStrategy.CONTINUE) {
             Vostok.Log.warn(message + ", strategy=CONTINUE, err=" + e.getMessage());

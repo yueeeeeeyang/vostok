@@ -1792,6 +1792,173 @@ public class VostokIntegrationTest {
         Vostok.Data.init(cfg, "yueyang.vostok");
     }
 
+    // ── Fix 1 Test ─────────────────────────────────────────────────────────────
+    /**
+     * 验证 REQUIRES_NEW 内层事务结束后，外层事务的超时信息（txStartAt/txTimeoutMs）被正确恢复。
+     * 修复前：resumeIfNeeded 不恢复 txStartAt/txTimeoutMs，外层超时检测永久失效。
+     * 修复后：commit() 中 checkTimeout() 能感知外层事务从一开始积累的耗时，正确抛出超时异常。
+     */
+    @Test
+    @Order(88)
+    void testRequiresNewPreservesOuterTxTimeout() {
+        Vostok.Data.close();
+        // 外层事务超时阈值 50ms
+        VKDataConfig cfg = new VKDataConfig()
+                .url(JDBC_URL).username("sa").password("")
+                .driver("org.h2.Driver").dialect(VKDialectType.MYSQL)
+                .txTimeoutMs(50).validationQuery("SELECT 1");
+        Vostok.Data.init(cfg, "yueyang.vostok");
+
+        try {
+            // 外层事务启动后，经历 REQUIRES_NEW 内层事务挂起/恢复，最终超时提交应抛出 VKTxException
+            assertThrows(yueyang.vostok.data.exception.VKTxException.class, () ->
+                Vostok.Data.tx(() -> {
+                    // 内层 REQUIRES_NEW 事务挂起外层，执行后恢复
+                    Vostok.Data.tx(() -> Vostok.Data.insert(user("Inner", 1)),
+                            VKTxPropagation.REQUIRES_NEW, VKTxIsolation.DEFAULT);
+                    // 让外层事务自开始算超过 50ms 超时
+                    try { Thread.sleep(80); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                    // 此处外层 commit 内 checkTimeout() 应检测到超时并抛出 VKTxException
+                })
+            );
+        } finally {
+            // 恢复默认配置
+            Vostok.Data.close();
+            VKDataConfig cfg2 = new VKDataConfig()
+                    .url(JDBC_URL).username("sa").password("")
+                    .driver("org.h2.Driver").dialect(VKDialectType.MYSQL)
+                    .minIdle(1).maxActive(5).maxWaitMs(10000).batchSize(2)
+                    .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
+                    .validationQuery("SELECT 1").sqlMetricsEnabled(true).slowSqlTopN(5);
+            Vostok.Data.init(cfg2, "yueyang.vostok");
+        }
+    }
+
+    // ── Fix 2 Test ─────────────────────────────────────────────────────────────
+    /**
+     * 验证高并发下连接池不出现 CPU 自旋导致的超时。
+     * 设置 maxActive=2，20 个并发线程各自在事务内持有连接 50ms，全部应在 maxWaitMs 内成功。
+     */
+    @Test
+    @Order(87)
+    void testBorrowUnderHighContentionNoSpin() throws Exception {
+        Vostok.Data.close();
+        VKDataConfig cfg = new VKDataConfig()
+                .url(JDBC_URL).username("sa").password("")
+                .driver("org.h2.Driver").dialect(VKDialectType.MYSQL)
+                .maxActive(2).maxWaitMs(5000).validationQuery("SELECT 1");
+        Vostok.Data.init(cfg, "yueyang.vostok");
+
+        int threadCount = 20;
+        var latch = new CountDownLatch(threadCount);
+        var errors = new java.util.concurrent.atomic.AtomicInteger();
+        var executor = Executors.newFixedThreadPool(threadCount);
+        try {
+            for (int i = 0; i < threadCount; i++) {
+                int idx = i;
+                executor.submit(() -> {
+                    try {
+                        // 在事务内持有连接约 50ms，模拟真实业务场景
+                        Vostok.Data.tx(() -> {
+                            Vostok.Data.insert(user("Spin-" + idx, idx));
+                            try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                        });
+                    } catch (Exception e) {
+                        errors.incrementAndGet();
+                        e.printStackTrace();
+                    } finally {
+                        latch.countDown();
+                    }
+                });
+            }
+            assertTrue(latch.await(15, TimeUnit.SECONDS), "All threads should complete within 15s");
+            assertEquals(0, errors.get(), "All threads should borrow a connection without timeout");
+        } finally {
+            executor.shutdownNow();
+            // 恢复默认配置
+            Vostok.Data.close();
+            VKDataConfig cfg2 = new VKDataConfig()
+                    .url(JDBC_URL).username("sa").password("")
+                    .driver("org.h2.Driver").dialect(VKDialectType.MYSQL)
+                    .minIdle(1).maxActive(5).maxWaitMs(10000).batchSize(2)
+                    .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
+                    .validationQuery("SELECT 1").sqlMetricsEnabled(true).slowSqlTopN(5);
+            Vostok.Data.init(cfg2, "yueyang.vostok");
+        }
+    }
+
+    // ── Fix 3 Test ─────────────────────────────────────────────────────────────
+    /**
+     * 验证 batchDeleteDetail 对每行返回正确的逐行结果。
+     * 修复前：所有行的 count 硬编码为 1，即使某些 id 不存在。
+     * 修复后：count=1 表示已删除，count=0 表示 id 不存在（未删除）。
+     */
+    @Test
+    void testBatchDeleteDetailReportsCorrectPerRowResult() {
+        // 插入 3 条记录
+        UserEntity u1 = user("Del1", 1);
+        UserEntity u2 = user("Del2", 2);
+        UserEntity u3 = user("Del3", 3);
+        Vostok.Data.batchInsert(List.of(u1, u2, u3));
+        assertNotNull(u1.getId());
+        assertNotNull(u2.getId());
+        assertNotNull(u3.getId());
+
+        // 删除：2 个存在的 id + 1 个不存在的 id（确保不存在）
+        long nonExistentId = 999999L;
+        var result = Vostok.Data.batchDeleteDetail(UserEntity.class,
+                List.of(u1.getId(), u2.getId(), nonExistentId));
+
+        assertEquals(3, result.getItems().size());
+        // 前两条：实际删除，count=1
+        assertEquals(1, result.getItems().get(0).getCount(), "Existing row should report count=1");
+        assertEquals(1, result.getItems().get(1).getCount(), "Existing row should report count=1");
+        // 第三条：id 不存在，count=0（修复前会被错误标记为 count=1）
+        assertEquals(0, result.getItems().get(2).getCount(), "Non-existent row should report count=0");
+        // 验证数据库：u1/u2 已删除，u3 未被删除
+        assertNull(Vostok.Data.findById(UserEntity.class, u1.getId()));
+        assertNull(Vostok.Data.findById(UserEntity.class, u2.getId()));
+        assertNotNull(Vostok.Data.findById(UserEntity.class, u3.getId()));
+    }
+
+    // ── Fix 4 Test ─────────────────────────────────────────────────────────────
+    /**
+     * 验证 finally 块中监控钩子抛出异常时，连接仍能正确归还到连接池。
+     * 修复前：afterExecute 抛出 RuntimeException 会跳过 holder.closeIfNeeded()，导致连接泄漏。
+     * 修复后：嵌套 try-finally 确保 closeIfNeeded() 始终执行。
+     */
+    @Test
+    void testConnectionNotLeakedWhenInterceptorAfterThrows() {
+        // 注册一个在 afterExecute 中抛出的拦截器，触发监控路径
+        yueyang.vostok.data.plugin.VKInterceptorRegistry.register(new VKInterceptor() {
+            @Override
+            public void afterExecute(String sql, Object[] params, long costMs, boolean success, Throwable error) {
+                throw new RuntimeException("interceptor-after-throws");
+            }
+        });
+
+        try {
+            // 记录执行前活跃连接数
+            int activeBefore = Vostok.Data.poolMetrics().get(0).getActive();
+
+            // 执行 SQL：afterExecute 会抛出，但连接应已被归还
+            RuntimeException thrown = assertThrows(RuntimeException.class,
+                    () -> Vostok.Data.findAll(UserEntity.class));
+            assertEquals("interceptor-after-throws", thrown.getMessage());
+
+            // 验证连接已归还：活跃连接数恢复到执行前水平
+            int activeAfter = Vostok.Data.poolMetrics().get(0).getActive();
+            assertEquals(activeBefore, activeAfter, "Connection must be returned to pool even when interceptor.afterExecute throws");
+
+            // 验证连接池仍可正常使用（若泄漏则在 maxActive 限制下后续操作可能超时）
+            Vostok.Data.clearInterceptors();
+            assertDoesNotThrow(() -> Vostok.Data.findAll(UserEntity.class),
+                    "Pool should remain functional after interceptor threw");
+        } finally {
+            Vostok.Data.clearInterceptors();
+        }
+    }
+
     private static UserEntity user(String name, int age) {
         UserEntity u = new UserEntity();
         u.setName(name);

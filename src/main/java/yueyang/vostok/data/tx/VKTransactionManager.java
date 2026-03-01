@@ -210,13 +210,17 @@ public final class VKTransactionManager {
         if (ctx.conn == null) {
             return;
         }
+        // 将外层事务的完整状态（含超时信息）压栈，待内层事务结束后恢复
         ctx.stack.push(new TxState(ctx.conn, ctx.depth, ctx.rollbackOnly, ctx.savepointEnabled, ctx.savepoints,
-                ctx.originalIsolation, ctx.originalReadOnly, ctx.originalAutoCommit));
+                ctx.originalIsolation, ctx.originalReadOnly, ctx.originalAutoCommit,
+                ctx.txStartAt, ctx.txTimeoutMs));
         ctx.conn = null;
         ctx.depth = 0;
         ctx.rollbackOnly = false;
         ctx.savepointEnabled = false;
         ctx.savepoints = new ArrayDeque<>();
+        ctx.txStartAt = 0L;
+        ctx.txTimeoutMs = 0L;
     }
 
     private static void resumeIfNeeded(Context ctx) {
@@ -235,6 +239,9 @@ public final class VKTransactionManager {
         ctx.originalIsolation = state.originalIsolation;
         ctx.originalReadOnly = state.originalReadOnly;
         ctx.originalAutoCommit = state.originalAutoCommit;
+        // 恢复外层事务的超时起始时间和超时时长，使外层超时检测继续生效
+        ctx.txStartAt = state.txStartAt;
+        ctx.txTimeoutMs = state.txTimeoutMs;
     }
 
     private static Connection openConn(VKDataSource dataSource, VKTxIsolation isolation, boolean readOnly) {
@@ -352,9 +359,14 @@ public final class VKTransactionManager {
         private final int originalIsolation;
         private final boolean originalReadOnly;
         private final boolean originalAutoCommit;
+        /** 外层事务的超时起始时间（毫秒时间戳），用于 resume 后恢复超时检测 */
+        private final long txStartAt;
+        /** 外层事务的超时时长（毫秒），0 表示不限 */
+        private final long txTimeoutMs;
 
         private TxState(Connection conn, int depth, boolean rollbackOnly, boolean savepointEnabled, Deque<Savepoint> savepoints,
-                        int originalIsolation, boolean originalReadOnly, boolean originalAutoCommit) {
+                        int originalIsolation, boolean originalReadOnly, boolean originalAutoCommit,
+                        long txStartAt, long txTimeoutMs) {
             this.conn = conn;
             this.depth = depth;
             this.rollbackOnly = rollbackOnly;
@@ -363,6 +375,8 @@ public final class VKTransactionManager {
             this.originalIsolation = originalIsolation;
             this.originalReadOnly = originalReadOnly;
             this.originalAutoCommit = originalAutoCommit;
+            this.txStartAt = txStartAt;
+            this.txTimeoutMs = txTimeoutMs;
         }
     }
 }

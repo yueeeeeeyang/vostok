@@ -58,10 +58,14 @@ public class JdbcExecutor {
             throw e;
         } finally {
             long cost = System.currentTimeMillis() - start;
-            sqlLogger.logSlow(sql, params, cost);
-            sqlMetrics.record(sql, params, cost);
-            after(sql, params, cost, success, error);
-            holder.closeIfNeeded();
+            // 嵌套 try-finally 确保即使监控钩子抛异常，连接也一定归还
+            try {
+                sqlLogger.logSlow(sql, params, cost);
+                sqlMetrics.record(sql, params, cost);
+                after(sql, params, cost, success, error);
+            } finally {
+                holder.closeIfNeeded();
+            }
         }
     }
 
@@ -126,10 +130,14 @@ public class JdbcExecutor {
             throw e;
         } finally {
             long cost = System.currentTimeMillis() - start;
-            sqlLogger.logSlow(sql, null, cost);
-            sqlMetrics.record(sql, null, cost);
-            after(sql, null, cost, success, error);
-            holder.closeIfNeeded();
+            // 嵌套 try-finally 确保即使监控钩子抛异常，连接也一定归还
+            try {
+                sqlLogger.logSlow(sql, null, cost);
+                sqlMetrics.record(sql, null, cost);
+                after(sql, null, cost, success, error);
+            } finally {
+                holder.closeIfNeeded();
+            }
         }
     }
 
@@ -204,10 +212,14 @@ public class JdbcExecutor {
             throw e;
         } finally {
             long cost = System.currentTimeMillis() - start;
-            sqlLogger.logSlow(sql, params, cost);
-            sqlMetrics.record(sql, params, cost);
-            after(sql, params, cost, success, error);
-            holder.closeIfNeeded();
+            // 嵌套 try-finally 确保即使监控钩子抛异常，连接也一定归还
+            try {
+                sqlLogger.logSlow(sql, params, cost);
+                sqlMetrics.record(sql, params, cost);
+                after(sql, params, cost, success, error);
+            } finally {
+                holder.closeIfNeeded();
+            }
         }
     }
 
@@ -308,10 +320,14 @@ public class JdbcExecutor {
                 throw e;
             } finally {
                 long cost = System.currentTimeMillis() - start;
-                sqlLogger.logSlow(sql, params, cost);
-                sqlMetrics.record(sql, params, cost);
-                after(sql, params, cost, success, error);
-                holder.closeIfNeeded();
+                // 嵌套 try-finally 确保即使监控钩子抛异常，连接也一定归还
+                try {
+                    sqlLogger.logSlow(sql, params, cost);
+                    sqlMetrics.record(sql, params, cost);
+                    after(sql, params, cost, success, error);
+                } finally {
+                    holder.closeIfNeeded();
+                }
             }
         });
     }
@@ -353,10 +369,14 @@ public class JdbcExecutor {
                 throw e;
             } finally {
                 long cost = System.currentTimeMillis() - start;
-                sqlLogger.logSlow(sql, params, cost);
-                sqlMetrics.record(sql, params, cost);
-                after(sql, params, cost, success, error);
-                holder.closeIfNeeded();
+                // 嵌套 try-finally 确保即使监控钩子抛异常，连接也一定归还
+                try {
+                    sqlLogger.logSlow(sql, params, cost);
+                    sqlMetrics.record(sql, params, cost);
+                    after(sql, params, cost, success, error);
+                } finally {
+                    holder.closeIfNeeded();
+                }
             }
         });
     }
@@ -411,10 +431,14 @@ public class JdbcExecutor {
                 throw e;
             } finally {
                 long cost = System.currentTimeMillis() - start;
-                sqlLogger.logSlow(sql, params, cost);
-                sqlMetrics.record(sql, params, cost);
-                after(sql, params, cost, success, error);
-                holder.closeIfNeeded();
+                // 嵌套 try-finally 确保即使监控钩子抛异常，连接也一定归还
+                try {
+                    sqlLogger.logSlow(sql, params, cost);
+                    sqlMetrics.record(sql, params, cost);
+                    after(sql, params, cost, success, error);
+                } finally {
+                    holder.closeIfNeeded();
+                }
             }
         });
     }
@@ -455,10 +479,14 @@ public class JdbcExecutor {
                 throw e;
             } finally {
                 long cost = System.currentTimeMillis() - start;
-                sqlLogger.logSlow(sql, params, cost);
-                sqlMetrics.record(sql, params, cost);
-                after(sql, params, cost, success, error);
-                holder.closeIfNeeded();
+                // 嵌套 try-finally 确保即使监控钩子抛异常，连接也一定归还
+                try {
+                    sqlLogger.logSlow(sql, params, cost);
+                    sqlMetrics.record(sql, params, cost);
+                    after(sql, params, cost, success, error);
+                } finally {
+                    holder.closeIfNeeded();
+                }
             }
         });
     }

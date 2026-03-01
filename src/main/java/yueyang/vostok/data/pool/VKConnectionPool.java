@@ -35,7 +35,8 @@ public class VKConnectionPool {
     public VKConnectionPool(VKDataConfig config) {
         this.config = config;
         this.idleQueue = new ConcurrentLinkedQueue<>();
-        this.permits = new Semaphore(config.getMaxActive());
+        // 使用公平 Semaphore，避免高并发下线程饥饿与 CPU 自旋
+        this.permits = new Semaphore(config.getMaxActive(), true);
         this.localCacheEnabled = config.getIdleTimeoutMs() <= 0 && config.getIdleValidationIntervalMs() <= 0;
         if (config.isPreheatEnabled()) {
             preload();
@@ -127,9 +128,17 @@ public class VKConnectionPool {
             }
 
             permits.release();
-            // no idle and at max, retry until timeout
+            // 所有连接均在使用中且已达上限，在重试前加入短暂退避，避免 CPU 自旋
             if (timeoutMs > 0 && System.currentTimeMillis() >= deadline) {
                 throw new SQLException("Timeout waiting for a connection");
+            }
+            try {
+                long remaining = deadline - System.currentTimeMillis();
+                // 退避时间取剩余等待时间与 50ms 的较小值（至少 1ms），让出 CPU 等待连接归还
+                Thread.sleep(Math.min(50L, Math.max(1L, remaining)));
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new SQLException("Interrupted while waiting for a connection", ie);
             }
         }
     }
