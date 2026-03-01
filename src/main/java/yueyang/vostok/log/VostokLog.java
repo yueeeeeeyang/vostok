@@ -64,9 +64,15 @@ import java.util.zip.GZIPOutputStream;
  */
 public class VostokLog {
 
+    /**
+     * 默认日志目录名称（相对于程序文件所在目录）。
+     * 未调用 {@link #init} 时懒加载使用，完整路径为 {@code <JAR目录>/vklogs}。
+     */
+    public static final String DEFAULT_OUTPUT_DIR_NAME = "vklogs";
+
     private static final Object LOCK = new Object();
     private static volatile LogRouter ROUTER;
-    private static volatile VKLogConfig CONFIG = VKLogConfig.defaults();
+    private static volatile VKLogConfig CONFIG = buildDefaultConfig();
     private static volatile boolean INITIALIZED;
 
     /**
@@ -91,7 +97,7 @@ public class VostokLog {
     // -------------------------------------------------------------------------
 
     public static void init() {
-        init(VKLogConfig.defaults());
+        init(buildDefaultConfig());
     }
 
     public static void init(VKLogConfig config) {
@@ -126,9 +132,9 @@ public class VostokLog {
             old = ROUTER;
             ROUTER = null;
             INITIALIZED = false;
-            // 重置 CONFIG，使 close() 后的懒初始化路径重新使用 defaults()，
+            // 重置 CONFIG，使 close() 后的懒初始化路径重新使用默认配置，
             // 而非保留上一次 init/set* 留下的残留配置。
-            CONFIG = VKLogConfig.defaults();
+            CONFIG = buildDefaultConfig();
         }
         if (old != null) {
             old.close();
@@ -418,7 +424,7 @@ public class VostokLog {
     }
 
     public static void resetDefaults() {
-        reinit(VKLogConfig.defaults());
+        reinit(buildDefaultConfig());
     }
 
     static void resetForTests() {
@@ -428,6 +434,38 @@ public class VostokLog {
     // -------------------------------------------------------------------------
     // 内部工具
     // -------------------------------------------------------------------------
+
+    /**
+     * 构建默认配置，outputDir 解析到程序文件（JAR）同级目录下的 {@value #DEFAULT_OUTPUT_DIR_NAME}。
+     * 用于懒加载路径、{@link #init()}、{@link #close()} 重置及 {@link #resetDefaults()}。
+     */
+    private static VKLogConfig buildDefaultConfig() {
+        return VKLogConfig.defaults().outputDir(resolveDefaultOutputDir());
+    }
+
+    /**
+     * 解析默认日志输出目录，策略：
+     * <ol>
+     *   <li>优先取当前运行的 JAR/class 文件所在目录，拼接 {@value #DEFAULT_OUTPUT_DIR_NAME}。
+     *       例如 {@code java -jar /root/demo.jar} → {@code /root/vklogs}。</li>
+     *   <li>若无法获取代码路径（权限受限、WAR 部署等），回退到
+     *       {@code user.dir/vklogs}。</li>
+     * </ol>
+     */
+    private static String resolveDefaultOutputDir() {
+        try {
+            java.net.URL location = VostokLog.class
+                    .getProtectionDomain().getCodeSource().getLocation();
+            Path codePath = Path.of(location.toURI()).toAbsolutePath().normalize();
+            // JAR 文件（java -jar）：codePath 为 /root/demo.jar，parent 即 /root
+            // 目录（IDE/exploded）：codePath 本身就是目录，直接使用
+            Path codeDir = Files.isRegularFile(codePath) ? codePath.getParent() : codePath;
+            return codeDir.resolve(DEFAULT_OUTPUT_DIR_NAME).toString();
+        } catch (Exception ignored) {
+            // 回退：使用当前工作目录
+            return System.getProperty("user.dir", ".") + "/" + DEFAULT_OUTPUT_DIR_NAME;
+        }
+    }
 
     /** 懒初始化：首次使用时若未 init 则自动用默认配置创建 Router。 */
     private static LogRouter current() {
