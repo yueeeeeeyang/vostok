@@ -33,9 +33,36 @@ public class VKLogConfig {
     private boolean autoCreateLoggerSink = true;
     private final Set<String> preRegisteredLoggers = new LinkedHashSet<>();
     private final Map<String, VKLogSinkConfig> loggerSinkConfigs = new LinkedHashMap<>();
+    /** 自定义格式化器，null 表示使用内置默认格式。 */
+    private VKLogFormatter formatter = null;
+    /** ERROR 级别事件监听器，null 表示不启用。 */
+    private VKLogErrorListener errorListener = null;
+    /** 是否对控制台输出启用 ANSI 颜色（开发环境建议开启）。 */
+    private boolean consoleColor = false;
+    /**
+     * 是否在 {@code autoCreateLoggerSink=false} 时对未注册的 logger 抛出异常。
+     * <p>
+     * 默认 {@code false}：未注册的 logger 路由到默认 sink（单文件模式）。
+     * 设为 {@code true} 后，调用未预注册的 logger 名时抛 {@link IllegalArgumentException}，
+     * 用于需要严格管控 logger 命名的场景。
+     */
+    private boolean throwOnUnknownLogger = false;
 
+    /**
+     * 返回"不初始化"场景的默认配置。
+     * <p>
+     * 与 {@code new VKLogConfig()} 的区别：
+     * <ul>
+     *   <li>{@code compressRolledFiles=true}：滚动文件自动 gzip 压缩</li>
+     *   <li>{@code autoCreateLoggerSink=false}：所有日志（含命名 logger）统一写入 {@code vostok.log}，
+     *       而非为每个 logger 创建独立文件</li>
+     * </ul>
+     * 此配置在未调用 {@link yueyang.vostok.log.VostokLog#init} 时由懒初始化路径自动采用。
+     */
     public static VKLogConfig defaults() {
-        return new VKLogConfig();
+        return new VKLogConfig()
+                .compressRolledFiles(true)
+                .autoCreateLoggerSink(false);
     }
 
     public VKLogConfig copy() {
@@ -60,7 +87,11 @@ public class VKLogConfig {
                 .defaultLoggerName(defaultLoggerName)
                 .autoCreateLoggerSink(autoCreateLoggerSink)
                 .preRegisteredLoggers(preRegisteredLoggers)
-                .loggerSinkConfigs(loggerSinkConfigs);
+                .loggerSinkConfigs(loggerSinkConfigs)
+                .formatter(formatter)
+                .errorListener(errorListener)
+                .consoleColor(consoleColor)
+                .throwOnUnknownLogger(throwOnUnknownLogger);
     }
 
     public VKLogLevel getLevel() {
@@ -316,6 +347,64 @@ public class VKLogConfig {
         String name = normalizeLoggerName(loggerName, "loggerName");
         this.preRegisteredLoggers.add(name);
         this.loggerSinkConfigs.put(name, sinkConfig == null ? null : sinkConfig.copy());
+        return this;
+    }
+
+    public VKLogFormatter getFormatter() {
+        return formatter;
+    }
+
+    /**
+     * 设置自定义格式化器。传入 {@code null} 恢复内置默认格式。
+     *
+     * @see VKLogFormatter
+     */
+    public VKLogConfig formatter(VKLogFormatter formatter) {
+        this.formatter = formatter;
+        return this;
+    }
+
+    public VKLogErrorListener getErrorListener() {
+        return errorListener;
+    }
+
+    /**
+     * 设置 ERROR 级别日志事件监听器。传入 {@code null} 表示禁用。
+     * 监听器在 worker 线程调用，必须非阻塞。
+     *
+     * @see VKLogErrorListener
+     */
+    public VKLogConfig errorListener(VKLogErrorListener errorListener) {
+        this.errorListener = errorListener;
+        return this;
+    }
+
+    public boolean isConsoleColor() {
+        return consoleColor;
+    }
+
+    /**
+     * 是否对控制台输出启用 ANSI 颜色。
+     * TRACE=灰、DEBUG=青、INFO=绿、WARN=黄、ERROR=红。
+     */
+    public VKLogConfig consoleColor(boolean consoleColor) {
+        this.consoleColor = consoleColor;
+        return this;
+    }
+
+    public boolean isThrowOnUnknownLogger() {
+        return throwOnUnknownLogger;
+    }
+
+    /**
+     * 设置是否对未注册的 logger 名抛出异常（仅当 {@code autoCreateLoggerSink=false} 时生效）。
+     * <p>
+     * {@code false}（默认）：未注册 logger 路由到默认 sink（单文件模式）。<br>
+     * {@code true}：调用未预注册的 logger 名时抛 {@link IllegalArgumentException}，
+     * 用于需要严格管控 logger 命名的场景。
+     */
+    public VKLogConfig throwOnUnknownLogger(boolean throwOnUnknownLogger) {
+        this.throwOnUnknownLogger = throwOnUnknownLogger;
         return this;
     }
 

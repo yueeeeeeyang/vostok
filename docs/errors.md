@@ -36,6 +36,9 @@
 | FK-551 | IMAGE_ENCODE_ERROR | 图片编码失败 |
 | FK-552 | IMAGE_LIMIT_EXCEEDED | 图片尺寸/像素限制触发 |
 | FK-553 | UNSUPPORTED_IMAGE_FORMAT | 不支持的图片格式 |
+| FK-560 | READ_ONLY_ERROR | 存储处于只读模式 |
+| FK-561 | ENCRYPT_ERROR | 文件加密/解密失败 |
+| FK-562 | GZIP_ERROR | GZip 压缩/解压失败 |
 
 ## Config 错误码（VKConfigErrorCode）
 | Code | 枚举 | 含义 |

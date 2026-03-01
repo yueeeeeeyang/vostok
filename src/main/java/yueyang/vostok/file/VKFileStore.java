@@ -1,5 +1,8 @@
 package yueyang.vostok.file;
 
+import yueyang.vostok.file.exception.VKFileErrorCode;
+import yueyang.vostok.file.exception.VKFileException;
+
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.time.Instant;
@@ -100,6 +103,37 @@ public interface VKFileStore {
     VKFileWatchHandle watch(String path, VKFileWatchListener listener);
 
     VKFileWatchHandle watch(String path, boolean recursive, VKFileWatchListener listener);
+
+    /** 计算目录下所有文件的总大小（字节），不包括目录本身。不支持该操作时抛 UNSUPPORTED。 */
+    default long totalSize(String dirPath) {
+        throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "totalSize not supported by this store");
+    }
+
+    /**
+     * 在 tmp/ 子目录下创建临时文件，返回相对路径。
+     * prefix/suffix 语义同 Files.createTempFile。
+     */
+    default String createTemp(String prefix, String suffix) {
+        throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "createTemp not supported by this store");
+    }
+
+    /**
+     * 在指定子目录下创建临时文件，返回相对路径。
+     * subDir 为 null 时退回 tmp/。
+     */
+    default String createTemp(String subDir, String prefix, String suffix) {
+        throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "createTemp not supported by this store");
+    }
+
+    /** 将 sourcePath 文件 GZip 压缩为 gzPath。source 与 target 不可相同。 */
+    default void gzip(String sourcePath, String gzPath) {
+        throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "gzip not supported by this store");
+    }
+
+    /** 将 gzPath GZip 文件解压到 targetPath。source 与 target 不可相同。 */
+    default void gunzip(String gzPath, String targetPath) {
+        throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "gunzip not supported by this store");
+    }
 
     default void close() {
     }

@@ -14,7 +14,10 @@ public enum VKFileErrorCode {
     IMAGE_DECODE_ERROR("FK-550", "Image decode error"),
     IMAGE_ENCODE_ERROR("FK-551", "Image encode error"),
     IMAGE_LIMIT_EXCEEDED("FK-552", "Image limit exceeded"),
-    UNSUPPORTED_IMAGE_FORMAT("FK-553", "Unsupported image format");
+    UNSUPPORTED_IMAGE_FORMAT("FK-553", "Unsupported image format"),
+    READ_ONLY_ERROR("FK-560", "File store is in read-only mode"),
+    ENCRYPT_ERROR("FK-561", "File encrypt/decrypt error"),
+    GZIP_ERROR("FK-562", "GZip compress/decompress error");
 
     private final String code;
     private final String message;

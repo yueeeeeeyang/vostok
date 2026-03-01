@@ -21,6 +21,9 @@ public class VKLogSinkConfig {
     private Long maxTotalSizeBytes;
     private Boolean consoleEnabled;
     private Long fileRetryIntervalMs;
+    private VKLogFormatter formatter;
+    private VKLogErrorListener errorListener;
+    private Boolean consoleColor;
 
     public VKLogSinkConfig copy() {
         VKLogSinkConfig c = new VKLogSinkConfig();
@@ -41,6 +44,9 @@ public class VKLogSinkConfig {
         c.maxTotalSizeBytes = maxTotalSizeBytes;
         c.consoleEnabled = consoleEnabled;
         c.fileRetryIntervalMs = fileRetryIntervalMs;
+        c.formatter = formatter;
+        c.errorListener = errorListener;
+        c.consoleColor = consoleColor;
         return c;
     }
 
@@ -78,4 +84,10 @@ public class VKLogSinkConfig {
     public VKLogSinkConfig consoleEnabled(Boolean consoleEnabled) { this.consoleEnabled = consoleEnabled; return this; }
     public Long getFileRetryIntervalMs() { return fileRetryIntervalMs; }
     public VKLogSinkConfig fileRetryIntervalMs(Long fileRetryIntervalMs) { this.fileRetryIntervalMs = fileRetryIntervalMs; return this; }
+    public VKLogFormatter getFormatter() { return formatter; }
+    public VKLogSinkConfig formatter(VKLogFormatter formatter) { this.formatter = formatter; return this; }
+    public VKLogErrorListener getErrorListener() { return errorListener; }
+    public VKLogSinkConfig errorListener(VKLogErrorListener errorListener) { this.errorListener = errorListener; return this; }
+    public Boolean getConsoleColor() { return consoleColor; }
+    public VKLogSinkConfig consoleColor(Boolean consoleColor) { this.consoleColor = consoleColor; return this; }
 }

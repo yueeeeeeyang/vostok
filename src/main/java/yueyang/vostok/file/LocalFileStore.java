@@ -56,6 +56,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.LongAdder;
 import java.util.function.Predicate;
 import java.util.stream.Stream;
+import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
@@ -73,10 +75,25 @@ import javax.imageio.stream.ImageOutputStream;
  */
 public final class LocalFileStore implements VKFileStore {
     public static final String MODE = "local";
-    private static final int STREAM_BUFFER_SIZE = 8 * 1024;
+    // Perf 1：缓冲区从 8KB 扩大到 64KB，降低系统调用频率，提升 transfer/hash/gzip 等流操作吞吐
+    private static final int STREAM_BUFFER_SIZE = 64 * 1024;
+
+    // Perf 2：类加载时一次性缓存所有可写图片格式名称，避免 canWriteFormat() 每次调用 ImageIO.getWriterFormatNames()
+    private static final Set<String> WRITABLE_FORMATS;
+    static {
+        Set<String> tmp = new HashSet<>();
+        for (String name : ImageIO.getWriterFormatNames()) {
+            if (name != null) {
+                tmp.add(name.toLowerCase(Locale.ROOT));
+            }
+        }
+        WRITABLE_FORMATS = Collections.unmodifiableSet(tmp);
+    }
 
     private final Path root;
     private final Charset charset;
+    // Perf 3：缓存 DateTimeFormatter，key = pattern + "\0" + zoneId，避免 suggestDatePath 每次重建 Formatter
+    private final Map<String, DateTimeFormatter> FMT_CACHE = new ConcurrentHashMap<>();
     private final Set<VKFileWatchHandle> activeWatches = ConcurrentHashMap.newKeySet();
 
     public LocalFileStore(Path root) {
@@ -299,8 +316,11 @@ public final class LocalFileStore implements VKFileStore {
             throw arg("Relative path is invalid: " + relativePath);
         }
         try {
-            DateTimeFormatter fmt = DateTimeFormatter.ofPattern(config.getDatePartitionPattern())
-                    .withZone(ZoneId.of(config.getDatePartitionZoneId()));
+            // Perf 3：通过 FMT_CACHE 复用 DateTimeFormatter，同一 pattern+zone 组合只构建一次
+            String cacheKey = config.getDatePartitionPattern() + "\0" + config.getDatePartitionZoneId();
+            DateTimeFormatter fmt = FMT_CACHE.computeIfAbsent(cacheKey, k ->
+                    DateTimeFormatter.ofPattern(config.getDatePartitionPattern())
+                            .withZone(ZoneId.of(config.getDatePartitionZoneId())));
             String datePrefix = fmt.format(atTime).replace('\\', '/');
             String relStr = normalizedRel.toString().replace('\\', '/');
             String merged = datePrefix.endsWith("/") ? datePrefix + relStr : datePrefix + "/" + relStr;
@@ -577,13 +597,19 @@ public final class LocalFileStore implements VKFileStore {
                 if (Files.isDirectory(dst)) {
                     deleteRecursivelyPath(dst);
                 }
-                long copied = copyFileByStream(source, dst, true);
+                long copied;
                 if (options.isVerifyHash()) {
+                    // verifyHash=true：需逐字节读取计算 hash，必须走流式拷贝
+                    copied = copyFileByStream(source, dst, true);
                     String srcHash = hashByPath(source, "SHA-256");
                     String dstHash = hashByPath(dst, "SHA-256");
                     if (!srcHash.equals(dstHash)) {
                         throw state("Hash verify failed after migrate");
                     }
+                } else {
+                    // Perf 4：verifyHash=false 时使用 Files.copy() 零拷贝，减少用户态内存拷贝开销
+                    Files.copy(source, dst, StandardCopyOption.REPLACE_EXISTING);
+                    copied = Files.size(dst);
                 }
                 if (options.getMode() == VKFileMigrateMode.MOVE) {
                     Files.deleteIfExists(source);
@@ -669,12 +695,8 @@ public final class LocalFileStore implements VKFileStore {
             throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "Unsupported hash algorithm: " + algorithm, e);
         }
         try (InputStream in = Files.newInputStream(p, StandardOpenOption.READ)) {
-            byte[] buf = new byte[STREAM_BUFFER_SIZE];
-            int n;
-            while ((n = in.read(buf)) != -1) {
-                digest.update(buf, 0, n);
-            }
-            return toHex(digest.digest());
+            // Perf 6：委托给 computeHash()，与 hashByPath() 共用同一套流读取逻辑
+            return computeHash(in, digest);
         } catch (IOException e) {
             throw io("Hash file failed: " + path, e);
         }
@@ -858,7 +880,9 @@ public final class LocalFileStore implements VKFileStore {
             if (strategy == VKFileConflictStrategy.FAIL) {
                 throw state("Target directory already exists: " + targetDir);
             }
-            deleteRecursivelyPath(target);
+            // Bug 2 修复：OVERWRITE 分支不再预删目标目录。
+            // copyDirectoryTree 已通过 Files.copy + REPLACE_EXISTING 支持 OVERWRITE，
+            // 预删操作会导致复制期间目标短暂不存在，产生数据丢失风险。
         }
         copyDirectoryTree(source, target, strategy);
     }
@@ -879,14 +903,22 @@ public final class LocalFileStore implements VKFileStore {
             if (strategy == VKFileConflictStrategy.FAIL) {
                 throw state("Target directory already exists: " + targetDir);
             }
-            deleteRecursivelyPath(target);
+            // Bug 2 修复：OVERWRITE 分支不再预删目标目录，避免 move 中途失败导致数据丢失。
+            // copyDirectoryTree 支持 OVERWRITE（REPLACE_EXISTING），无需预删。
         }
         try {
             ensureParent(target);
             Files.move(source, target);
-        } catch (IOException e) {
-            copyDirectoryTree(source, target, VKFileConflictStrategy.OVERWRITE);
-            deleteRecursivelyPath(source);
+        } catch (IOException moveEx) {
+            // Bug 5 修复：跨设备移动时 Files.move 会抛 IOException，需退回 copy+delete 策略。
+            // 若退回操作本身失败，将原始 IOException 附为 suppressed 一并抛出，避免静默吞掉。
+            try {
+                copyDirectoryTree(source, target, VKFileConflictStrategy.OVERWRITE);
+                deleteRecursivelyPath(source);
+            } catch (VKFileException fallbackEx) {
+                fallbackEx.addSuppressed(moveEx);
+                throw fallbackEx;
+            }
         }
     }
 
@@ -1024,21 +1056,140 @@ public final class LocalFileStore implements VKFileStore {
             Thread worker = new Thread(() -> watchLoop(ws, running, watchRoot, fileName, recursive, keyDirs, listener), "vostok-file-watch");
             worker.setDaemon(true);
             worker.start();
-            VKFileWatchHandle handle = () -> {
-                running.set(false);
-                try {
-                    ws.close();
-                } catch (IOException ignore) {
+            // Bug 6 修复：将内外两个 handle 合并为单一匿名类。
+            // closed 字段保证 close() 幂等；close 时同时关闭 WatchService、中断 worker 并从 activeWatches 自我移除。
+            AtomicBoolean closed = new AtomicBoolean(false);
+            VKFileWatchHandle handle = new VKFileWatchHandle() {
+                @Override
+                public void close() {
+                    if (!closed.compareAndSet(false, true)) {
+                        return; // 幂等：已关闭则直接返回
+                    }
+                    running.set(false);
+                    try {
+                        ws.close();
+                    } catch (IOException ignore) {
+                    }
+                    worker.interrupt();
+                    activeWatches.remove(this);
                 }
-                worker.interrupt();
             };
             activeWatches.add(handle);
-            return () -> {
-                handle.close();
-                activeWatches.remove(handle);
-            };
+            return handle;
         } catch (IOException e) {
             throw io("Watch register failed: " + path, e);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Ext 1：目录总大小
+    // -------------------------------------------------------------------------
+
+    /**
+     * 递归计算目录下所有普通文件的字节总大小，目录本身不计入。
+     * 读取单个文件 size 失败时静默返回 0，保持整体可用性。
+     */
+    @Override
+    public long totalSize(String dirPath) {
+        Path p = resolve(dirPath);
+        requireExists(p, dirPath);
+        try (Stream<Path> s = Files.walk(p)) {
+            return s.filter(Files::isRegularFile).mapToLong(this::sizeSafe).sum();
+        } catch (IOException e) {
+            throw io("Total size failed: " + dirPath, e);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Ext 2：临时文件
+    // -------------------------------------------------------------------------
+
+    /**
+     * 在 tmp/ 子目录下创建临时文件，返回相对于 root 的路径。
+     * prefix/suffix 语义同 {@link Files#createTempFile}。
+     */
+    @Override
+    public String createTemp(String prefix, String suffix) {
+        return createTemp("tmp", prefix, suffix);
+    }
+
+    /**
+     * 在 subDir（相对 root）子目录下创建临时文件，返回相对路径。
+     * subDir 为 null 时退回 tmp/。
+     *
+     * @throws VKFileException PATH_ERROR  子目录越界 root
+     * @throws VKFileException IO_ERROR    创建目录或临时文件失败
+     */
+    @Override
+    public String createTemp(String subDir, String prefix, String suffix) {
+        String dir = (subDir == null || subDir.isBlank()) ? "tmp" : subDir.trim();
+        Path dirPath = root.resolve(dir).normalize();
+        if (!dirPath.startsWith(root)) {
+            throw new VKFileException(VKFileErrorCode.PATH_ERROR, "Temp subDir escapes root: " + subDir);
+        }
+        try {
+            Files.createDirectories(dirPath);
+            Path temp = Files.createTempFile(dirPath, prefix, suffix);
+            return relativePath(temp);
+        } catch (IOException e) {
+            throw io("Create temp file failed in " + dir, e);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Ext 3：GZip 压缩 / 解压
+    // -------------------------------------------------------------------------
+
+    /**
+     * 将 sourcePath 指向的文件 GZip 压缩，输出到 gzPath。
+     * source 与 target 路径不可相同。
+     *
+     * @throws VKFileException GZIP_ERROR  压缩 IO 失败
+     */
+    @Override
+    public void gzip(String sourcePath, String gzPath) {
+        Path source = resolve(sourcePath);
+        Path gz = resolve(gzPath);
+        requireExists(source, sourcePath);
+        if (source.equals(gz)) {
+            throw arg("Source path and gz path cannot be the same");
+        }
+        try {
+            ensureParent(gz);
+            try (InputStream in = Files.newInputStream(source, StandardOpenOption.READ);
+                 GZIPOutputStream gout = new GZIPOutputStream(
+                         Files.newOutputStream(gz, StandardOpenOption.CREATE,
+                                 StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE))) {
+                transfer(in, gout);
+            }
+        } catch (IOException e) {
+            throw new VKFileException(VKFileErrorCode.GZIP_ERROR, "GZip compress failed: " + sourcePath, e);
+        }
+    }
+
+    /**
+     * 将 gzPath 指向的 GZip 文件解压到 targetPath。
+     * source 与 target 路径不可相同。
+     *
+     * @throws VKFileException GZIP_ERROR  解压 IO 失败（含格式错误）
+     */
+    @Override
+    public void gunzip(String gzPath, String targetPath) {
+        Path gz = resolve(gzPath);
+        Path target = resolve(targetPath);
+        requireExists(gz, gzPath);
+        if (gz.equals(target)) {
+            throw arg("GZ path and target path cannot be the same");
+        }
+        try {
+            ensureParent(target);
+            try (GZIPInputStream gin = new GZIPInputStream(Files.newInputStream(gz, StandardOpenOption.READ));
+                 OutputStream out = Files.newOutputStream(target, StandardOpenOption.CREATE,
+                         StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+                transfer(gin, out);
+            }
+        } catch (IOException e) {
+            throw new VKFileException(VKFileErrorCode.GZIP_ERROR, "GZip decompress failed: " + gzPath, e);
         }
     }
 
@@ -1254,7 +1405,8 @@ public final class LocalFileStore implements VKFileStore {
     }
 
     private void deleteRecursivelyPath(Path p) {
-        try (Stream<Path> s = Files.walk(p, FileVisitOption.FOLLOW_LINKS)) {
+        // Bug 1 修复：去掉 FOLLOW_LINKS，防止通过 symlink 删除 root 目录外部的文件/目录
+        try (Stream<Path> s = Files.walk(p)) {
             s.sorted(Comparator.reverseOrder()).forEach(this::deleteSingle);
         } catch (IOException e) {
             throw io("Delete recursively failed: " + p, e);
@@ -1538,13 +1690,8 @@ public final class LocalFileStore implements VKFileStore {
     }
 
     private boolean canWriteFormat(String format) {
-        String[] names = ImageIO.getWriterFormatNames();
-        for (String name : names) {
-            if (name != null && name.equalsIgnoreCase(format)) {
-                return true;
-            }
-        }
-        return false;
+        // Perf 2：直接查询类加载时已缓存的 WRITABLE_FORMATS，不再每次调用 ImageIO.getWriterFormatNames()
+        return format != null && WRITABLE_FORMATS.contains(format.toLowerCase(Locale.ROOT));
     }
 
     private void writeImage(BufferedImage image, String format, float quality, OutputStream output) {
@@ -1577,11 +1724,9 @@ public final class LocalFileStore implements VKFileStore {
         if (format == null || format.isBlank()) {
             return null;
         }
-        String f = format.trim().toLowerCase(Locale.ROOT);
-        if ("jpeg".equals(f)) {
-            return "jpg";
-        }
-        return f;
+        // Bug 4 修复：去掉 "jpeg" → "jpg" 的硬编码映射。
+        // 部分 JVM ImageIO 实现将 "jpeg" 注册为标准格式名称，强制改为 "jpg" 会导致找不到对应 writer 而失败。
+        return format.trim().toLowerCase(Locale.ROOT);
     }
 
     private VKFileException imageDecode(String message, Throwable cause) {
@@ -1601,10 +1746,11 @@ public final class LocalFileStore implements VKFileStore {
             return CheckpointState.disabled();
         }
         Path p = Path.of(checkpointFile.trim());
+        // Bug 3 修复：原 if/else 两分支代码完全相同；现区分相对路径（解析到 sourceBase 下）和绝对路径（直接规范化）
         if (!p.isAbsolute()) {
-            p = p.toAbsolutePath().normalize();
+            p = sourceBase.resolve(p).normalize();
         } else {
-            p = p.toAbsolutePath().normalize();
+            p = p.normalize();
         }
         if (p.startsWith(sourceBase)) {
             throw arg("Checkpoint file must not be inside source baseDir: " + p);
@@ -1624,17 +1770,25 @@ public final class LocalFileStore implements VKFileStore {
         }
     }
 
-    private synchronized void checkpointAppend(CheckpointState checkpoint, String relPath) throws IOException {
+    private void checkpointAppend(CheckpointState checkpoint, String relPath) throws IOException {
         if (!checkpoint.enabled) {
             return;
         }
         if (checkpoint.completed.contains(relPath)) {
             return;
         }
-        ensureParent(checkpoint.path);
-        Files.writeString(checkpoint.path, relPath + System.lineSeparator(), StandardCharsets.UTF_8,
-                StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
-        checkpoint.completed.add(relPath);
+        // Perf 5：用 checkpoint 私有的 writeLock 代替 synchronized(this)，
+        // 避免多线程并行 migrate 时对整个 LocalFileStore 实例加锁造成不必要的竞争。
+        // 双重检查防止并发写入重复追加。
+        synchronized (checkpoint.writeLock) {
+            if (checkpoint.completed.contains(relPath)) {
+                return;
+            }
+            ensureParent(checkpoint.path);
+            Files.writeString(checkpoint.path, relPath + System.lineSeparator(), StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND, StandardOpenOption.WRITE);
+            checkpoint.completed.add(relPath);
+        }
     }
 
     private String normalizeRelPath(Path rel) {
@@ -1707,13 +1861,22 @@ public final class LocalFileStore implements VKFileStore {
     }
 
     private String hashByPath(Path p, String algorithm) throws IOException, NoSuchAlgorithmException {
+        // Perf 6：委托给 computeHash()，与 hash() 共用同一套流读取逻辑，消除重复代码
         MessageDigest digest = MessageDigest.getInstance(algorithm);
         try (InputStream in = Files.newInputStream(p, StandardOpenOption.READ)) {
-            byte[] buf = new byte[STREAM_BUFFER_SIZE];
-            int n;
-            while ((n = in.read(buf)) != -1) {
-                digest.update(buf, 0, n);
-            }
+            return computeHash(in, digest);
+        }
+    }
+
+    /**
+     * 从输入流读取全部字节并计算摘要，返回十六进制字符串。
+     * hash() 与 hashByPath() 的公共实现，避免重复的缓冲区读取逻辑。
+     */
+    private String computeHash(InputStream in, MessageDigest digest) throws IOException {
+        byte[] buf = new byte[STREAM_BUFFER_SIZE];
+        int n;
+        while ((n = in.read(buf)) != -1) {
+            digest.update(buf, 0, n);
         }
         return toHex(digest.digest());
     }
@@ -1835,6 +1998,8 @@ public final class LocalFileStore implements VKFileStore {
         private final boolean enabled;
         private final Path path;
         private final Set<String> completed;
+        // Perf 5：细粒度锁，仅在 checkpointAppend 写入时加锁，不阻塞整个 LocalFileStore 实例
+        final Object writeLock = new Object();
 
         private CheckpointState(boolean enabled, Path path, Set<String> completed) {
             this.enabled = enabled;

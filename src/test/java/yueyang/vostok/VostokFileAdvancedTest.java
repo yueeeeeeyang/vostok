@@ -282,9 +282,23 @@ public class VostokFileAdvancedTest {
     }
 
     @Test
-    void testNotInitialized() {
-        VKFileException ex = assertThrows(VKFileException.class, () -> Vostok.File.read("a.txt"));
-        assertEquals(VKFileErrorCode.NOT_INITIALIZED, ex.getErrorCode());
+    void testAutoInitWithDefaultConfig() {
+        // 未显式 init 前，started() 返回 false
+        assertFalse(Vostok.File.started(), "未 init 前 started() 应为 false");
+
+        // 首次文件操作触发懒加载默认配置（baseDir = user.dir/vkfiles）
+        // 文件不存在→抛 NOT_FOUND，而非 NOT_INITIALIZED，证明已自动初始化
+        VKFileException ex = assertThrows(VKFileException.class, () -> Vostok.File.read("no_such.txt"));
+        assertEquals(VKFileErrorCode.NOT_FOUND, ex.getErrorCode(),
+                "未 init 时应自动懒加载，读取不存在文件应抛 NOT_FOUND 而非 NOT_INITIALIZED");
+
+        // 懒加载后 started() 为 true
+        assertTrue(Vostok.File.started(), "懒加载后 started() 应为 true");
+
+        // 默认 baseDir 应包含 vkfiles 目录名
+        String baseDir = Vostok.File.config().getBaseDir().replace('\\', '/');
+        assertTrue(baseDir.endsWith("/vkfiles"),
+                "默认 baseDir 应以 /vkfiles 结尾，实际: " + baseDir);
     }
 
     @Test
