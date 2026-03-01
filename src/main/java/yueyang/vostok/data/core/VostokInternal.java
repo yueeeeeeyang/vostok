@@ -5,10 +5,8 @@ import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.dialect.VKDialect;
 import yueyang.vostok.data.ds.VKDataSourceHolder;
 import yueyang.vostok.data.ds.VKDataSourceRegistry;
-import yueyang.vostok.data.exception.VKErrorCode;
 import yueyang.vostok.data.exception.VKException;
 import yueyang.vostok.data.exception.VKExceptionTranslator;
-import yueyang.vostok.data.exception.VKStateException;
 import yueyang.vostok.data.jdbc.JdbcExecutor;
 import yueyang.vostok.data.meta.EntityMeta;
 import yueyang.vostok.data.meta.FieldMeta;
@@ -59,7 +57,41 @@ final class VostokInternal {
 
     static void ensureInit() {
         if (!VostokRuntime.initialized) {
-            throw new VKStateException(VKErrorCode.NOT_INITIALIZED, "Vostok is not initialized. Call Vostok.Data.init(...) first.");
+            autoInitDefault();
+        }
+    }
+
+    /**
+     * 未显式初始化时，自动使用 H2 内存数据库初始化。
+     * 扫描全 classpath 中的 @VKEntity 类，并自动建表（autoCreateTable=true）。
+     * 生产环境应始终显式调用 Vostok.Data.init() 配置目标数据源。
+     *
+     * <p>线程安全：外层 synchronized(VostokRuntime.LOCK) 保证并发下只有一个线程执行初始化；
+     * DCL（双重检查锁定）防止重复初始化。Java synchronized 对同一线程可重入，
+     * 因此持锁调用 VostokBootstrap.init()（内部同样使用该锁）不会死锁。
+     */
+    private static void autoInitDefault() {
+        if (VostokRuntime.initialized) {
+            return;
+        }
+        synchronized (VostokRuntime.LOCK) {
+            if (VostokRuntime.initialized) {
+                return; // DCL：确保只初始化一次
+            }
+            Vostok.Log.warn("Vostok Data 未显式初始化，自动使用 H2 内存数据库启动 " +
+                    "(jdbc:h2:mem:vostok_default;MODE=MySQL;DB_CLOSE_DELAY=-1)。" +
+                    "生产环境请调用 Vostok.Data.init() 显式配置数据源。");
+            VKDataConfig defaultConfig = new VKDataConfig()
+                    .url("jdbc:h2:mem:vostok_default;MODE=MySQL;DB_CLOSE_DELAY=-1")
+                    .username("sa")
+                    .password("")
+                    .driver("org.h2.Driver")
+                    .autoCreateTable(true)   // 自动建表，无需手工建表
+                    .validationQuery("SELECT 1");
+            // 复用上次显式初始化保留的包扫描范围（close() 不重置 initPackages）；
+            // 若系统从未被显式初始化，initPackages 为空数组，回退到全 classpath 扫描。
+            // VostokBootstrap.init() 持有同一把锁，synchronized 在同线程内可重入，安全
+            VostokBootstrap.init(defaultConfig, VostokRuntime.initPackages);
         }
     }
 

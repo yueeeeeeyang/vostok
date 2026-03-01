@@ -16,7 +16,6 @@ import yueyang.vostok.data.dialect.VKDialectManager;
 import yueyang.vostok.data.dialect.VKDialectType;
 import yueyang.vostok.data.exception.VKException;
 import yueyang.vostok.data.exception.VKSqlException;
-import yueyang.vostok.data.exception.VKStateException;
 import yueyang.vostok.data.jdbc.VKSqlLogger;
 import yueyang.vostok.data.meta.MetaLoader;
 import yueyang.vostok.data.meta.MetaRegistry;
@@ -1772,21 +1771,27 @@ public class VostokIntegrationTest {
 
     @Test
     @Order(103)
-    void testNotInitialized() {
+    void testAutoInitWithH2DefaultWhenNotExplicitlyInitialized() {
         Vostok.Data.close();
-        assertThrows(VKStateException.class, () -> Vostok.Data.findAll(UserEntity.class));
 
-        // re-init for remaining tests (if any)
+        // 未调用 init()，findAll 不再抛出异常，而是自动以 H2 内存模式初始化
+        assertDoesNotThrow(() -> Vostok.Data.findAll(UserEntity.class),
+                "未显式初始化时应自动以 H2 内存模式初始化，不应抛出异常");
+
+        // 自动初始化后可正常执行 CRUD
+        UserEntity u = new UserEntity();
+        u.setName("AutoInit");
+        u.setAge(0);
+        Vostok.Data.insert(u);
+        assertNotNull(u.getId());
+        assertNotNull(Vostok.Data.findById(UserEntity.class, u.getId()));
+
+        // 清理自动初始化实例，恢复原始显式配置
+        Vostok.Data.close();
         VKDataConfig cfg = new VKDataConfig()
-                .url(JDBC_URL)
-                .username("sa")
-                .password("")
-                .driver("org.h2.Driver")
-                .dialect(VKDialectType.MYSQL)
-                .minIdle(1)
-                .maxActive(5)
-                .maxWaitMs(10000)
-                .batchSize(2)
+                .url(JDBC_URL).username("sa").password("")
+                .driver("org.h2.Driver").dialect(VKDialectType.MYSQL)
+                .minIdle(1).maxActive(5).maxWaitMs(10000).batchSize(2)
                 .batchFailStrategy(VKBatchFailStrategy.FAIL_FAST)
                 .validationQuery("SELECT 1");
         Vostok.Data.init(cfg, "yueyang.vostok");

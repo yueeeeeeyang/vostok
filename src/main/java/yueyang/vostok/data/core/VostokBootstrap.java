@@ -172,7 +172,9 @@ public final class VostokBootstrap {
             MetaRegistry.clear();
             VostokRuntime.initialized = false;
             VostokRuntime.DS_CONTEXT.remove();
-            VostokRuntime.initPackages = new String[0];
+            // 保留 initPackages：关闭后若触发自动初始化，可复用上次显式初始化的包扫描范围，
+            // 避免全 classpath 扫描误入测试/框架内部的"坏实体"导致启动失败。
+            // 下次显式调用 init() 时会用新传入的 basePackages 覆盖此值。
         }
     }
 
