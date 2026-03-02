@@ -44,129 +44,455 @@
 <div class="page-header">
   <div class="module-tag">⚙️ Vostok.Config</div>
   <h1>Config 配置管理模块</h1>
-  <p class="desc">统一配置访问，自动扫描 <code>.properties</code> / <code>.yml</code> / <code>.yaml</code> 文件，支持多优先级覆盖、文件热监听、<code>${key}</code> 插值、自定义验证器与解析器。</p>
+  <p class="desc">统一配置访问，自动扫描 <code>.properties</code> / <code>.yml</code> / <code>.yaml</code> 文件，支持多优先级覆盖、<code>${key}</code> 插值、文件热监听、可插拔验证器与解析器、类型安全 POJO 绑定，以及配置来源追踪。所有读操作无锁（基于 volatile 快照），线程安全。</p>
 </div>
 
-<h2>初始化</h2>
-<pre><code><span class="cm">// 默认配置（自动扫描 classpath 下 *.properties/*.yml）</span>
+<h2>初始化（可选）</h2>
+
+<h3>零配置启动</h3>
+<pre><code><span class="cm">// 无需显式初始化——首次读取配置时自动以默认选项懒加载。</span>
+<span class="ty">String</span> host = <span class="ty">Vostok</span>.Config.get(<span class="st">"db.host"</span>);</code></pre>
+
+<h3>显式初始化</h3>
+<pre><code><span class="cm">// 以内置默认选项初始化（幂等，已初始化则忽略）</span>
 <span class="ty">Vostok</span>.Config.init();
 
-<span class="cm">// 自定义配置</span>
+<span class="cm">// 自定义选项</span>
 <span class="ty">Vostok</span>.Config.init(<span class="kw">new</span> <span class="ty">VKConfigOptions</span>()
-    .watchEnabled(<span class="kw">true</span>)           <span class="cm">// 开启文件热监听</span>
-    .watchDebounceMs(<span class="nu">300</span>)         <span class="cm">// 防抖延迟（ms）</span>
-    .loadEnv(<span class="kw">true</span>)               <span class="cm">// 加载环境变量</span>
-    .loadSystemProperties(<span class="kw">true</span>)  <span class="cm">// 加载 JVM 系统属性</span>
-    .extraScanDirs(<span class="st">"/etc/myapp"</span>) <span class="cm">// 额外扫描目录</span>
+    .watchEnabled(<span class="kw">true</span>)             <span class="cm">// 开启文件热监听</span>
+    .watchDebounceMs(<span class="num">500</span>)           <span class="cm">// 防抖延迟（ms，最小 50）</span>
+    .loadEnv(<span class="kw">true</span>)                 <span class="cm">// 加载环境变量（默认已开启）</span>
+    .loadSystemProperties(<span class="kw">true</span>)    <span class="cm">// 加载 JVM 系统属性（默认已开启）</span>
+    .scanClasspath(<span class="kw">true</span>)           <span class="cm">// 扫描 classpath（默认已开启）</span>
+    .scanUserDir(<span class="kw">true</span>)             <span class="cm">// 扫描 user.dir（默认已开启）</span>
+    .addScanDir(<span class="ty">Path</span>.of(<span class="st">"/etc/myapp"</span>))  <span class="cm">// 额外扫描目录</span>
 );</code></pre>
 
 <div class="callout tip">
-  <div class="callout-title">懒加载</div>
-  未显式 <code>init()</code> 时，首次读取配置项会以默认配置懒加载初始化。
+  <div class="callout-title">幂等初始化</div>
+  <code>init()</code> 已初始化时静默忽略。如需强制替换配置，使用 <code>reinit(VKConfigOptions)</code>。
+  运行时修改选项（不替换）使用 <code>configure(Consumer&lt;VKConfigOptions&gt;)</code>，会触发一次重载。
 </div>
 
 <h2>读取配置</h2>
-<pre><code><span class="cm">// 读取字符串</span>
-<span class="ty">String</span> host = <span class="ty">Vostok</span>.Config.getString(<span class="st">"db.host"</span>);
-<span class="ty">String</span> host = <span class="ty">Vostok</span>.Config.getString(<span class="st">"db.host"</span>, <span class="st">"localhost"</span>);  <span class="cm">// 含默认值</span>
 
-<span class="cm">// 读取整数 / 布尔</span>
-<span class="kw">int</span>     port    = <span class="ty">Vostok</span>.Config.getInt(<span class="st">"db.port"</span>, <span class="nu">3306</span>);
-<span class="kw">boolean</span> enabled = <span class="ty">Vostok</span>.Config.getBoolean(<span class="st">"feature.enabled"</span>, <span class="kw">false</span>);
+<h3>基础读取</h3>
+<pre><code><span class="cm">// 读取字符串（未找到返回 null）</span>
+<span class="ty">String</span> host = <span class="ty">Vostok</span>.Config.get(<span class="st">"db.host"</span>);
 
-<span class="cm">// 获取某前缀下所有 key-value</span>
-<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; dbMap = <span class="ty">Vostok</span>.Config.getMap(<span class="st">"db"</span>);
+<span class="cm">// 必须存在，未找到抛 VKConfigException（KEY_NOT_FOUND）</span>
+<span class="ty">String</span> url = <span class="ty">Vostok</span>.Config.required(<span class="st">"db.url"</span>);
 
-<span class="cm">// 获取所有 key</span>
-<span class="ty">Set</span>&lt;<span class="ty">String</span>&gt; keys = <span class="ty">Vostok</span>.Config.getAllKeys();</code></pre>
+<span class="cm">// 读取字符串，含默认值</span>
+<span class="ty">String</span> host = <span class="ty">Vostok</span>.Config.getString(<span class="st">"db.host"</span>, <span class="st">"localhost"</span>);
+
+<span class="cm">// 读取各类型（含默认值）</span>
+<span class="kw">int</span>     port    = <span class="ty">Vostok</span>.Config.getInt(<span class="st">"db.port"</span>, <span class="num">5432</span>);
+<span class="kw">long</span>    timeout = <span class="ty">Vostok</span>.Config.getLong(<span class="st">"conn.timeoutMs"</span>, <span class="num">3000L</span>);
+<span class="kw">double</span>  ratio   = <span class="ty">Vostok</span>.Config.getDouble(<span class="st">"pool.factor"</span>, <span class="num">0.75</span>);
+<span class="kw">boolean</span> enabled = <span class="ty">Vostok</span>.Config.getBool(<span class="st">"feature.enabled"</span>, <span class="kw">false</span>);
+
+<span class="cm">// 读取列表（逗号分隔，或 key[0]/key[1] 数组格式）</span>
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; hosts = <span class="ty">Vostok</span>.Config.getList(<span class="st">"db.hosts"</span>);
+
+<span class="cm">// 检查 key 是否存在</span>
+<span class="kw">boolean</span> exists = <span class="ty">Vostok</span>.Config.has(<span class="st">"db.host"</span>);
+
+<span class="cm">// 获取所有已加载的 key</span>
+<span class="ty">Set</span>&lt;<span class="ty">String</span>&gt; allKeys = <span class="ty">Vostok</span>.Config.keys();</code></pre>
+
+<p><code>getBool()</code> 识别规则：</p>
+<table class="api-table">
+  <thead><tr><th>值（不区分大小写）</th><th>结果</th></tr></thead>
+  <tbody>
+    <tr><td><code>true</code> / <code>1</code> / <code>yes</code> / <code>on</code></td><td><code>true</code></td></tr>
+    <tr><td><code>false</code> / <code>0</code> / <code>no</code> / <code>off</code></td><td><code>false</code></td></tr>
+    <tr><td>其他值 / 未找到</td><td>返回默认值</td></tr>
+  </tbody>
+</table>
+
+<h3>列表格式</h3>
+<p><code>getList(key)</code> 支持两种配置格式：</p>
+<pre><code><span class="cm"># 格式 1：逗号分隔</span>
+db.hosts=host1,host2,host3
+
+<span class="cm"># 格式 2：下标数组</span>
+db.hosts[0]=host1
+db.hosts[1]=host2
+db.hosts[2]=host3</code></pre>
 
 <h2>插值语法</h2>
-<p>配置文件中可用 <code>${key}</code> 引用其他配置项，支持默认值语法 <code>${key:defaultValue}</code>。</p>
+<p>配置值中可用 <code>${key}</code> 引用其他配置项，支持默认值语法 <code>${key:defaultValue}</code>。插值递归解析，循环引用时抛 <code>VKConfigException</code>。</p>
 <pre><code><span class="cm"># application.properties</span>
-base.url=http://api.example.com
+base.url=https://api.example.com
 retry.url=${base.url}/retry
-timeout=${REQUEST_TIMEOUT:5000}  <span class="cm"># 从环境变量读，缺省 5000</span></code></pre>
+
+<span class="cm"># 引用环境变量，缺省 5000</span>
+timeout=${REQUEST_TIMEOUT:5000}
+
+<span class="cm"># 多级引用</span>
+app.name=MyApp
+log.prefix=[${app.name}]</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">插值解析时机</div>
+  插值在每次 <code>get()</code> / <code>getString()</code> 等读取时实时解析，不在加载时展开。因此 runtime override 修改了引用目标后，读取结果会立即反映新值。
+</div>
 
 <h2>配置优先级</h2>
 <p>从低到高，高优先级覆盖低优先级：</p>
 <ol>
-  <li>classpath 配置文件</li>
-  <li><code>extraScanDirs</code> 目录下的文件</li>
-  <li><code>userDir</code> 目录下的文件</li>
-  <li>手动 <code>addFile()</code> 的文件</li>
+  <li>classpath 配置文件（<code>scanClasspath=true</code>）</li>
+  <li><code>addScanDir()</code> 指定的额外扫描目录</li>
+  <li>user.dir（工作目录，<code>scanUserDir=true</code>）</li>
+  <li>手动追加的文件（<code>addFile()</code> / <code>addFiles()</code>）</li>
   <li>环境变量（<code>loadEnv=true</code>）</li>
   <li>JVM 系统属性（<code>loadSystemProperties=true</code>）</li>
-  <li>运行时 <code>putOverride()</code></li>
+  <li>运行时覆盖（<code>putOverride()</code>）</li>
 </ol>
 
+<div class="callout info">
+  <div class="callout-title">环境变量 key 规范化</div>
+  环境变量 <code>UPPER_CASE</code> 会映射为 <code>upper.case</code>，两种形式同时可用。
+  系统属性中的 <code>-</code> 会规范化为 <code>.</code>。
+</div>
+
 <h2>运行时覆盖</h2>
-<pre><code><span class="cm">// 写入运行时覆盖（最高优先级）</span>
-<span class="ty">Vostok</span>.Config.putOverride(<span class="st">"feature.darkMode"</span>, <span class="st">"true"</span>);
-<span class="ty">Vostok</span>.Config.removeOverride(<span class="st">"feature.darkMode"</span>);
+<pre><code><span class="cm">// 写入运行时覆盖（最高优先级，立即生效）</span>
+<span class="ty">Vostok</span>.Config.putOverride(<span class="st">"db.url"</span>, <span class="st">"jdbc:postgresql://prod-host/mydb"</span>);
+
+<span class="cm">// 传入 null 等同于 removeOverride</span>
+<span class="ty">Vostok</span>.Config.putOverride(<span class="st">"db.url"</span>, <span class="kw">null</span>);
+
+<span class="cm">// 移除单个覆盖</span>
+<span class="ty">Vostok</span>.Config.removeOverride(<span class="st">"db.url"</span>);
+
+<span class="cm">// 清空所有覆盖</span>
 <span class="ty">Vostok</span>.Config.clearOverrides();</code></pre>
 
 <h2>手动追加配置文件</h2>
-<pre><code><span class="ty">Vostok</span>.Config.addFile(<span class="st">"/etc/myapp/secrets.properties"</span>);
+<pre><code><span class="cm">// 追加单个文件（立即加载，触发一次重载）</span>
+<span class="ty">Vostok</span>.Config.addFile(<span class="st">"/etc/myapp/secrets.properties"</span>);
+
+<span class="cm">// 追加多个文件（全部校验通过后统一触发一次重载）</span>
 <span class="ty">Vostok</span>.Config.addFiles(<span class="st">"/conf/a.yml"</span>, <span class="st">"/conf/b.yml"</span>);
-<span class="ty">Vostok</span>.Config.clearManualFiles();  <span class="cm">// 移除手动追加的文件</span>
+
+<span class="cm">// 移除所有手动追加的文件（触发重载）</span>
+<span class="ty">Vostok</span>.Config.clearManualFiles();
 
 <span class="cm">// 手动触发全量重载</span>
 <span class="ty">Vostok</span>.Config.reload();</code></pre>
 
 <h2>文件变更监听</h2>
-<pre><code><span class="ty">Vostok</span>.Config.registerListener((changedKeys) -&gt; {
-    <span class="kw">if</span> (changedKeys.contains(<span class="st">"server.port"</span>)) {
-        <span class="ty">System</span>.out.println(<span class="st">"port changed to: "</span> + <span class="ty">Vostok</span>.Config.getInt(<span class="st">"server.port"</span>, <span class="nu">8080</span>));
+<p>开启 <code>watchEnabled(true)</code> 后，Config 模块自动监听文件系统变更，防抖后触发重载并通知监听器。</p>
+
+<h3>addChangeListener — 全局监听器</h3>
+<pre><code><span class="ty">VKConfigChangeListener</span> listener = event -> {
+    <span class="cm">// changedKeys()：本次变更的所有 key（新增 / 修改 / 删除）</span>
+    <span class="kw">if</span> (event.changedKeys().contains(<span class="st">"db.url"</span>)) {
+        <span class="ty">String</span> oldUrl = event.oldValue(<span class="st">"db.url"</span>);  <span class="cm">// 变更前的值（新增时为 null）</span>
+        <span class="ty">String</span> newUrl = event.newValue(<span class="st">"db.url"</span>);  <span class="cm">// 变更后的值（删除时为 null）</span>
+        reconnect(newUrl);
     }
-});</code></pre>
+};
+
+<span class="ty">Vostok</span>.Config.addChangeListener(listener);
+<span class="ty">Vostok</span>.Config.removeChangeListener(listener);  <span class="cm">// 注销</span></code></pre>
+
+<h3>onChange — 单 key 快捷监听</h3>
+<pre><code><span class="cm">// 仅在指定 key 变更时触发，返回 listener 实例供后续注销</span>
+<span class="ty">VKConfigChangeListener</span> l = <span class="ty">Vostok</span>.Config.onChange(<span class="st">"server.port"</span>, (oldVal, newVal) -> {
+    <span class="ty">System</span>.out.println(<span class="st">"port: "</span> + oldVal + <span class="st">" → "</span> + newVal);
+});
+
+<span class="cm">// 注销时复用返回的 listener 引用</span>
+<span class="ty">Vostok</span>.Config.removeChangeListener(l);</code></pre>
+
+<p><code>VKConfigChangeEvent</code> 完整方法：</p>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>changedKeys()</code></td><td>Set&lt;String&gt;</td><td>本次变更的所有 key（新增 / 修改 / 删除）</td></tr>
+    <tr><td><code>oldValue(key)</code></td><td>String</td><td>变更前的值；key 是新增时返回 null</td></tr>
+    <tr><td><code>newValue(key)</code></td><td>String</td><td>变更后的值；key 被删除时返回 null</td></tr>
+    <tr><td><code>oldSnapshot()</code></td><td>Map&lt;String,String&gt;</td><td>变更前的完整配置快照（只读）</td></tr>
+    <tr><td><code>newSnapshot()</code></td><td>Map&lt;String,String&gt;</td><td>变更后的完整配置快照（只读）</td></tr>
+  </tbody>
+</table>
 
 <h2>配置校验</h2>
-<pre><code><span class="ty">Vostok</span>.Config.registerValidator(config -&gt; {
-    <span class="ty">String</span> url = config.getString(<span class="st">"db.url"</span>);
-    <span class="kw">if</span> (url == <span class="kw">null</span> || url.isBlank()) {
-        <span class="kw">throw new</span> <span class="ty">IllegalStateException</span>(<span class="st">"db.url is required"</span>);
+<p>通过 <code>VKConfigValidators</code> 使用内置校验器，或实现 <code>VKConfigValidator</code> 接口自定义。每次重载后校验器会重新执行，失败时抛 <code>VKConfigException</code>（VALIDATION_ERROR）。</p>
+
+<h3>内置校验器</h3>
+<pre><code><span class="cm">// 必填：key 必须存在且不为空白</span>
+<span class="ty">Vostok</span>.Config.registerValidator(<span class="ty">VKConfigValidators</span>.required(<span class="st">"db.url"</span>, <span class="st">"db.port"</span>));
+
+<span class="cm">// 整数范围：[min, max] 闭区间</span>
+<span class="ty">Vostok</span>.Config.registerValidator(<span class="ty">VKConfigValidators</span>.intRange(<span class="st">"pool.size"</span>, <span class="num">1</span>, <span class="num">200</span>));
+
+<span class="cm">// 正整数（> 0）</span>
+<span class="ty">Vostok</span>.Config.registerValidator(<span class="ty">VKConfigValidators</span>.positiveInt(<span class="st">"thread.count"</span>));
+
+<span class="cm">// 端口范围：[1, 65535]</span>
+<span class="ty">Vostok</span>.Config.registerValidator(<span class="ty">VKConfigValidators</span>.portRange(<span class="st">"server.port"</span>));
+
+<span class="cm">// 枚举值（不区分大小写）</span>
+<span class="ty">Vostok</span>.Config.registerValidator(<span class="ty">VKConfigValidators</span>.oneOf(<span class="st">"log.level"</span>, <span class="st">"TRACE"</span>, <span class="st">"DEBUG"</span>, <span class="st">"INFO"</span>, <span class="st">"WARN"</span>, <span class="st">"ERROR"</span>));
+
+<span class="cm">// 正则格式（全匹配）</span>
+<span class="ty">Vostok</span>.Config.registerValidator(<span class="ty">VKConfigValidators</span>.pattern(<span class="st">"app.version"</span>, <span class="st">"\\d+\\.\\d+\\.\\d+"</span>));
+
+<span class="cm">// URL 格式（http / https 及自定义 scheme）</span>
+<span class="ty">Vostok</span>.Config.registerValidator(<span class="ty">VKConfigValidators</span>.url(<span class="st">"api.baseUrl"</span>));</code></pre>
+
+<h3>跨字段校验</h3>
+<pre><code><span class="cm">// cross：带名称的自定义谓词，可访问完整配置视图</span>
+<span class="ty">Vostok</span>.Config.registerValidator(<span class="ty">VKConfigValidators</span>.cross(
+    <span class="st">"ssl-consistency"</span>,
+    view -> !view.getBool(<span class="st">"ssl.enabled"</span>, <span class="kw">false</span>) || view.has(<span class="st">"ssl.certPath"</span>),
+    <span class="st">"ssl.certPath is required when ssl.enabled=true"</span>
+));</code></pre>
+
+<h3>自定义校验器</h3>
+<pre><code><span class="ty">Vostok</span>.Config.registerValidator(view -> {
+    <span class="ty">String</span> url = view.get(<span class="st">"db.url"</span>);
+    <span class="kw">if</span> (url == <span class="kw">null</span> || !url.startsWith(<span class="st">"jdbc:"</span>)) {
+        <span class="kw">throw new</span> <span class="ty">IllegalStateException</span>(<span class="st">"db.url must be a valid JDBC URL"</span>);
+    }
+});
+
+<span class="cm">// 移除所有校验器</span>
+<span class="ty">Vostok</span>.Config.clearValidators();</code></pre>
+
+<p><code>VKConfigView</code>（校验器收到的视图）方法：</p>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>get(key)</code></td><td>读取字符串，未找到返回 null</td></tr>
+    <tr><td><code>has(key)</code></td><td>检查 key 是否存在</td></tr>
+    <tr><td><code>keys()</code></td><td>所有 key 集合</td></tr>
+    <tr><td><code>asMap()</code></td><td>完整配置快照（只读 Map）</td></tr>
+    <tr><td><code>getInt(key, default)</code></td><td>解析整数</td></tr>
+    <tr><td><code>getLong(key, default)</code></td><td>解析 long</td></tr>
+    <tr><td><code>getDouble(key, default)</code></td><td>解析 double</td></tr>
+    <tr><td><code>getBool(key, default)</code></td><td>解析布尔</td></tr>
+    <tr><td><code>getList(key)</code></td><td>解析列表（逗号分隔或下标格式）</td></tr>
+  </tbody>
+</table>
+
+<h2>类型安全绑定</h2>
+<p>将配置项自动绑定到 POJO 字段，支持 <code>String</code>、基本类型及其包装类、<code>List&lt;String&gt;</code>。POJO 需提供无参构造器。</p>
+
+<h3>使用 @VKConfigPrefix 注解</h3>
+<pre><code><span class="cm">// 在 POJO 类上标注前缀</span>
+@<span class="ty">VKConfigPrefix</span>(<span class="st">"database"</span>)
+<span class="kw">public class</span> <span class="ty">DatabaseConfig</span> {
+    <span class="kw">private</span> <span class="ty">String</span>  host;          <span class="cm">// ← database.host</span>
+    <span class="kw">private</span> <span class="kw">int</span>     port;          <span class="cm">// ← database.port</span>
+    <span class="kw">private</span> <span class="kw">boolean</span> sslEnabled;    <span class="cm">// ← database.sslEnabled 或 database.ssl-enabled</span>
+    <span class="kw">private</span> <span class="ty">List</span>&lt;<span class="ty">String</span>&gt; replicas;  <span class="cm">// ← database.replicas（逗号分隔）</span>
+}
+
+<span class="cm">// 绑定（通过注解自动取前缀）</span>
+<span class="ty">DatabaseConfig</span> cfg = <span class="ty">Vostok</span>.Config.bind(<span class="ty">DatabaseConfig</span>.class);</code></pre>
+
+<h3>显式指定前缀</h3>
+<pre><code><span class="cm">// 不需要注解，直接传入前缀字符串</span>
+<span class="kw">public class</span> <span class="ty">RedisConfig</span> {
+    <span class="kw">private</span> <span class="ty">String</span> host;
+    <span class="kw">private</span> <span class="kw">int</span>    port;
+    <span class="kw">private</span> <span class="kw">int</span>    maxConnections;  <span class="cm">// ← redis.maxConnections 或 redis.max-connections</span>
+}
+
+<span class="ty">RedisConfig</span> cfg = <span class="ty">Vostok</span>.Config.bind(<span class="st">"redis"</span>, <span class="ty">RedisConfig</span>.class);</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">字段名映射规则</div>
+  每个字段按以下顺序尝试匹配（找到即停止）：
+  <ol style="margin:8px 0 0 0">
+    <li><code>prefix.fieldName</code>（camelCase 原样）</li>
+    <li><code>prefix.field-name</code>（camelCase → kebab-case 转换）</li>
+  </ol>
+</div>
+
+<h3>支持的字段类型</h3>
+<table class="api-table">
+  <thead><tr><th>字段类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>String</code></td><td>直接赋值</td></tr>
+    <tr><td><code>int</code> / <code>Integer</code></td><td>解析为整数</td></tr>
+    <tr><td><code>long</code> / <code>Long</code></td><td>解析为 long</td></tr>
+    <tr><td><code>double</code> / <code>Double</code></td><td>解析为 double</td></tr>
+    <tr><td><code>float</code> / <code>Float</code></td><td>解析为 float</td></tr>
+    <tr><td><code>boolean</code> / <code>Boolean</code></td><td>同 <code>getBool()</code> 规则</td></tr>
+    <tr><td><code>List&lt;String&gt;</code></td><td>同 <code>getList()</code>，逗号分隔或下标格式</td></tr>
+  </tbody>
+</table>
+
+<h2>自定义解析器</h2>
+<p>实现 <code>VKConfigParser</code> 接口可支持任意文件格式（如 TOML、JSON、HOCON 等）。解析器注册后优先级最高，同时触发一次重载。</p>
+<pre><code><span class="ty">Vostok</span>.Config.registerParser(<span class="kw">new</span> <span class="ty">VKConfigParser</span>() {
+
+    @Override
+    <span class="kw">public boolean</span> supports(<span class="ty">String</span> fileName) {
+        <span class="kw">return</span> fileName.endsWith(<span class="st">".toml"</span>);
+    }
+
+    @Override
+    <span class="kw">public</span> <span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; parse(<span class="ty">String</span> sourceId, <span class="ty">InputStream</span> inputStream) {
+        <span class="cm">// 解析文件内容，返回扁平化的 key-value Map</span>
+        <span class="cm">// sourceId 为来源标识（文件路径或 jar 内路径），可用于错误提示</span>
+        <span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; result = <span class="kw">new</span> <span class="ty">LinkedHashMap</span>&lt;&gt;();
+        <span class="cm">// ... 解析逻辑 ...</span>
+        <span class="kw">return</span> result;
     }
 });</code></pre>
 
-<h2>自定义解析器</h2>
-<pre><code><span class="cm">// 注册 .toml 文件解析器</span>
-<span class="ty">Vostok</span>.Config.registerParser(<span class="kw">new</span> <span class="ty">VKConfigParser</span>() {
-    <span class="kw">public boolean</span> <span class="fn">supports</span>(<span class="ty">String</span> filename) { <span class="kw">return</span> filename.endsWith(<span class="st">".toml"</span>); }
-    <span class="kw">public</span> <span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; <span class="fn">parse</span>(<span class="ty">InputStream</span> is) { <span class="cm">/* … */</span> }
-});</code></pre>
+<div class="callout tip">
+  <div class="callout-title">内置格式</div>
+  <code>.properties</code>（Java Properties 格式）和 <code>.yml</code> / <code>.yaml</code>（YAML，支持嵌套对象展平、序列、行内注释、引号值）无需注册，开箱即用。
+</div>
 
-<h2>配置参数</h2>
+<h2>来源追踪</h2>
+<p>用于调试排查：某个 key 当前读取的值来自哪个文件（或环境变量、系统属性、运行时覆盖）。</p>
+<pre><code><span class="cm">// 查询单个 key 的来源</span>
+<span class="ty">String</span> source = <span class="ty">Vostok</span>.Config.sourceOf(<span class="st">"db.url"</span>);
+<span class="cm">// 可能的返回值示例：</span>
+<span class="cm">//   "/home/app/application.properties"  — 文件路径</span>
+<span class="cm">//   "env"                                — 环境变量</span>
+<span class="cm">//   "system-property"                    — JVM 系统属性</span>
+<span class="cm">//   "runtime-override"                   — putOverride() 写入</span>
+<span class="cm">//   null                                 — key 不存在</span>
+
+<span class="cm">// 获取全部 key 的来源映射（只读快照）</span>
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; allSources = <span class="ty">Vostok</span>.Config.sources();</code></pre>
+
+<h2>文件监听状态</h2>
+<pre><code><span class="cm">// 是否已初始化（或已懒加载）</span>
+<span class="kw">boolean</span> ready = <span class="ty">Vostok</span>.Config.started();
+
+<span class="cm">// 上次文件监听出错时的错误信息（无错误时返回 null）</span>
+<span class="cm">// 文件监听出错时保留旧配置快照，不影响读取</span>
+<span class="ty">String</span> watchErr = <span class="ty">Vostok</span>.Config.lastWatchError();</code></pre>
+
+<h2>生命周期控制</h2>
+<pre><code><span class="cm">// 以内置默认选项初始化（幂等）</span>
+<span class="ty">Vostok</span>.Config.init();
+
+<span class="cm">// 强制重新初始化（忽略已初始化状态）</span>
+<span class="ty">Vostok</span>.Config.reinit(<span class="kw">new</span> <span class="ty">VKConfigOptions</span>().watchEnabled(<span class="kw">true</span>));
+
+<span class="cm">// 修改当前选项（触发一次重载，不重置 listeners / validators / parsers）</span>
+<span class="ty">Vostok</span>.Config.configure(opts -> opts.watchDebounceMs(<span class="num">200</span>));
+
+<span class="cm">// 手动触发全量重载</span>
+<span class="ty">Vostok</span>.Config.reload();
+
+<span class="cm">// 关闭（停止文件监听，清空所有状态）</span>
+<span class="ty">Vostok</span>.Config.close();</code></pre>
+
+<h2>配置参数（VKConfigOptions）</h2>
 <table class="config-table">
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td class="param-name">watchEnabled</td><td>boolean</td><td>false</td><td>是否开启文件热监听</td></tr>
-    <tr><td class="param-name">watchDebounceMs</td><td>long</td><td>300</td><td>文件变更防抖延迟（ms）</td></tr>
-    <tr><td class="param-name">loadEnv</td><td>boolean</td><td>false</td><td>是否加载环境变量</td></tr>
-    <tr><td class="param-name">loadSystemProperties</td><td>boolean</td><td>false</td><td>是否加载 JVM 系统属性</td></tr>
-    <tr><td class="param-name">extraScanDirs</td><td>String[]</td><td>—</td><td>额外扫描目录路径</td></tr>
-    <tr><td class="param-name">userDir</td><td>String</td><td>—</td><td>用户配置目录（优先于 classpath）</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">扫描源</td></tr>
+    <tr><td class="param-name">scanClasspath</td><td>boolean</td><td>true</td><td>扫描 classpath 下的配置文件（JAR 中最多扫描一层）</td></tr>
+    <tr><td class="param-name">scanUserDir</td><td>boolean</td><td>true</td><td>扫描 user.dir（工作目录）下的配置文件（递归）</td></tr>
+    <tr><td class="param-name">addScanDir(Path)</td><td>—</td><td>—</td><td>添加额外扫描目录（递归扫描），可多次调用；通过 <code>getExtraScanDirs()</code> 获取列表</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">外部来源</td></tr>
+    <tr><td class="param-name">loadEnv</td><td>boolean</td><td>true</td><td>加载环境变量（UPPER_CASE → upper.case，两种形式均可用）</td></tr>
+    <tr><td class="param-name">loadSystemProperties</td><td>boolean</td><td>true</td><td>加载 JVM 系统属性（<code>-</code> 规范化为 <code>.</code>）</td></tr>
+    <tr><td class="param-name">envProvider</td><td>Supplier&lt;Map&gt;</td><td>System::getenv</td><td>自定义环境变量来源（测试时常用于注入 mock 环境）</td></tr>
+    <tr><td class="param-name">systemPropertiesProvider</td><td>Supplier&lt;Properties&gt;</td><td>System::getProperties</td><td>自定义系统属性来源</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">热监听</td></tr>
+    <tr><td class="param-name">watchEnabled</td><td>boolean</td><td>false</td><td>开启文件系统监听，文件变更后自动重载配置</td></tr>
+    <tr><td class="param-name">watchDebounceMs</td><td>long</td><td>300</td><td>文件变更防抖延迟（ms），最小 50ms</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">冲突控制</td></tr>
+    <tr><td class="param-name">strictNamespaceConflict</td><td>boolean</td><td>false</td><td>开启后，同一命名空间出现在多个来源时抛异常（严格模式）</td></tr>
+  </tbody>
+</table>
+
+<h2>异常说明</h2>
+<table class="api-table">
+  <thead><tr><th>错误码</th><th>触发场景</th></tr></thead>
+  <tbody>
+    <tr><td><code>CK-404 KEY_NOT_FOUND</code></td><td><code>required(key)</code> 读取不存在的 key</td></tr>
+    <tr><td><code>CK-420 VALIDATION_ERROR</code></td><td>校验器执行失败（含内置与自定义）</td></tr>
+    <tr><td><code>CK-400 INVALID_ARGUMENT</code></td><td>传入参数非法（如空 key、空路径）</td></tr>
+    <tr><td><code>CK-402 CONFIG_ERROR</code></td><td>插值循环引用等配置逻辑错误</td></tr>
+    <tr><td><code>CK-500 IO_ERROR</code></td><td>文件读取失败</td></tr>
+    <tr><td><code>CK-510 PARSE_ERROR</code></td><td>文件格式解析失败</td></tr>
   </tbody>
 </table>
 
 <h2>API 速查</h2>
+
+<h3>生命周期</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>init()</code></td><td>void</td><td>以默认选项初始化（幂等）</td></tr>
+    <tr><td><code>init(VKConfigOptions)</code></td><td>void</td><td>以自定义选项初始化（幂等）</td></tr>
+    <tr><td><code>reinit(VKConfigOptions)</code></td><td>void</td><td>强制重新初始化</td></tr>
+    <tr><td><code>configure(Consumer&lt;VKConfigOptions&gt;)</code></td><td>void</td><td>修改当前选项并触发重载</td></tr>
+    <tr><td><code>reload()</code></td><td>void</td><td>手动触发全量重载</td></tr>
+    <tr><td><code>close()</code></td><td>void</td><td>关闭并重置所有状态</td></tr>
+    <tr><td><code>started()</code></td><td>boolean</td><td>是否已初始化（含懒加载）</td></tr>
+    <tr><td><code>lastWatchError()</code></td><td>String</td><td>上次文件监听错误信息，null 表示无错误</td></tr>
+  </tbody>
+</table>
+
+<h3>读取</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>get(key)</code></td><td>String</td><td>读取字符串，未找到返回 null</td></tr>
+    <tr><td><code>required(key)</code></td><td>String</td><td>读取字符串，未找到抛 VKConfigException</td></tr>
+    <tr><td><code>has(key)</code></td><td>boolean</td><td>检查 key 是否存在</td></tr>
+    <tr><td><code>keys()</code></td><td>Set&lt;String&gt;</td><td>所有已加载的 key</td></tr>
+    <tr><td><code>getString(key, default)</code></td><td>String</td><td>读取字符串，含默认值</td></tr>
+    <tr><td><code>getInt(key, default)</code></td><td>int</td><td>解析整数，含默认值</td></tr>
+    <tr><td><code>getLong(key, default)</code></td><td>long</td><td>解析 long，含默认值</td></tr>
+    <tr><td><code>getDouble(key, default)</code></td><td>double</td><td>解析 double，含默认值</td></tr>
+    <tr><td><code>getBool(key, default)</code></td><td>boolean</td><td>解析布尔，含默认值</td></tr>
+    <tr><td><code>getList(key)</code></td><td>List&lt;String&gt;</td><td>解析列表（逗号分隔或下标格式）</td></tr>
+  </tbody>
+</table>
+
+<h3>运行时覆盖与文件管理</h3>
 <table class="api-table">
   <thead><tr><th>方法</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>getString(key)</code></td><td>读取字符串（未找到返回 null）</td></tr>
-    <tr><td><code>getString(key, default)</code></td><td>读取字符串（含默认值）</td></tr>
-    <tr><td><code>getInt(key, default)</code></td><td>读取整数（含默认值）</td></tr>
-    <tr><td><code>getBoolean(key, default)</code></td><td>读取布尔（含默认值）</td></tr>
-    <tr><td><code>getMap(prefix)</code></td><td>读取前缀下所有配置为 Map</td></tr>
-    <tr><td><code>getAllKeys()</code></td><td>获取所有已加载的 key 集合</td></tr>
-    <tr><td><code>addFile(path)</code></td><td>手动追加配置文件</td></tr>
-    <tr><td><code>clearManualFiles()</code></td><td>移除手动追加的文件</td></tr>
-    <tr><td><code>putOverride(key, value)</code></td><td>写入运行时覆盖</td></tr>
-    <tr><td><code>removeOverride(key)</code></td><td>移除运行时覆盖</td></tr>
+    <tr><td><code>putOverride(key, value)</code></td><td>写入运行时覆盖（最高优先级），null value 等同 removeOverride</td></tr>
+    <tr><td><code>removeOverride(key)</code></td><td>移除指定运行时覆盖</td></tr>
     <tr><td><code>clearOverrides()</code></td><td>清空所有运行时覆盖</td></tr>
-    <tr><td><code>registerListener(listener)</code></td><td>注册配置变更监听器</td></tr>
-    <tr><td><code>registerValidator(validator)</code></td><td>注册配置校验器</td></tr>
-    <tr><td><code>registerParser(parser)</code></td><td>注册自定义文件格式解析器</td></tr>
-    <tr><td><code>reload()</code></td><td>强制重新加载所有配置</td></tr>
+    <tr><td><code>addFile(path)</code></td><td>手动追加单个配置文件并重载</td></tr>
+    <tr><td><code>addFiles(paths...)</code></td><td>手动追加多个文件，统一触发一次重载</td></tr>
+    <tr><td><code>clearManualFiles()</code></td><td>移除所有手动追加的文件并重载</td></tr>
+  </tbody>
+</table>
+
+<h3>监听器 / 校验器 / 解析器</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>addChangeListener(VKConfigChangeListener)</code></td><td>注册全局配置变更监听器</td></tr>
+    <tr><td><code>removeChangeListener(VKConfigChangeListener)</code></td><td>注销监听器</td></tr>
+    <tr><td><code>onChange(key, BiConsumer&lt;String,String&gt;)</code></td><td>单 key 变更快捷监听，返回 listener 实例</td></tr>
+    <tr><td><code>registerValidator(VKConfigValidator)</code></td><td>注册校验器（每次重载后执行）</td></tr>
+    <tr><td><code>clearValidators()</code></td><td>移除所有校验器</td></tr>
+    <tr><td><code>registerParser(VKConfigParser)</code></td><td>注册自定义文件格式解析器（最高优先级）</td></tr>
+  </tbody>
+</table>
+
+<h3>绑定与来源追踪</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>bind(prefix, Class&lt;T&gt;)</code></td><td>T</td><td>将指定前缀的配置绑定到 POJO 实例</td></tr>
+    <tr><td><code>bind(Class&lt;T&gt;)</code></td><td>T</td><td>通过 <code>@VKConfigPrefix</code> 注解取前缀后绑定</td></tr>
+    <tr><td><code>sourceOf(key)</code></td><td>String</td><td>返回 key 的来源标识（文件路径 / "env" / "system-property" / "runtime-override" / null）</td></tr>
+    <tr><td><code>sources()</code></td><td>Map&lt;String,String&gt;</td><td>全部 key 的来源映射（只读快照）</td></tr>
   </tbody>
 </table>
 
