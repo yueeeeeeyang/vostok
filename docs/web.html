@@ -44,184 +44,588 @@
 <div class="page-header">
   <div class="module-tag">🌐 Vostok.Web</div>
   <h1>Web 服务器模块</h1>
-  <p class="desc">基于 Java NIO Reactor 模式的高性能 HTTP 服务器，支持路由、中间件、WebSocket、SSE、静态资源、GZIP、CORS，以及根据实体类自动生成 REST CRUD API。</p>
+  <p class="desc">基于 Java NIO Reactor 模式的高性能 HTTP 服务器，支持路由、中间件、WebSocket、SSE、静态资源、GZIP 压缩、CORS、TLS/HTTPS、限流，以及根据实体类自动生成 REST CRUD API。</p>
 </div>
 
 <h2>初始化与启动</h2>
-<pre><code><span class="ty">Vostok</span>.Web.init(<span class="kw">new</span> <span class="ty">VKWebConfig</span>()
+<p><code>Vostok.Web.init()</code> 是静态方法，返回 <code>VostokWeb</code> 实例，路由、中间件等注册方法均为链式实例方法。<code>start() / stop()</code> 是静态方法。</p>
+<pre><code><span class="cm">// 方式一：独立初始化（推荐）</span>
+<span class="ty">Vostok</span>.Web.init(<span class="kw">new</span> <span class="ty">VKWebConfig</span>()
     .port(<span class="nu">8080</span>)
     .ioThreads(<span class="nu">2</span>)
     .workerThreads(<span class="nu">16</span>)
-);
-
-<span class="cm">// 注册路由</span>
-<span class="ty">Vostok</span>.Web.get(<span class="st">"/hello"</span>, (req, res) -&gt; res.ok(<span class="st">"Hello!"</span>));
-<span class="ty">Vostok</span>.Web.post(<span class="st">"/users"</span>, (req, res) -&gt; {
-    <span class="ty">String</span> body = req.body();
+)
+.get(<span class="st">"/hello"</span>, (req, res) -&gt; res.text(<span class="st">"Hello!"</span>))
+.post(<span class="st">"/users"</span>, (req, res) -&gt; {
+    <span class="ty">String</span> body = req.bodyText();
     res.status(<span class="nu">201</span>).json(<span class="st">"{\"created\":true}"</span>);
-});
+})
+.gzip()
+.cors();
 
-<span class="ty">Vostok</span>.Web.start();</code></pre>
+<span class="ty">Vostok</span>.Web.start();
+
+<span class="cm">// 方式二：通过 Vostok.init() 统一初始化</span>
+<span class="ty">Vostok</span>.init(cfg -&gt; cfg
+    .webConfig(<span class="kw">new</span> <span class="ty">VKWebConfig</span>().port(<span class="nu">8080</span>))
+    .webSetup(web -&gt; web
+        .get(<span class="st">"/hello"</span>, (req, res) -&gt; res.text(<span class="st">"Hello!"</span>))
+        .gzip()
+        .cors()
+    )
+    .webStart(<span class="kw">true</span>)
+);</code></pre>
 
 <h2>路由</h2>
 
-<h3>基本路由</h3>
-<pre><code><span class="cm">// GET / POST / PUT / DELETE / PATCH</span>
-<span class="ty">Vostok</span>.Web.get(<span class="st">"/items"</span>, handler);
-<span class="ty">Vostok</span>.Web.post(<span class="st">"/items"</span>, handler);
-<span class="ty">Vostok</span>.Web.put(<span class="st">"/items/{id}"</span>, handler);
-<span class="ty">Vostok</span>.Web.delete(<span class="st">"/items/{id}"</span>, handler);
+<h3>HTTP 方法路由</h3>
+<pre><code><span class="ty">VostokWeb</span> web = <span class="ty">Vostok</span>.Web.init(<span class="kw">new</span> <span class="ty">VKWebConfig</span>().port(<span class="nu">8080</span>));
 
-<span class="cm">// 路径参数</span>
-<span class="ty">Vostok</span>.Web.get(<span class="st">"/users/{id}"</span>, (req, res) -&gt; {
-    <span class="ty">String</span> id = req.pathParam(<span class="st">"id"</span>);
+<span class="cm">// 快捷方法：GET / POST</span>
+web.get(<span class="st">"/items"</span>, handler);
+web.post(<span class="st">"/items"</span>, handler);
+
+<span class="cm">// 通用方法：任意 HTTP 方法</span>
+web.route(<span class="st">"PUT"</span>, <span class="st">"/items/{id}"</span>, handler);
+web.route(<span class="st">"DELETE"</span>, <span class="st">"/items/{id}"</span>, handler);
+web.route(<span class="st">"PATCH"</span>, <span class="st">"/items/{id}"</span>, handler);</code></pre>
+
+<h3>路径参数 &amp; 查询参数</h3>
+<pre><code>web.get(<span class="st">"/users/{id}"</span>, (req, res) -&gt; {
+    <span class="ty">String</span> id = req.param(<span class="st">"id"</span>);             <span class="cm">// 路径参数</span>
     res.json(<span class="st">"{\"id\":"</span> + id + <span class="st">"}"</span>);
 });
 
-<span class="cm">// 查询参数</span>
-<span class="ty">Vostok</span>.Web.get(<span class="st">"/search"</span>, (req, res) -&gt; {
-    <span class="ty">String</span> q = req.queryParam(<span class="st">"q"</span>);
-    <span class="kw">int</span> page = req.queryParamInt(<span class="st">"page"</span>, <span class="nu">1</span>);
-    res.ok(<span class="st">"q="</span> + q + <span class="st">" page="</span> + page);
-});</code></pre>
-
-<h3>VKRequest 常用方法</h3>
-<table class="api-table">
-  <thead><tr><th>方法</th><th>说明</th></tr></thead>
-  <tbody>
-    <tr><td><code>body()</code></td><td>原始请求体字符串</td></tr>
-    <tr><td><code>bodyBytes()</code></td><td>原始请求体字节</td></tr>
-    <tr><td><code>json(Class)</code></td><td>将请求体解析为指定类型</td></tr>
-    <tr><td><code>pathParam(name)</code></td><td>路径参数</td></tr>
-    <tr><td><code>queryParam(name)</code></td><td>查询参数字符串</td></tr>
-    <tr><td><code>queryParamInt(name, default)</code></td><td>查询参数整数（含默认值）</td></tr>
-    <tr><td><code>header(name)</code></td><td>请求头</td></tr>
-    <tr><td><code>cookie(name)</code></td><td>Cookie 值</td></tr>
-    <tr><td><code>method()</code></td><td>HTTP 方法（GET/POST/…）</td></tr>
-    <tr><td><code>path()</code></td><td>请求路径</td></tr>
-    <tr><td><code>remoteIp()</code></td><td>客户端 IP</td></tr>
-    <tr><td><code>multipart()</code></td><td>获取文件上传信息</td></tr>
-  </tbody>
-</table>
-
-<h3>VKResponse 常用方法</h3>
-<table class="api-table">
-  <thead><tr><th>方法</th><th>说明</th></tr></thead>
-  <tbody>
-    <tr><td><code>ok(body)</code></td><td>200 + 纯文本</td></tr>
-    <tr><td><code>json(obj)</code></td><td>200 + application/json</td></tr>
-    <tr><td><code>status(code)</code></td><td>设置 HTTP 状态码（链式）</td></tr>
-    <tr><td><code>header(k, v)</code></td><td>设置响应头（链式）</td></tr>
-    <tr><td><code>cookie(name, value)</code></td><td>设置 Cookie（链式）</td></tr>
-    <tr><td><code>redirect(url)</code></td><td>302 重定向</td></tr>
-    <tr><td><code>send(bytes)</code></td><td>发送字节响应</td></tr>
-    <tr><td><code>notFound()</code></td><td>404 响应</td></tr>
-    <tr><td><code>badRequest(msg)</code></td><td>400 响应</td></tr>
-    <tr><td><code>serverError(msg)</code></td><td>500 响应</td></tr>
-  </tbody>
-</table>
-
-<h2>中间件</h2>
-<pre><code><span class="cm">// 全局中间件</span>
-<span class="ty">Vostok</span>.Web.use((req, res, next) -&gt; {
-    <span class="ty">String</span> token = req.header(<span class="st">"Authorization"</span>);
-    <span class="kw">if</span> (token == <span class="kw">null</span>) { res.status(<span class="nu">401</span>).json(<span class="st">"{\"error\":\"unauthorized\"}"</span>); <span class="kw">return</span>; }
-    next.handle();  <span class="cm">// 放行</span>
-});</code></pre>
-
-<h3>CORS</h3>
-<pre><code><span class="cm">// 快捷开启（允许所有来源）</span>
-<span class="ty">Vostok</span>.Web.cors();
-
-<span class="cm">// 自定义</span>
-<span class="ty">Vostok</span>.Web.cors(<span class="kw">new</span> <span class="ty">VKCorsConfig</span>()
-    .allowedOrigins(<span class="st">"https://example.com"</span>)
-    .allowedMethods(<span class="st">"GET"</span>, <span class="st">"POST"</span>)
-    .allowCredentials(<span class="kw">true</span>));</code></pre>
-
-<h3>GZIP</h3>
-<pre><code><span class="ty">Vostok</span>.Web.gzip();  <span class="cm">// 默认配置（&gt;1KB 自动压缩）</span>
-<span class="cm">// 或自定义阈值</span>
-<span class="ty">Vostok</span>.Web.gzip(<span class="kw">new</span> <span class="ty">VKGzipConfig</span>().minSizeBytes(<span class="nu">512</span>));</code></pre>
-
-<h2>限流</h2>
-<pre><code><span class="cm">// 全局限流（每秒最多 1000 请求）</span>
-<span class="ty">Vostok</span>.Web.rateLimit(<span class="kw">new</span> <span class="ty">VKRateLimitConfig</span>().qps(<span class="nu">1000</span>));
-
-<span class="cm">// 单路由限流</span>
-<span class="ty">Vostok</span>.Web.rateLimit(<span class="ty">VKHttpMethod</span>.POST, <span class="st">"/login"</span>,
-    <span class="kw">new</span> <span class="ty">VKRateLimitConfig</span>().qps(<span class="nu">10</span>).rejectStatus(<span class="nu">429</span>));</code></pre>
-
-<h2>静态资源</h2>
-<pre><code><span class="ty">Vostok</span>.Web.staticDir(<span class="st">"/static"</span>, <span class="st">"./public"</span>);</code></pre>
-
-<h2>自动 CRUD API</h2>
-<p>扫描 <code>@VKEntity</code> 实体类，自动为每个实体生成标准 REST 接口。</p>
-<pre><code><span class="cm">// 扫描默认包</span>
-<span class="ty">Vostok</span>.Web.autoCrudApi();
-
-<span class="cm">// 指定包 + RESTful 风格</span>
-<span class="ty">Vostok</span>.Web.autoCrudApi(<span class="ty">VKCrudStyle</span>.RESTFUL, <span class="st">"com.example.entity"</span>);</code></pre>
-
-<p>例如 <code>User</code> 实体，自动生成：</p>
-<ul>
-  <li><code>GET /users</code> — 查询全部</li>
-  <li><code>GET /users/{id}</code> — 按主键查询</li>
-  <li><code>POST /users</code> — 新增</li>
-  <li><code>PUT /users/{id}</code> — 更新</li>
-  <li><code>DELETE /users/{id}</code> — 删除</li>
-</ul>
-
-<h2>WebSocket</h2>
-<pre><code><span class="ty">Vostok</span>.Web.websocket(<span class="st">"/ws/chat"</span>, <span class="kw">new</span> <span class="ty">VKWebSocketHandler</span>() {
-    <span class="kw">public void</span> <span class="fn">onOpen</span>(<span class="ty">String</span> sessionId) {
-        <span class="ty">System</span>.out.println(<span class="st">"connected: "</span> + sessionId);
-    }
-    <span class="kw">public void</span> <span class="fn">onMessage</span>(<span class="ty">String</span> sessionId, <span class="ty">String</span> text) {
-        <span class="cm">// 广播给同 path 所有连接</span>
-        <span class="ty">Vostok</span>.Web.websocketBroadcast(<span class="st">"/ws/chat"</span>, text);
-    }
-    <span class="kw">public void</span> <span class="fn">onClose</span>(<span class="ty">String</span> sessionId) {}
+web.get(<span class="st">"/search"</span>, (req, res) -&gt; {
+    <span class="ty">String</span> q    = req.queryParam(<span class="st">"q"</span>);          <span class="cm">// 查询参数（String）</span>
+    <span class="ty">String</span> page = req.queryParam(<span class="st">"page"</span>);       <span class="cm">// 需自行转型</span>
+    <span class="kw">int</span> pageNum = page != <span class="kw">null</span> ? <span class="ty">Integer</span>.parseInt(page) : <span class="nu">1</span>;
+    res.text(<span class="st">"q="</span> + q + <span class="st">" page="</span> + pageNum);
 });
 
-<span class="cm">// 按房间广播</span>
-<span class="ty">Vostok</span>.Web.websocketBroadcastRoom(<span class="st">"/ws/chat"</span>, <span class="st">"room-1"</span>, <span class="st">"hello room"</span>);
+<span class="cm">// 通配路径：匹配 /files/a/b/c</span>
+web.get(<span class="st">"/files/{*path}"</span>, (req, res) -&gt; {
+    <span class="ty">String</span> path = req.param(<span class="st">"path"</span>);
+    res.text(<span class="st">"path="</span> + path);
+});</code></pre>
 
-<span class="cm">// 按分组广播</span>
-<span class="ty">Vostok</span>.Web.websocketBroadcastGroup(<span class="st">"/ws/chat"</span>, <span class="st">"vip"</span>, <span class="st">"vip msg"</span>);</code></pre>
+<h3>VKHandler 接口</h3>
+<pre><code><span class="cm">// 函数式接口，可用 lambda 实现</span>
+<span class="an">@FunctionalInterface</span>
+<span class="kw">public interface</span> <span class="ty">VKHandler</span> {
+    <span class="kw">void</span> handle(<span class="ty">VKRequest</span> req, <span class="ty">VKResponse</span> res);
+}</code></pre>
+
+<h2>VKRequest — 请求对象</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>method()</code></td><td><code>String</code></td><td>HTTP 方法，如 "GET"、"POST"</td></tr>
+    <tr><td><code>path()</code></td><td><code>String</code></td><td>请求路径，如 "/users/1"</td></tr>
+    <tr><td><code>query()</code></td><td><code>String</code></td><td>原始查询字符串，如 "page=1&amp;size=10"</td></tr>
+    <tr><td><code>version()</code></td><td><code>String</code></td><td>HTTP 版本，如 "HTTP/1.1"</td></tr>
+    <tr><td><code>header(name)</code></td><td><code>String</code></td><td>请求头（大小写不敏感）</td></tr>
+    <tr><td><code>headers()</code></td><td><code>Map&lt;String,String&gt;</code></td><td>所有请求头（只读）</td></tr>
+    <tr><td><code>body()</code></td><td><code>byte[]</code></td><td>原始请求体字节</td></tr>
+    <tr><td><code>bodyText()</code></td><td><code>String</code></td><td>请求体 UTF-8 字符串</td></tr>
+    <tr><td><code>param(name)</code></td><td><code>String</code></td><td>路径参数，如 <code>{id}</code> 对应 <code>param("id")</code></td></tr>
+    <tr><td><code>queryParam(name)</code></td><td><code>String</code></td><td>查询参数（URL 解码后）</td></tr>
+    <tr><td><code>queryParams()</code></td><td><code>Map&lt;String,String&gt;</code></td><td>所有查询参数</td></tr>
+    <tr><td><code>cookie(name)</code></td><td><code>String</code></td><td>Cookie 值</td></tr>
+    <tr><td><code>cookies()</code></td><td><code>Map&lt;String,String&gt;</code></td><td>所有 Cookie</td></tr>
+    <tr><td><code>traceId()</code></td><td><code>String</code></td><td>请求追踪 ID</td></tr>
+    <tr><td><code>remoteAddress()</code></td><td><code>InetSocketAddress</code></td><td>客户端地址（含 IP 和端口）</td></tr>
+    <tr><td><code>keepAlive()</code></td><td><code>boolean</code></td><td>是否为 Keep-Alive 连接</td></tr>
+    <tr><td><code>isMultipart()</code></td><td><code>boolean</code></td><td>是否为 multipart/form-data 请求</td></tr>
+    <tr><td><code>formField(name)</code></td><td><code>String</code></td><td>表单字段值</td></tr>
+    <tr><td><code>formFields()</code></td><td><code>Map&lt;String,String&gt;</code></td><td>所有表单字段</td></tr>
+    <tr><td><code>file(name)</code></td><td><code>VKUploadedFile</code></td><td>获取第一个上传文件</td></tr>
+    <tr><td><code>files(name)</code></td><td><code>List&lt;VKUploadedFile&gt;</code></td><td>获取同名所有上传文件</td></tr>
+    <tr><td><code>allFiles()</code></td><td><code>Collection&lt;VKUploadedFile&gt;</code></td><td>所有上传文件</td></tr>
+  </tbody>
+</table>
+
+<h2>VKResponse — 响应对象</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>status(int)</code></td><td><code>VKResponse</code></td><td>设置 HTTP 状态码（链式）</td></tr>
+    <tr><td><code>status()</code></td><td><code>int</code></td><td>获取当前状态码（默认 200）</td></tr>
+    <tr><td><code>header(name, value)</code></td><td><code>VKResponse</code></td><td>设置响应头（链式）</td></tr>
+    <tr><td><code>headers()</code></td><td><code>Map&lt;String,String&gt;</code></td><td>获取所有响应头</td></tr>
+    <tr><td><code>text(String)</code></td><td><code>VKResponse</code></td><td>设置纯文本响应体（Content-Type: text/plain; charset=utf-8）</td></tr>
+    <tr><td><code>json(String)</code></td><td><code>VKResponse</code></td><td>设置 JSON 字符串响应体（Content-Type: application/json; charset=utf-8）</td></tr>
+    <tr><td><code>body(byte[])</code></td><td><code>VKResponse</code></td><td>设置原始字节响应体</td></tr>
+    <tr><td><code>body()</code></td><td><code>byte[]</code></td><td>获取响应体字节</td></tr>
+    <tr><td><code>cookie(name, value)</code></td><td><code>VKResponse</code></td><td>设置简单 Cookie（链式）</td></tr>
+    <tr><td><code>cookie(VKCookie)</code></td><td><code>VKResponse</code></td><td>设置带完整属性的 Cookie（链式）</td></tr>
+    <tr><td><code>deleteCookie(name)</code></td><td><code>VKResponse</code></td><td>删除 Cookie（设置 Max-Age=0，链式）</td></tr>
+    <tr><td><code>file(Path, long)</code></td><td><code>VKResponse</code></td><td>以文件方式响应（零拷贝传输）</td></tr>
+    <tr><td><code>sseResponse(Consumer&lt;VKSseEmitter&gt;)</code></td><td><code>VKResponse</code></td><td>切换为 SSE 模式（框架内部使用）</td></tr>
+  </tbody>
+</table>
+
+<h3>常用响应示例</h3>
+<pre><code><span class="cm">// 200 纯文本</span>
+res.text(<span class="st">"Hello World"</span>);
+
+<span class="cm">// 200 JSON 字符串</span>
+res.json(<span class="st">"{\"code\":0,\"msg\":\"ok\"}"</span>);
+
+<span class="cm">// 自定义状态码 + JSON</span>
+res.status(<span class="nu">201</span>).json(<span class="st">"{\"created\":true}"</span>);
+
+<span class="cm">// 返回二进制内容（图片等）</span>
+res.status(<span class="nu">200</span>)
+   .header(<span class="st">"Content-Type"</span>, <span class="st">"image/png"</span>)
+   .body(imageBytes);
+
+<span class="cm">// 404</span>
+res.status(<span class="nu">404</span>).text(<span class="st">"Not Found"</span>);
+
+<span class="cm">// 302 重定向</span>
+res.status(<span class="nu">302</span>).header(<span class="st">"Location"</span>, <span class="st">"/login"</span>).text(<span class="st">""</span>);</code></pre>
+
+<h2>Cookie 操作</h2>
+<pre><code><span class="cm">// 简单 Cookie</span>
+res.cookie(<span class="st">"token"</span>, <span class="st">"abc123"</span>);
+
+<span class="cm">// 带完整属性的 Cookie</span>
+res.cookie(<span class="kw">new</span> <span class="ty">VKCookie</span>(<span class="st">"session"</span>, <span class="st">"xyz"</span>)
+    .httpOnly(<span class="kw">true</span>)
+    .secure(<span class="kw">true</span>)
+    .maxAge(<span class="nu">3600</span>)
+    .path(<span class="st">"/"</span>)
+    .sameSite(<span class="ty">VKCookie</span>.<span class="ty">SameSite</span>.LAX)
+);
+
+<span class="cm">// 删除 Cookie</span>
+res.deleteCookie(<span class="st">"session"</span>);</code></pre>
+
+<h2>文件上传</h2>
+<pre><code>web.post(<span class="st">"/upload"</span>, (req, res) -&gt; {
+    <span class="kw">if</span> (!req.isMultipart()) {
+        res.status(<span class="nu">400</span>).text(<span class="st">"Not a multipart request"</span>);
+        <span class="kw">return</span>;
+    }
+
+    <span class="cm">// 获取单个文件</span>
+    <span class="ty">VKUploadedFile</span> file = req.file(<span class="st">"avatar"</span>);
+    <span class="kw">if</span> (file != <span class="kw">null</span>) {
+        <span class="ty">System</span>.out.println(<span class="st">"文件名: "</span> + file.fileName());
+        <span class="ty">System</span>.out.println(<span class="st">"类型: "</span>  + file.contentType());
+        <span class="ty">System</span>.out.println(<span class="st">"大小: "</span>  + file.size());
+        <span class="ty">System</span>.out.println(<span class="st">"内存: "</span>  + file.inMemory());
+
+        <span class="cm">// 读取内容</span>
+        <span class="kw">byte</span>[] bytes = file.bytes();
+
+        <span class="cm">// 保存到磁盘</span>
+        file.transferTo(<span class="ty">Path</span>.of(<span class="st">"/uploads/"</span> + file.fileName()));
+    }
+
+    <span class="cm">// 同名多文件</span>
+    <span class="ty">List</span>&lt;<span class="ty">VKUploadedFile</span>&gt; images = req.files(<span class="st">"images"</span>);
+
+    <span class="cm">// 表单字段</span>
+    <span class="ty">String</span> desc = req.formField(<span class="st">"description"</span>);
+
+    res.json(<span class="st">"{\"uploaded\":"</span> + (file != <span class="kw">null</span>) + <span class="st">"}"</span>);
+});</code></pre>
+
+<h2>中间件</h2>
+<pre><code><span class="cm">// 全局中间件（按注册顺序执行）</span>
+web.use((req, res, chain) -&gt; {
+    <span class="ty">String</span> token = req.header(<span class="st">"Authorization"</span>);
+    <span class="kw">if</span> (token == <span class="kw">null</span>) {
+        res.status(<span class="nu">401</span>).json(<span class="st">"{\"error\":\"unauthorized\"}"</span>);
+        <span class="kw">return</span>;   <span class="cm">// 不调用 chain.next() 即拦截请求</span>
+    }
+    chain.next(req, res);  <span class="cm">// 放行到下一个中间件或处理器</span>
+});
+
+<span class="cm">// 请求日志中间件示例</span>
+web.use((req, res, chain) -&gt; {
+    <span class="kw">long</span> start = <span class="ty">System</span>.currentTimeMillis();
+    chain.next(req, res);
+    <span class="ty">System</span>.out.printf(<span class="st">"%s %s → %d  (%dms)%n"</span>,
+        req.method(), req.path(), res.status(),
+        <span class="ty">System</span>.currentTimeMillis() - start);
+});</code></pre>
+
+<div class="callout">
+  <div class="callout-title">说明</div>
+  <code>VKMiddleware</code> 为函数式接口：<code>void handle(VKRequest req, VKResponse res, VKChain chain)</code>。<br>
+  调用 <code>chain.next(req, res)</code> 将请求传递给下一个处理器；不调用则直接截断请求。
+</div>
+
+<h2>CORS</h2>
+<pre><code><span class="cm">// 快捷开启（允许所有来源，默认方法：GET/POST/PUT/DELETE/OPTIONS/PATCH）</span>
+web.cors();
+
+<span class="cm">// 自定义 CORS 配置</span>
+web.cors(<span class="kw">new</span> <span class="ty">VKCorsConfig</span>()
+    .allowOrigins(<span class="st">"https://example.com"</span>, <span class="st">"https://app.example.com"</span>)
+    .allowMethods(<span class="st">"GET, POST, PUT, DELETE"</span>)
+    .allowHeaders(<span class="st">"Content-Type, Authorization"</span>)
+    .allowCredentials(<span class="kw">true</span>)
+    .maxAge(<span class="nu">3600</span>)               <span class="cm">// Preflight 缓存秒数</span>
+    .exposeHeaders(<span class="st">"X-Request-Id"</span>)
+);</code></pre>
+
+<h2>GZIP 压缩</h2>
+<pre><code><span class="cm">// 默认配置（响应 &gt;= 256 字节，且 Content-Type 为 text/* / application/json / application/xml 时压缩）</span>
+web.gzip();
+
+<span class="cm">// 自定义配置</span>
+web.gzip(<span class="kw">new</span> <span class="ty">VKGzipConfig</span>()
+    .minBytes(<span class="nu">512</span>)               <span class="cm">// 触发压缩的最小字节数</span>
+    .compressibleTypes(<span class="ty">List</span>.of(<span class="st">"text/"</span>, <span class="st">"application/json"</span>))
+);</code></pre>
+
+<h2>限流（令牌桶）</h2>
+<pre><code><span class="cm">// 全局限流：每秒最多 1000 个请求（按客户端 IP 区分）</span>
+web.rateLimit(<span class="kw">new</span> <span class="ty">VKRateLimitConfig</span>()
+    .capacity(<span class="nu">1000</span>)              <span class="cm">// 令牌桶容量</span>
+    .refillTokens(<span class="nu">1000</span>)          <span class="cm">// 每次补充令牌数</span>
+    .refillPeriodMs(<span class="nu">1000</span>)        <span class="cm">// 补充周期（ms）</span>
+    .keyStrategy(<span class="ty">VKRateLimitKeyStrategy</span>.IP)  <span class="cm">// 限流 key 策略</span>
+    .rejectStatus(<span class="nu">429</span>)
+    .rejectBody(<span class="st">"Too Many Requests"</span>)
+);
+
+<span class="cm">// 针对指定路由限流</span>
+web.rateLimit(<span class="ty">VKHttpMethod</span>.POST, <span class="st">"/login"</span>,
+    <span class="kw">new</span> <span class="ty">VKRateLimitConfig</span>()
+        .capacity(<span class="nu">10</span>)
+        .refillTokens(<span class="nu">10</span>)
+        .refillPeriodMs(<span class="nu">60000</span>)   <span class="cm">// 每分钟 10 次</span>
+        .rejectStatus(<span class="nu">429</span>)
+);
+
+<span class="cm">// 按自定义 key 限流（如用户 ID）</span>
+web.rateLimit(<span class="kw">new</span> <span class="ty">VKRateLimitConfig</span>()
+    .capacity(<span class="nu">100</span>)
+    .refillTokens(<span class="nu">100</span>)
+    .refillPeriodMs(<span class="nu">1000</span>)
+    .keyStrategy(<span class="ty">VKRateLimitKeyStrategy</span>.CUSTOM)
+    .customKeyResolver(req -&gt; req.header(<span class="st">"X-User-Id"</span>))
+);</code></pre>
+
+<h3>VKRateLimitKeyStrategy 枚举</h3>
+<table class="api-table">
+  <thead><tr><th>枚举值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>IP</code></td><td>按客户端 IP 限流（默认）</td></tr>
+    <tr><td><code>TRACE_ID</code></td><td>按请求追踪 ID 限流</td></tr>
+    <tr><td><code>HEADER</code></td><td>按指定请求头值限流，配合 <code>headerName()</code> 使用</td></tr>
+    <tr><td><code>CUSTOM</code></td><td>自定义 key，配合 <code>customKeyResolver()</code> 使用</td></tr>
+  </tbody>
+</table>
+
+<h2>静态资源</h2>
+<pre><code><span class="cm">// 将 URL /static/** 映射到本地 ./public 目录</span>
+web.staticDir(<span class="st">"/static"</span>, <span class="st">"./public"</span>);
+
+<span class="cm">// 示例：访问 /static/js/app.js → 读取 ./public/js/app.js</span></code></pre>
+
+<h2>自动 CRUD API</h2>
+<p>扫描 <code>@VKEntity</code> 实体类，自动为每个实体生成标准 REST 接口（依赖 Data 模块已初始化）。</p>
+<pre><code><span class="cm">// 使用 Data 模块扫描的默认包（无需再传包名）</span>
+web.autoCrudApi();
+
+<span class="cm">// 指定包 + RESTful 风格（默认）</span>
+web.autoCrudApi(<span class="ty">VKCrudStyle</span>.RESTFUL, <span class="st">"com.example.entity"</span>);
+
+<span class="cm">// 传统风格（/entity/list、/entity/add 等）</span>
+web.autoCrudApi(<span class="ty">VKCrudStyle</span>.TRADITIONAL, <span class="st">"com.example.entity"</span>);</code></pre>
+
+<p>以 <code>User</code> 实体（表名 <code>users</code>）为例，RESTFUL 模式自动生成：</p>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>路径</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET</code></td><td><code>/users</code></td><td>查询全部</td></tr>
+    <tr><td><code>GET</code></td><td><code>/users/{id}</code></td><td>按主键查询</td></tr>
+    <tr><td><code>POST</code></td><td><code>/users</code></td><td>新增</td></tr>
+    <tr><td><code>PUT</code></td><td><code>/users/{id}</code></td><td>按主键更新</td></tr>
+    <tr><td><code>DELETE</code></td><td><code>/users/{id}</code></td><td>按主键删除</td></tr>
+  </tbody>
+</table>
+
+<h2>WebSocket</h2>
+<h3>基本用法</h3>
+<pre><code>web.websocket(<span class="st">"/ws/chat"</span>, <span class="kw">new</span> <span class="ty">VKWebSocketHandler</span>() {
+    <span class="an">@Override</span>
+    <span class="kw">public void</span> onOpen(<span class="ty">VKWebSocketSession</span> session) {
+        <span class="ty">System</span>.out.println(<span class="st">"connected: "</span> + session.id());
+        session.sendText(<span class="st">"欢迎加入！"</span>);
+    }
+
+    <span class="an">@Override</span>
+    <span class="kw">public void</span> onText(<span class="ty">VKWebSocketSession</span> session, <span class="ty">String</span> text) {
+        <span class="cm">// 向当前路径所有连接广播</span>
+        <span class="ty">Vostok</span>.Web.websocketBroadcast(<span class="st">"/ws/chat"</span>, text);
+    }
+
+    <span class="an">@Override</span>
+    <span class="kw">public void</span> onBinary(<span class="ty">VKWebSocketSession</span> session, <span class="kw">byte</span>[] data) {
+        session.sendBinary(data);
+    }
+
+    <span class="an">@Override</span>
+    <span class="kw">public void</span> onClose(<span class="ty">VKWebSocketSession</span> session, <span class="kw">int</span> code, <span class="ty">String</span> reason) {
+        <span class="ty">System</span>.out.println(<span class="st">"closed: "</span> + session.id() + <span class="st">" code="</span> + code);
+    }
+
+    <span class="an">@Override</span>
+    <span class="kw">public void</span> onError(<span class="ty">VKWebSocketSession</span> session, <span class="ty">Throwable</span> error) {
+        <span class="ty">System</span>.err.println(<span class="st">"error: "</span> + error.getMessage());
+    }
+});</code></pre>
+
+<h3>房间与分组广播</h3>
+<pre><code><span class="cm">// 连接加入房间 / 分组（在 onOpen 或消息处理中调用）</span>
+session.joinRoom(<span class="st">"room-1"</span>);
+session.joinGroup(<span class="st">"vip"</span>);
+
+<span class="cm">// 会话自行广播（返回发送成功的连接数）</span>
+session.broadcastRoom(<span class="st">"room-1"</span>, <span class="st">"hello room"</span>);
+session.broadcastGroup(<span class="st">"vip"</span>, <span class="st">"vip msg"</span>);
+session.broadcastRoomAndGroup(<span class="st">"room-1"</span>, <span class="st">"vip"</span>, <span class="st">"msg"</span>);
+
+<span class="cm">// 全局静态广播（可在任意线程调用）</span>
+<span class="ty">Vostok</span>.Web.websocketBroadcast(<span class="st">"/ws/chat"</span>, <span class="st">"全员通知"</span>);
+<span class="ty">Vostok</span>.Web.websocketBroadcastRoom(<span class="st">"/ws/chat"</span>, <span class="st">"room-1"</span>, <span class="st">"房间通知"</span>);
+<span class="ty">Vostok</span>.Web.websocketBroadcastGroup(<span class="st">"/ws/chat"</span>, <span class="st">"vip"</span>, <span class="st">"VIP 通知"</span>);
+<span class="ty">Vostok</span>.Web.websocketBroadcastRoomAndGroup(<span class="st">"/ws/chat"</span>, <span class="st">"room-1"</span>, <span class="st">"vip"</span>, <span class="st">"msg"</span>);
+
+<span class="cm">// 二进制广播</span>
+<span class="ty">Vostok</span>.Web.websocketBroadcastBinary(<span class="st">"/ws/chat"</span>, data);
+<span class="ty">Vostok</span>.Web.websocketBroadcastRoomBinary(<span class="st">"/ws/chat"</span>, <span class="st">"room-1"</span>, data);
+<span class="ty">Vostok</span>.Web.websocketBroadcastGroupBinary(<span class="st">"/ws/chat"</span>, <span class="st">"vip"</span>, data);</code></pre>
+
+<h3>WebSocket 握手鉴权</h3>
+<pre><code>web.websocket(<span class="st">"/ws/secure"</span>, <span class="kw">new</span> <span class="ty">VKWebSocketConfig</span>()
+    .handshakeAuthenticator(ctx -&gt; {
+        <span class="ty">String</span> token = ctx.queryParam(<span class="st">"token"</span>);
+        <span class="kw">if</span> (token == <span class="kw">null</span> || !isValid(token)) {
+            <span class="kw">return</span> <span class="ty">VKWsAuthResult</span>.reject(<span class="nu">401</span>, <span class="st">"Unauthorized"</span>);
+        }
+        <span class="cm">// 通过后，attributes 会写入 session，可用 session.getAttribute() 获取</span>
+        <span class="kw">return</span> <span class="ty">VKWsAuthResult</span>.allow(<span class="ty">Map</span>.of(<span class="st">"userId"</span>, parseUserId(token)));
+    })
+    .pingIntervalMs(<span class="nu">30000</span>)
+    .idleTimeoutMs(<span class="nu">120000</span>),
+    handler
+);</code></pre>
+
+<h3>VKWebSocketSession 方法</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>id()</code></td><td>会话唯一 ID</td></tr>
+    <tr><td><code>path()</code></td><td>WebSocket 端点路径</td></tr>
+    <tr><td><code>traceId()</code></td><td>请求追踪 ID</td></tr>
+    <tr><td><code>remoteAddress()</code></td><td>客户端地址（InetSocketAddress）</td></tr>
+    <tr><td><code>isOpen()</code></td><td>连接是否仍开放</td></tr>
+    <tr><td><code>sendText(String)</code></td><td>向此会话发送文本帧</td></tr>
+    <tr><td><code>sendBinary(byte[])</code></td><td>向此会话发送二进制帧</td></tr>
+    <tr><td><code>ping(byte[])</code></td><td>发送 Ping 帧</td></tr>
+    <tr><td><code>close()</code></td><td>正常关闭（code=1000）</td></tr>
+    <tr><td><code>close(int code, String reason)</code></td><td>以指定 code 关闭连接</td></tr>
+    <tr><td><code>joinRoom(String)</code></td><td>加入指定房间，返回是否成功</td></tr>
+    <tr><td><code>leaveRoom(String)</code></td><td>离开指定房间</td></tr>
+    <tr><td><code>joinGroup(String)</code></td><td>加入指定分组</td></tr>
+    <tr><td><code>leaveGroup(String)</code></td><td>离开指定分组</td></tr>
+    <tr><td><code>broadcastRoom(room, msg)</code></td><td>广播文本到指定房间，返回发送数</td></tr>
+    <tr><td><code>broadcastGroup(group, msg)</code></td><td>广播文本到指定分组，返回发送数</td></tr>
+    <tr><td><code>broadcastRoomAndGroup(room, group, msg)</code></td><td>广播到房间且属于分组的连接</td></tr>
+    <tr><td><code>setAttribute(key, value)</code></td><td>设置会话属性（链式）</td></tr>
+    <tr><td><code>getAttribute(key)</code></td><td>获取会话属性</td></tr>
+    <tr><td><code>getAttribute(key, Class&lt;T&gt;)</code></td><td>获取会话属性并转型</td></tr>
+    <tr><td><code>removeAttribute(key)</code></td><td>移除会话属性</td></tr>
+    <tr><td><code>hasAttribute(key)</code></td><td>判断属性是否存在</td></tr>
+    <tr><td><code>attributes()</code></td><td>获取所有属性（只读 Map）</td></tr>
+  </tbody>
+</table>
 
 <h2>Server-Sent Events (SSE)</h2>
-<pre><code><span class="ty">Vostok</span>.Web.sse(<span class="st">"/events"</span>, (req, emitter) -&gt; {
-    emitter.send(<span class="st">"data: connected\n\n"</span>);
-    <span class="cm">// emitter.close() 关闭流</span>
+<pre><code><span class="cm">// 注册 SSE 端点：handler 在建立连接时调用，emitter 可保存到集合用于后续推送</span>
+web.sse(<span class="st">"/events"</span>, (req, emitter) -&gt; {
+    <span class="cm">// 发送仅含 data 的事件</span>
+    emitter.send(<span class="st">"connected"</span>);
+
+    <span class="cm">// 发送带 event 类型的事件</span>
+    emitter.send(<span class="st">"update"</span>, <span class="st">"{\"count\":1}"</span>);
+
+    <span class="cm">// 发送完整事件（event + data + id）</span>
+    emitter.send(<span class="st">"update"</span>, <span class="st">"{\"count\":2}"</span>, <span class="st">"evt-001"</span>);
+
+    <span class="cm">// 检查连接状态</span>
+    <span class="kw">if</span> (emitter.isOpen()) {
+        emitter.send(<span class="st">"alive"</span>, <span class="st">"ping"</span>);
+    }
+
+    <span class="cm">// 主动关闭（幂等，多次调用安全）</span>
+    emitter.close();
 });</code></pre>
 
-<h2>健康检查 / 指标</h2>
-<pre><code><span class="ty">Vostok</span>.Web.health();           <span class="cm">// GET /health</span>
-<span class="ty">Vostok</span>.Web.health(<span class="st">"/_ping"</span>);  <span class="cm">// 自定义路径</span>
-<span class="ty">Vostok</span>.Web.metrics();          <span class="cm">// GET /metrics</span></code></pre>
+<div class="callout">
+  <div class="callout-title">SSE 事件格式说明</div>
+  框架自动处理 SSE 协议格式，调用 <code>emitter.send(data)</code> 时不需要手动拼 <code>"data: ...\n\n"</code>，框架会按 RFC 8895 格式化。多行 data 会自动按行分割。
+</div>
+
+<h2>HTTPS / TLS</h2>
+<pre><code><span class="ty">Vostok</span>.Web.init(<span class="kw">new</span> <span class="ty">VKWebConfig</span>()
+    .port(<span class="nu">8443</span>)
+    .tls(<span class="kw">new</span> <span class="ty">VKTlsConfig</span>()
+        .keyStorePath(<span class="st">"/path/to/server.p12"</span>)       <span class="cm">// KeyStore 文件路径（必填）</span>
+        .keyStorePassword(<span class="st">"changeit"</span>)              <span class="cm">// KeyStore 密码（必填）</span>
+        .keyStoreType(<span class="st">"PKCS12"</span>)                    <span class="cm">// 默认 PKCS12，也支持 JKS</span>
+        .sslProtocol(<span class="st">"TLS"</span>)                        <span class="cm">// 默认 TLS</span>
+        .enabledProtocols(<span class="st">"TLSv1.2"</span>, <span class="st">"TLSv1.3"</span>)   <span class="cm">// 指定启用的协议版本</span>
+        .clientAuth(<span class="kw">false</span>)                          <span class="cm">// 是否要求客户端证书</span>
+    )
+);</code></pre>
+
+<h2>健康检查 &amp; Metrics</h2>
+<pre><code><span class="cm">// 内置健康检查端点：GET /actuator/health</span>
+<span class="cm">// 返回：{"status":"UP","connections":42}</span>
+web.health();
+
+<span class="cm">// 自定义路径</span>
+web.health(<span class="st">"/_ping"</span>);
+
+<span class="cm">// 内置 Metrics 端点：GET /actuator/metrics</span>
+<span class="cm">// 返回：{"requests":1000,"errors":2,"activeConnections":42,"avgResponseMs":5.2}</span>
+web.metrics();
+
+<span class="cm">// 自定义路径</span>
+web.metrics(<span class="st">"/admin/metrics"</span>);</code></pre>
 
 <h2>错误处理</h2>
-<pre><code><span class="ty">Vostok</span>.Web.error((req, res, ex) -&gt; {
-    res.status(<span class="nu">500</span>).json(<span class="st">"{\"error\":\""</span> + ex.getMessage() + <span class="st">"\"}"</span>);
+<pre><code><span class="cm">// VKErrorHandler 签名：handle(Throwable error, VKRequest req, VKResponse res)</span>
+web.error((error, req, res) -&gt; {
+    <span class="ty">System</span>.err.println(<span class="st">"Error on "</span> + req.path() + <span class="st">": "</span> + error.getMessage());
+    res.status(<span class="nu">500</span>).json(
+        <span class="st">"{\"error\":\""</span> + error.getMessage() + <span class="st">"\"}"</span>
+    );
 });</code></pre>
+
+<h2>生命周期</h2>
+<pre><code><span class="cm">// 启动服务器（阻塞直到服务器绑定端口完成）</span>
+<span class="ty">Vostok</span>.Web.start();
+
+<span class="cm">// 检查是否已启动</span>
+<span class="kw">boolean</span> running = <span class="ty">Vostok</span>.Web.started();
+
+<span class="cm">// 获取实际监听端口（配置 port=0 时由 OS 分配）</span>
+<span class="kw">int</span> port = <span class="ty">Vostok</span>.Web.port();
+
+<span class="cm">// 停止服务器</span>
+<span class="ty">Vostok</span>.Web.stop();</code></pre>
 
 <h2>配置参数</h2>
 <table class="config-table">
-  <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+  <thead>
+    <tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr>
+  </thead>
   <tbody>
-    <tr><td class="param-name">port</td><td>int</td><td>8080</td><td>监听端口</td></tr>
-    <tr><td class="param-name">ioThreads</td><td>int</td><td>CPU核数</td><td>NIO Selector 线程数</td></tr>
-    <tr><td class="param-name">workerThreads</td><td>int</td><td>CPU×4</td><td>业务处理线程池大小</td></tr>
-    <tr><td class="param-name">backlog</td><td>int</td><td>1024</td><td>TCP 连接队列</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">基础</td></tr>
+    <tr><td class="param-name">port</td><td>int</td><td>8080</td><td>监听端口（0 表示随机分配）</td></tr>
+    <tr><td class="param-name">ioThreads</td><td>int</td><td>1</td><td>NIO Selector 线程数</td></tr>
+    <tr><td class="param-name">workerThreads</td><td>int</td><td>CPU核数×2（最小2）</td><td>业务处理线程池大小</td></tr>
+    <tr><td class="param-name">workerQueueSize</td><td>int</td><td>10000</td><td>Worker 任务队列容量</td></tr>
+    <tr><td class="param-name">backlog</td><td>int</td><td>1024</td><td>TCP 连接队列长度</td></tr>
     <tr><td class="param-name">maxConnections</td><td>int</td><td>10000</td><td>最大并发连接数</td></tr>
-    <tr><td class="param-name">maxBodyBytes</td><td>int</td><td>10MB</td><td>最大请求体大小</td></tr>
-    <tr><td class="param-name">keepAliveTimeoutMs</td><td>long</td><td>30000</td><td>Keep-Alive 超时（ms）</td></tr>
-    <tr><td class="param-name">readTimeoutMs</td><td>long</td><td>10000</td><td>读取超时（ms）</td></tr>
-    <tr><td class="param-name">accessLogEnabled</td><td>boolean</td><td>false</td><td>开启访问日志</td></tr>
-    <tr><td class="param-name">multipartEnabled</td><td>boolean</td><td>true</td><td>允许文件上传</td></tr>
-    <tr><td class="param-name">websocketEnabled</td><td>boolean</td><td>true</td><td>允许 WebSocket</td></tr>
-    <tr><td class="param-name">tlsConfig</td><td>VKTlsConfig</td><td>null</td><td>HTTPS TLS 配置</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">HTTP</td></tr>
+    <tr><td class="param-name">readBufferSize</td><td>int</td><td>16384</td><td>读缓冲区大小（字节）</td></tr>
+    <tr><td class="param-name">maxHeaderBytes</td><td>int</td><td>32768</td><td>请求头最大字节数</td></tr>
+    <tr><td class="param-name">maxBodyBytes</td><td>int</td><td>4194304 (4MB)</td><td>请求体最大字节数</td></tr>
+    <tr><td class="param-name">keepAliveTimeoutMs</td><td>int</td><td>30000</td><td>Keep-Alive 连接超时（ms）</td></tr>
+    <tr><td class="param-name">readTimeoutMs</td><td>int</td><td>15000</td><td>读取超时（ms）</td></tr>
+    <tr><td class="param-name">accessLogEnabled</td><td>boolean</td><td>true</td><td>是否开启访问日志</td></tr>
+    <tr><td class="param-name">accessLogQueueSize</td><td>int</td><td>8192</td><td>访问日志异步队列大小</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">文件上传（Multipart）</td></tr>
+    <tr><td class="param-name">multipartEnabled</td><td>boolean</td><td>true</td><td>是否允许 multipart 文件上传</td></tr>
+    <tr><td class="param-name">multipartTempDir</td><td>String</td><td>系统临时目录/vostok-upload</td><td>超内存阈值的文件临时目录</td></tr>
+    <tr><td class="param-name">multipartInMemoryThresholdBytes</td><td>int</td><td>65536 (64KB)</td><td>小于此值的文件保留在内存</td></tr>
+    <tr><td class="param-name">multipartMaxParts</td><td>int</td><td>128</td><td>单请求最大 multipart 部分数</td></tr>
+    <tr><td class="param-name">multipartMaxFileSizeBytes</td><td>long</td><td>16777216 (16MB)</td><td>单个文件最大大小</td></tr>
+    <tr><td class="param-name">multipartMaxTotalBytes</td><td>long</td><td>33554432 (32MB)</td><td>所有文件总大小上限</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">限流</td></tr>
+    <tr><td class="param-name">rateLimitLogEnabled</td><td>boolean</td><td>true</td><td>是否记录限流日志</td></tr>
+    <tr><td class="param-name">rateLimitCleanupIntervalMs</td><td>int</td><td>60000</td><td>限流 key 定期清理间隔（ms）</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">WebSocket</td></tr>
+    <tr><td class="param-name">websocketEnabled</td><td>boolean</td><td>true</td><td>是否允许 WebSocket 升级</td></tr>
+    <tr><td class="param-name">websocketMaxFramePayloadBytes</td><td>int</td><td>1048576 (1MB)</td><td>单帧最大负载字节数</td></tr>
+    <tr><td class="param-name">websocketMaxMessageBytes</td><td>int</td><td>4194304 (4MB)</td><td>组合消息最大字节数</td></tr>
+    <tr><td class="param-name">websocketMaxPendingFrames</td><td>int</td><td>1024</td><td>发送队列最大帧数</td></tr>
+    <tr><td class="param-name">websocketMaxPendingBytes</td><td>int</td><td>8388608 (8MB)</td><td>发送队列最大字节数</td></tr>
+    <tr><td class="param-name">websocketPingIntervalMs</td><td>int</td><td>30000</td><td>Ping 心跳间隔（ms）</td></tr>
+    <tr><td class="param-name">websocketPongTimeoutMs</td><td>int</td><td>10000</td><td>Pong 超时（ms）</td></tr>
+    <tr><td class="param-name">websocketIdleTimeoutMs</td><td>int</td><td>120000</td><td>空闲连接超时（ms）</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">TLS</td></tr>
+    <tr><td class="param-name">tls(VKTlsConfig)</td><td>VKTlsConfig</td><td>null</td><td>TLS 配置，null 表示明文 HTTP</td></tr>
+  </tbody>
+</table>
+
+<h2>API 速查</h2>
+
+<h3>初始化与生命周期（静态方法）</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>Vostok.Web.init(int port)</code></td><td><code>VostokWeb</code></td><td>快速初始化，返回链式实例</td></tr>
+    <tr><td><code>Vostok.Web.init(VKWebConfig)</code></td><td><code>VostokWeb</code></td><td>完整初始化，返回链式实例</td></tr>
+    <tr><td><code>Vostok.Web.start()</code></td><td><code>void</code></td><td>启动服务器</td></tr>
+    <tr><td><code>Vostok.Web.stop()</code></td><td><code>void</code></td><td>停止服务器</td></tr>
+    <tr><td><code>Vostok.Web.started()</code></td><td><code>boolean</code></td><td>是否已启动</td></tr>
+    <tr><td><code>Vostok.Web.port()</code></td><td><code>int</code></td><td>实际监听端口</td></tr>
+  </tbody>
+</table>
+
+<h3>路由与中间件（实例方法，链式）</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>get(path, VKHandler)</code></td><td>注册 GET 路由</td></tr>
+    <tr><td><code>post(path, VKHandler)</code></td><td>注册 POST 路由</td></tr>
+    <tr><td><code>route(method, path, VKHandler)</code></td><td>注册任意 HTTP 方法路由</td></tr>
+    <tr><td><code>use(VKMiddleware)</code></td><td>注册全局中间件</td></tr>
+    <tr><td><code>error(VKErrorHandler)</code></td><td>注册全局错误处理器</td></tr>
+    <tr><td><code>cors()</code></td><td>启用默认 CORS 中间件</td></tr>
+    <tr><td><code>cors(VKCorsConfig)</code></td><td>启用自定义 CORS 中间件</td></tr>
+    <tr><td><code>gzip()</code></td><td>启用默认 GZIP 压缩</td></tr>
+    <tr><td><code>gzip(VKGzipConfig)</code></td><td>启用自定义 GZIP 压缩</td></tr>
+    <tr><td><code>rateLimit(VKRateLimitConfig)</code></td><td>设置全局限流</td></tr>
+    <tr><td><code>rateLimit(VKHttpMethod, path, VKRateLimitConfig)</code></td><td>设置单路由限流</td></tr>
+    <tr><td><code>staticDir(urlPrefix, directory)</code></td><td>映射静态资源目录</td></tr>
+    <tr><td><code>autoCrudApi()</code></td><td>自动生成 CRUD API（默认包）</td></tr>
+    <tr><td><code>autoCrudApi(String... packages)</code></td><td>自动生成 CRUD API（指定包，RESTFUL）</td></tr>
+    <tr><td><code>autoCrudApi(VKCrudStyle, String... packages)</code></td><td>自动生成 CRUD API（指定风格与包）</td></tr>
+    <tr><td><code>websocket(path, VKWebSocketHandler)</code></td><td>注册 WebSocket 端点（默认配置）</td></tr>
+    <tr><td><code>websocket(path, VKWebSocketConfig, VKWebSocketHandler)</code></td><td>注册 WebSocket 端点（自定义配置）</td></tr>
+    <tr><td><code>sse(path, VKSseHandler)</code></td><td>注册 SSE 端点</td></tr>
+    <tr><td><code>health()</code></td><td>注册 GET /actuator/health 端点</td></tr>
+    <tr><td><code>health(String path)</code></td><td>注册自定义路径健康检查端点</td></tr>
+    <tr><td><code>metrics()</code></td><td>注册 GET /actuator/metrics 端点</td></tr>
+    <tr><td><code>metrics(String path)</code></td><td>注册自定义路径 Metrics 端点</td></tr>
+  </tbody>
+</table>
+
+<h3>WebSocket 全局广播（静态方法）</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>websocketBroadcast(path, text)</code></td><td>向路径所有连接广播文本</td></tr>
+    <tr><td><code>websocketBroadcastRoom(path, room, text)</code></td><td>向指定房间广播文本</td></tr>
+    <tr><td><code>websocketBroadcastGroup(path, group, text)</code></td><td>向指定分组广播文本</td></tr>
+    <tr><td><code>websocketBroadcastRoomAndGroup(path, room, group, text)</code></td><td>向房间且属于分组的连接广播文本</td></tr>
+    <tr><td><code>websocketBroadcastBinary(path, data)</code></td><td>向路径所有连接广播二进制</td></tr>
+    <tr><td><code>websocketBroadcastRoomBinary(path, room, data)</code></td><td>向指定房间广播二进制</td></tr>
+    <tr><td><code>websocketBroadcastGroupBinary(path, group, data)</code></td><td>向指定分组广播二进制</td></tr>
+    <tr><td><code>websocketBroadcastRoomAndGroupBinary(path, room, group, data)</code></td><td>向房间且属于分组的连接广播二进制</td></tr>
   </tbody>
 </table>
 
