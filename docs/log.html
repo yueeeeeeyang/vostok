@@ -346,6 +346,7 @@ executor.submit(() -&gt; {
     <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">扩展</td></tr>
     <tr><td class="param-name">formatter</td><td>VKLogFormatter</td><td>null（内置格式）</td><td>自定义日志格式化器（函数式接口），null 表示使用默认格式</td></tr>
     <tr><td class="param-name">errorListener</td><td>VKLogErrorListener</td><td>null（禁用）</td><td>ERROR 级别事件回调（函数式接口），在 worker 线程调用，必须非阻塞</td></tr>
+    <tr><td class="param-name">backend</td><td>VKLogBackend</td><td>null（内置）</td><td>自定义输出 Backend（SPI 接口），null 时走内置文件 + 控制台路径；配置后内置输出被替换，可通过 <code>VKCompositeBackend</code> 同时保留</td></tr>
   </tbody>
 </table>
 
@@ -477,6 +478,122 @@ executor.submit(() -&gt; {
     <tr><td><code>pendingCompressions()</code></td><td>int</td><td>等待异步 GZIP 压缩的文件数，为 0 表示全部完成</td></tr>
   </tbody>
 </table>
+
+
+<h2>接入外部日志框架（VKLogBackend）</h2>
+<p>通过 <code>VKLogBackend</code> SPI，可将 Vostok 的日志输出委托给任意外部框架（SLF4J、Log4j2、Logback 等）。AsyncEngine 在 flush 时判断：配置了 Backend 则调用 <code>backend.emit()</code>，内置文件写入与控制台输出被替换；未配置时行为不变。</p>
+
+<h3>VKLogBackend 接口</h3>
+<pre><code><span class="kw">public interface</span> <span class="ty">VKLogBackend</span> {
+
+    <span class="cm">/**
+     * 输出一条日志事件。在 AsyncEngine worker 线程调用，必须非阻塞。
+     *
+     * @param level        日志级别
+     * @param loggerName   Logger 名称（命名 Logger 名 或 调用方类名）
+     * @param formattedMsg 已完成 {} 替换的消息
+     * @param t            关联异常，可为 null
+     * @param tsMillis     事件时间戳（epoch millis）
+     * @param mdc          调用线程的 MDC 快照（不可修改）
+     */</span>
+    <span class="kw">void</span> emit(<span class="ty">VKLogLevel</span> level, <span class="ty">String</span> loggerName,
+              <span class="ty">String</span> formattedMsg, <span class="ty">Throwable</span> t, <span class="kw">long</span> tsMillis,
+              <span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; mdc);
+
+    <span class="kw">default void</span> start() {}  <span class="cm">// 初始化时调用（可在此建立连接、分配资源）</span>
+    <span class="kw">default void</span> stop()  {}  <span class="cm">// 关闭时调用（可在此释放资源）</span>
+}</code></pre>
+
+<div class="callout tip">
+  <div class="callout-title">使用约束</div>
+  <code>emit()</code> 在 AsyncEngine 的 worker 线程调用，<strong>必须非阻塞、无 IO</strong>（与 <code>VKLogErrorListener</code> 相同）。可调用外部框架的异步 API 或投递到外部队列。配置 Backend 后，内置文件写入和控制台输出被跳过；如需同时保留，使用 <code>VKCompositeBackend</code> 组合多个 Backend。
+</div>
+
+<h3>配置方式</h3>
+<pre><code><span class="cm">// 全局 Backend（替换内置文件+控制台）</span>
+<span class="ty">Vostok</span>.Log.init(<span class="kw">new</span> <span class="ty">VKLogConfig</span>()
+    .backend(<span class="kw">new</span> <span class="ty">Slf4jBackend</span>())
+);
+
+<span class="cm">// Per-logger Backend（仅覆盖指定命名 Logger 的输出）</span>
+<span class="ty">Vostok</span>.Log.init(<span class="kw">new</span> <span class="ty">VKLogConfig</span>()
+    .registerLogger(<span class="st">"audit"</span>, <span class="kw">new</span> <span class="ty">VKLogSinkConfig</span>()
+        .backend(<span class="kw">new</span> <span class="ty">Slf4jBackend</span>())
+    )
+);
+
+<span class="cm">// 多目标扇出：内置文件写入 + 外部框架同时输出</span>
+<span class="ty">VKLogBackend</span> composite = <span class="ty">VKCompositeBackend</span>.of(
+    <span class="ty">VKBuiltinBackend</span>.INSTANCE,  <span class="cm">// 保留内置文件写入</span>
+    <span class="kw">new</span> <span class="ty">Slf4jBackend</span>()          <span class="cm">// 同时推给 SLF4J</span>
+);
+<span class="ty">Vostok</span>.Log.init(<span class="kw">new</span> <span class="ty">VKLogConfig</span>().backend(composite));</code></pre>
+
+<h3>SLF4J Backend 适配器示例</h3>
+<p>以下适配器将 Vostok 日志事件委托给 SLF4J，classpath 中需包含 <code>slf4j-api</code> 及任意实现（Logback、Log4j2-SLF4J 绑定等）。适用于 Vostok 运行在已有 SLF4J 体系的应用中，统一由 <code>logback.xml</code> / <code>log4j2.xml</code> 管控输出行为。</p>
+<pre><code><span class="kw">import</span> org.slf4j.LoggerFactory;
+<span class="kw">import</span> org.slf4j.MDC;
+<span class="kw">import</span> yueyang.vostok.log.VKLogBackend;
+<span class="kw">import</span> yueyang.vostok.log.VKLogLevel;
+<span class="kw">import</span> java.util.Map;
+
+<span class="kw">public class</span> <span class="ty">Slf4jBackend</span> <span class="kw">implements</span> <span class="ty">VKLogBackend</span> {
+
+    @Override
+    <span class="kw">public void</span> emit(<span class="ty">VKLogLevel</span> level, <span class="ty">String</span> loggerName,
+                      <span class="ty">String</span> formattedMsg, <span class="ty">Throwable</span> t,
+                      <span class="kw">long</span> tsMillis, <span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; mdc) {
+
+        <span class="cm">// 1. 将 Vostok MDC 快照同步到 SLF4J MDC（emit 在 worker 线程运行，SLF4J MDC 为空）</span>
+        <span class="kw">if</span> (!mdc.isEmpty()) {
+            <span class="ty">MDC</span>.setContextMap(mdc);
+        }
+        <span class="kw">try</span> {
+            <span class="cm">// 2. 按 loggerName 获取 SLF4J Logger（SLF4J 内部有缓存，无需自行缓存）</span>
+            org.slf4j.<span class="ty">Logger</span> log = <span class="ty">LoggerFactory</span>.getLogger(loggerName);
+
+            <span class="cm">// 3. t 为 null 时调用无 Throwable 重载，避免 SLF4J 将 null 打印为 "null"</span>
+            <span class="kw">switch</span> (level) {
+                <span class="kw">case</span> TRACE -> { <span class="kw">if</span> (t != <span class="kw">null</span>) log.trace(formattedMsg, t); <span class="kw">else</span> log.trace(formattedMsg); }
+                <span class="kw">case</span> DEBUG -> { <span class="kw">if</span> (t != <span class="kw">null</span>) log.debug(formattedMsg, t); <span class="kw">else</span> log.debug(formattedMsg); }
+                <span class="kw">case</span> INFO  -> { <span class="kw">if</span> (t != <span class="kw">null</span>) log.info(formattedMsg, t);  <span class="kw">else</span> log.info(formattedMsg);  }
+                <span class="kw">case</span> WARN  -> { <span class="kw">if</span> (t != <span class="kw">null</span>) log.warn(formattedMsg, t);  <span class="kw">else</span> log.warn(formattedMsg);  }
+                <span class="kw">case</span> ERROR -> { <span class="kw">if</span> (t != <span class="kw">null</span>) log.error(formattedMsg, t); <span class="kw">else</span> log.error(formattedMsg); }
+            }
+        } <span class="kw">finally</span> {
+            <span class="cm">// 4. 清除 worker 线程上的 SLF4J MDC，防止泄漏到下一条日志</span>
+            <span class="kw">if</span> (!mdc.isEmpty()) {
+                <span class="ty">MDC</span>.clear();
+            }
+        }
+    }
+}</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">消除异常栈重复输出</div>
+  Vostok 默认格式化器会将异常栈追加到 <code>formattedMsg</code>，再将 <code>t</code> 传给 SLF4J 会造成重复输出。建议配合简洁格式化器，只传递消息正文，异常栈交由 SLF4J / Logback 统一渲染：
+</div>
+<pre><code><span class="ty">Vostok</span>.Log.init(<span class="kw">new</span> <span class="ty">VKLogConfig</span>()
+    .backend(<span class="kw">new</span> <span class="ty">Slf4jBackend</span>())
+    <span class="cm">// 仅输出消息正文，不追加异常栈（由 SLF4J / Logback 渲染）</span>
+    .formatter((level, name, msg, t, ts, mdc) -> msg + <span class="st">"\n"</span>)
+    .consoleEnabled(<span class="kw">false</span>)  <span class="cm">// 控制台由 Logback 接管</span>
+);</code></pre>
+
+<h3>接入完整示例</h3>
+<pre><code><span class="cm">// 应用启动时配置：</span>
+<span class="ty">Vostok</span>.Log.init(<span class="kw">new</span> <span class="ty">VKLogConfig</span>()
+    .level(<span class="ty">VKLogLevel</span>.DEBUG)
+    .backend(<span class="kw">new</span> <span class="ty">Slf4jBackend</span>())
+    .formatter((level, name, msg, t, ts, mdc) -> msg + <span class="st">"\n"</span>)
+    .consoleEnabled(<span class="kw">false</span>)
+);
+
+<span class="cm">// 业务代码无需任何改动，以下调用最终路由到 Logback，受 logback.xml 统一管控：</span>
+<span class="ty">Vostok</span>.Log.info(<span class="st">"server started on port {}"</span>, port);
+
+<span class="ty">VKLogger</span> log = <span class="ty">Vostok</span>.Log.logger(<span class="st">"payment"</span>);
+log.error(<span class="st">"payment failed"</span>, ex);  <span class="cm">// → Logback logger "payment"，含完整异常栈</span></code></pre>
 
 </div>
 </main>

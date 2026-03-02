@@ -37,6 +37,8 @@ public class VKLogConfig {
     private VKLogFormatter formatter = null;
     /** ERROR 级别事件监听器，null 表示不启用。 */
     private VKLogErrorListener errorListener = null;
+    /** 自定义输出 Backend，null 表示使用内置文件 + 控制台路径。 */
+    private VKLogBackend backend = null;
     /** 是否对控制台输出启用 ANSI 颜色（开发环境建议开启）。 */
     private boolean consoleColor = false;
     /**
@@ -91,7 +93,8 @@ public class VKLogConfig {
                 .formatter(formatter)
                 .errorListener(errorListener)
                 .consoleColor(consoleColor)
-                .throwOnUnknownLogger(throwOnUnknownLogger);
+                .throwOnUnknownLogger(throwOnUnknownLogger)
+                .backend(backend);
     }
 
     public VKLogLevel getLevel() {
@@ -403,6 +406,21 @@ public class VKLogConfig {
      * {@code true}：调用未预注册的 logger 名时抛 {@link IllegalArgumentException}，
      * 用于需要严格管控 logger 命名的场景。
      */
+    public VKLogBackend getBackend() {
+        return backend;
+    }
+
+    /**
+     * 设置自定义输出 Backend。传入 {@code null} 恢复内置文件 + 控制台路径。
+     * 配置 Backend 后，内置文件写入与控制台输出被跳过；{@link VKLogErrorListener} 仍然触发。
+     *
+     * @see VKLogBackend
+     */
+    public VKLogConfig backend(VKLogBackend backend) {
+        this.backend = backend;
+        return this;
+    }
+
     public VKLogConfig throwOnUnknownLogger(boolean throwOnUnknownLogger) {
         this.throwOnUnknownLogger = throwOnUnknownLogger;
         return this;

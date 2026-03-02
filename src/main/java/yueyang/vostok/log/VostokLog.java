@@ -363,6 +363,15 @@ public class VostokLog {
     }
 
     /**
+     * 设置全局输出 Backend，传入 {@code null} 恢复内置文件 + 控制台路径。
+     *
+     * @see VKLogBackend
+     */
+    public static void setBackend(VKLogBackend backend) {
+        updateConfig(cfg -> cfg.backend(backend));
+    }
+
+    /**
      * 是否对控制台输出启用 ANSI 彩色（仅控制台，不影响文件输出）。
      */
     public static void setConsoleColor(boolean color) {
@@ -908,6 +917,7 @@ public class VostokLog {
             if (override.getFormatter() != null) sink.formatter(override.getFormatter());
             if (override.getErrorListener() != null) sink.errorListener(override.getErrorListener());
             if (override.getConsoleColor() != null) sink.consoleColor(override.getConsoleColor());
+            if (override.getBackend() != null) sink.backend(override.getBackend());
             // filePrefix 保底：若 override 未指定 filePrefix，用 loggerName
             if (sink.getFilePrefix() == null || sink.getFilePrefix().isBlank()) {
                 sink.filePrefix(loggerName);
@@ -1015,6 +1025,8 @@ public class VostokLog {
         private volatile VKLogFormatter formatter       = null;
         private volatile VKLogErrorListener errorListener = null;
         private volatile boolean consoleColor           = false;
+        /** 自定义输出 Backend，null 表示使用内置文件 + 控制台路径。 */
+        private volatile VKLogBackend backend           = null;
 
         // ---- 文件写入状态（仅 worker 线程访问，无需 volatile） ----
         /** 文件打开/关闭的信号，由 applyConfig 触发后 worker 在下一次循环处理。 */
@@ -1071,6 +1083,29 @@ public class VostokLog {
             setFormatter(config.getFormatter());
             setErrorListener(config.getErrorListener());
             setConsoleColor(config.isConsoleColor());
+            applyBackend(config.getBackend());
+        }
+
+        /**
+         * 更新 Backend 引用并管理生命周期。
+         * <p>
+         * 若 Backend 发生变化（包括从 null 变为非 null，或从非 null 变为 null），
+         * 先调用旧 Backend 的 {@link VKLogBackend#stop()}，再调用新 Backend 的
+         * {@link VKLogBackend#start()}。同一实例传入时不做任何操作。
+         * 从构造阶段调用时，this.backend 初始为 null，只启动新 Backend。
+         */
+        private void applyBackend(VKLogBackend newBackend) {
+            VKLogBackend oldBackend = this.backend;
+            if (oldBackend == newBackend) {
+                return;
+            }
+            if (oldBackend != null) {
+                try { oldBackend.stop(); } catch (Exception ignored) {}
+            }
+            this.backend = newBackend;
+            if (newBackend != null) {
+                try { newBackend.start(); } catch (Exception ignored) {}
+            }
         }
 
         // ---- 日志提交 ----
@@ -1274,6 +1309,11 @@ public class VostokLog {
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
+            // worker 退出后停止 backend（确保 emit 已全部完成）
+            VKLogBackend b = backend;
+            if (b != null) {
+                try { b.stop(); } catch (Exception ignored) {}
+            }
         }
 
         /**
@@ -1359,21 +1399,34 @@ public class VostokLog {
         // ---- 写入逻辑 ----
 
         /**
-         * 写入一条日志事件：格式化 → 写文件 → （可选）写控制台 → 触发 ERROR 监听器。
+         * 写入一条日志事件：格式化 → 输出（Backend 或 内置文件/控制台）→ 触发 ERROR 监听器。
+         * <p>
+         * 若配置了 {@link VKLogBackend}，委托给 Backend 处理，跳过内置文件写入与控制台输出；
+         * 否则走原有文件 + 控制台路径。ERROR 监听器在两种模式下均正常触发。
          */
         private void writeLog(LogEvent event) {
             String text = formatLine(event);
-            byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
-            boolean fileOk = writeToFile(bytes, event.ts);
-
-            if (!fileOk) {
-                fallbackWrites.incrementAndGet();
-                writeToStderr(text);
-            } else if (consoleEnabled) {
-                writeToConsole(event.level, text);
+            VKLogBackend b = backend;
+            if (b != null) {
+                // Backend 模式：委托给外部框架，不走文件/控制台
+                try {
+                    b.emit(event.level, event.loggerName, text, event.error, event.ts, event.mdc);
+                } catch (Exception ignored) {
+                    // backend 异常不能影响 worker 循环
+                }
+            } else {
+                // 内置模式：写文件，控制台可选
+                byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+                boolean fileOk = writeToFile(bytes, event.ts);
+                if (!fileOk) {
+                    fallbackWrites.incrementAndGet();
+                    writeToStderr(text);
+                } else if (consoleEnabled) {
+                    writeToConsole(event.level, text);
+                }
             }
 
-            // ERROR 监听器在写入完成后调用（无论写文件成功与否）
+            // ERROR 监听器在写入完成后调用（无论 backend 模式还是内置模式）
             if (event.level == VKLogLevel.ERROR) {
                 VKLogErrorListener listener = errorListener;
                 if (listener != null) {
@@ -1413,33 +1466,38 @@ public class VostokLog {
         }
 
         /**
-         * 同步直写文件（SYNC_FALLBACK 或关闭期间调用）。
-         * 使用 {@link #directWriteLock} 防止并发写乱序。
-         * 如果文件写入也失败，退化到 stderr。
+         * 同步直写（SYNC_FALLBACK 或关闭期间调用）。
+         * 若配置了 Backend，走 Backend；否则使用 {@link #directWriteLock} 同步写文件，
+         * 文件写失败时退化到 stderr。
          */
         private void writeDirectFallback(LogEvent event) {
             if (!event.level.enabled(level)) {
                 return;
             }
             String text = formatLine(event);
-            byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
-            boolean ok = false;
-
-            synchronized (directWriteLock) {
+            VKLogBackend b = backend;
+            if (b != null) {
                 try {
-                    Files.createDirectories(outputDir);
-                    Path p = outputDir.resolve(filePrefix + ".log");
-                    Files.write(p, bytes, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-                    ok = true;
-                } catch (Exception e) {
-                    fileWriteErrors.incrementAndGet();
+                    b.emit(event.level, event.loggerName, text, event.error, event.ts, event.mdc);
+                } catch (Exception ignored) {}
+            } else {
+                byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+                boolean ok = false;
+                synchronized (directWriteLock) {
+                    try {
+                        Files.createDirectories(outputDir);
+                        Path p = outputDir.resolve(filePrefix + ".log");
+                        Files.write(p, bytes, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+                        ok = true;
+                    } catch (Exception e) {
+                        fileWriteErrors.incrementAndGet();
+                    }
                 }
-            }
-
-            if (!ok) {
-                writeToStderr(text);
-            } else if (consoleEnabled) {
-                writeToConsole(event.level, text);
+                if (!ok) {
+                    writeToStderr(text);
+                } else if (consoleEnabled) {
+                    writeToConsole(event.level, text);
+                }
             }
             fallbackWrites.incrementAndGet();
 

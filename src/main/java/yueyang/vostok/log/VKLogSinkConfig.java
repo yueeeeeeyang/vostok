@@ -24,6 +24,7 @@ public class VKLogSinkConfig {
     private VKLogFormatter formatter;
     private VKLogErrorListener errorListener;
     private Boolean consoleColor;
+    private VKLogBackend backend;
 
     public VKLogSinkConfig copy() {
         VKLogSinkConfig c = new VKLogSinkConfig();
@@ -47,6 +48,7 @@ public class VKLogSinkConfig {
         c.formatter = formatter;
         c.errorListener = errorListener;
         c.consoleColor = consoleColor;
+        c.backend = backend;
         return c;
     }
 
@@ -90,4 +92,6 @@ public class VKLogSinkConfig {
     public VKLogSinkConfig errorListener(VKLogErrorListener errorListener) { this.errorListener = errorListener; return this; }
     public Boolean getConsoleColor() { return consoleColor; }
     public VKLogSinkConfig consoleColor(Boolean consoleColor) { this.consoleColor = consoleColor; return this; }
+    public VKLogBackend getBackend() { return backend; }
+    public VKLogSinkConfig backend(VKLogBackend backend) { this.backend = backend; return this; }
 }
