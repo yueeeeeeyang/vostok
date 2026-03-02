@@ -3,6 +3,7 @@ package yueyang.vostok.data.core;
 import yueyang.vostok.data.exception.VKErrorCode;
 import yueyang.vostok.data.exception.VKException;
 import yueyang.vostok.data.exception.VKExceptionTranslator;
+import yueyang.vostok.data.exception.VKOptimisticLockException;
 import yueyang.vostok.data.jdbc.VKBatchDetailResult;
 import yueyang.vostok.data.jdbc.VKBatchItemResult;
 import yueyang.vostok.data.jdbc.VKBatchResult;
@@ -28,6 +29,14 @@ import java.util.List;
 
 /**
  * CRUD / 查询相关操作。
+ *
+ * <p>本类自动处理以下特性（对调用方透明）：
+ * <ul>
+ *   <li><b>乐观锁（@VKVersion）</b>：update() 检测版本冲突，冲突时抛 VKOptimisticLockException；
+ *       成功后将实体版本字段自增；批量更新通过 VKBatchItemResult.getCount()==0 反映冲突。</li>
+ *   <li><b>逻辑删除（@VKLogicDelete）</b>：delete() 转换为软删 UPDATE；
+ *       findById / findAll / query / count / aggregate 自动过滤已删除记录。</li>
+ * </ul>
  */
 public final class VostokCrudOps {
     private VostokCrudOps() {
@@ -115,12 +124,35 @@ public final class VostokCrudOps {
         return new VKBatchDetailResult(items);
     }
 
+    /**
+     * 按主键更新单条记录。
+     *
+     * <p>若实体标记了 {@code @VKVersion}：
+     * <ul>
+     *   <li>更新影响行数为 0（版本号已被其他事务更改）→ 抛出 {@link VKOptimisticLockException}。</li>
+     *   <li>更新成功 → 自动将实体中的版本字段值 +1，与数据库保持同步。</li>
+     * </ul>
+     */
     public static int update(Object entity) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entity, "Entity is null");
         EntityMeta meta = MetaRegistry.get(entity.getClass());
         SqlTemplate tpl = VostokInternal.currentTemplateCache().get(meta, SqlTemplateType.UPDATE);
-        return VostokInternal.executeUpdate(new SqlAndParams(tpl.getSql(), tpl.bindEntity(entity, VostokInternal.currentConfig())));
+        int rows = VostokInternal.executeUpdate(new SqlAndParams(tpl.getSql(), tpl.bindEntity(entity, VostokInternal.currentConfig())));
+
+        FieldMeta vf = meta.getVersionField();
+        if (vf != null) {
+            if (rows == 0) {
+                // 版本冲突：WHERE version = ? 未匹配任何行，说明并发修改已发生
+                throw new VKOptimisticLockException(
+                        "Optimistic lock conflict on " + meta.getEntityClass().getName()
+                                + " (version=" + vf.getValue(entity) + ")");
+            }
+            // 更新成功：将实体版本字段自增，与数据库 version = version + 1 同步
+            vf.setValue(entity, incrementVersion(vf, entity));
+        }
+
+        return rows;
     }
 
     public static int batchUpdate(List<?> entities) {
@@ -158,6 +190,7 @@ public final class VostokCrudOps {
                 VKBatchResult result = VostokInternal.currentExecutor().executeBatch(sql, chunk, false);
                 int[] counts = result.getCounts();
                 for (int i = 0; i < counts.length; i++) {
+                    // 版本冲突时 count=0（行数未被更新），调用方可通过 getCount()==0 判断冲突
                     items.add(new VKBatchItemResult(baseIndex + i, counts[i] >= 0, counts[i], null, null));
                 }
             } catch (SQLException e) {
@@ -179,6 +212,12 @@ public final class VostokCrudOps {
         return new VKBatchDetailResult(items);
     }
 
+    /**
+     * 按主键删除单条记录。
+     *
+     * <p>若实体标记了 {@code @VKLogicDelete}，不执行物理删除，
+     * 而是将逻辑删除字段更新为 {@code deletedValue}（软删）。
+     */
     public static int delete(Class<?> entityClass, Object idValue) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
@@ -198,7 +237,8 @@ public final class VostokCrudOps {
         VKAssert.isTrue(!idValues.isEmpty(), "Id list is empty");
 
         EntityMeta meta = MetaRegistry.get(entityClass);
-        // 使用 DELETE_BY_ID 单行模板 + JDBC batch，与 batchUpdate 保持一致，实现逐行结果判断
+        // 使用 DELETE_BY_ID 单行模板 + JDBC batch，与 batchUpdate 保持一致，实现逐行结果判断。
+        // 若实体启用逻辑删除，DELETE_BY_ID 模板已转换为软删 UPDATE，行为透明。
         SqlTemplate tpl = VostokInternal.currentTemplateCache().get(meta, SqlTemplateType.DELETE_BY_ID);
         String sql = tpl.getSql();
 
@@ -214,7 +254,7 @@ public final class VostokCrudOps {
                 VKBatchResult result = VostokInternal.currentExecutor().executeBatch(sql, paramsList, false);
                 int[] counts = result.getCounts();
                 for (int i = 0; i < counts.length; i++) {
-                    // counts[i] >= 0 表示该行成功（1=已删除，0=id 不存在）
+                    // counts[i] >= 0 表示该行成功（1=已删除/软删，0=id 不存在）
                     items.add(new VKBatchItemResult(baseIndex + i, counts[i] >= 0, counts[i], null, null));
                 }
             } catch (SQLException e) {
@@ -236,6 +276,11 @@ public final class VostokCrudOps {
         return new VKBatchDetailResult(items);
     }
 
+    /**
+     * 按主键查询单条记录。
+     *
+     * <p>若实体启用逻辑删除，仅返回未被软删的记录；已软删的记录返回 null。
+     */
     public static <T> T findById(Class<T> entityClass, Object idValue) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
@@ -244,12 +289,18 @@ public final class VostokCrudOps {
         return VostokInternal.executeQueryOne(meta, new SqlAndParams(tpl.getSql(), tpl.bindId(idValue)));
     }
 
+    /**
+     * 查询全部记录。
+     *
+     * <p>若实体启用逻辑删除，自动过滤已软删记录。
+     */
     public static <T> List<T> findAll(Class<T> entityClass) {
         VostokInternal.ensureInit();
         VKAssert.notNull(entityClass, "Entity class is null");
         EntityMeta meta = MetaRegistry.get(entityClass);
         SqlTemplate tpl = VostokInternal.currentTemplateCache().get(meta, SqlTemplateType.SELECT_ALL);
-        return VostokInternal.executeQueryList(meta, new SqlAndParams(tpl.getSql(), new Object[0]));
+        // getStaticParams() 返回逻辑删除过滤参数（normalValue），无逻辑删除时为空数组
+        return VostokInternal.executeQueryList(meta, new SqlAndParams(tpl.getSql(), tpl.getStaticParams()));
     }
 
     public static <T> List<T> query(Class<T> entityClass, VKQuery query) {
@@ -317,6 +368,19 @@ public final class VostokCrudOps {
             }
             throw new VKException(VKErrorCode.SQL_ERROR, "SQL count failed: " + sp.getSql(), e);
         }
+    }
+
+    /**
+     * 将实体版本字段值加 1 并返回新值。
+     * 支持 Long/long 和 Integer/int 类型，null 时从 1 开始。
+     */
+    private static Object incrementVersion(FieldMeta vf, Object entity) {
+        Object old = vf.getValue(entity);
+        Class<?> type = vf.getField().getType();
+        if (type == Long.class || type == long.class) {
+            return old == null ? 1L : ((Number) old).longValue() + 1L;
+        }
+        return old == null ? 1 : ((Number) old).intValue() + 1;
     }
 
     private static void validateEncryptedQuery(EntityMeta meta, VKQuery query) {

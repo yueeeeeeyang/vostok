@@ -13,7 +13,8 @@ public enum VKErrorCode {
     SCAN_ERROR("DK-510", "Class scan error"),
     POOL_ERROR("DK-520", "Connection pool error"),
     TX_ERROR("DK-530", "Transaction error"),
-    CACHE_ERROR("DK-540", "Cache error");
+    CACHE_ERROR("DK-540", "Cache error"),
+    OPTIMISTIC_LOCK("DK-550", "Optimistic lock conflict");
 
     private final String code;
     private final String message;

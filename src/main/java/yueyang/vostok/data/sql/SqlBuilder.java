@@ -181,13 +181,22 @@ public final class SqlBuilder {
     }
 
     private static void appendWhere(EntityMeta meta, VKQuery query, StringBuilder sb, List<Object> params) {
-        if (query == null || query.getGroups().isEmpty()) {
+        FieldMeta ld = meta.getLogicDeleteField();
+        boolean hasGroups = query != null && !query.getGroups().isEmpty();
+        if (ld == null && !hasGroups) {
             return;
         }
         sb.append(" WHERE ");
         StringJoiner groupJoiner = new StringJoiner(" AND ");
-        for (VKConditionGroup group : query.getGroups()) {
-            groupJoiner.add(buildGroup(meta, group, params));
+        // 逻辑删除：自动注入 del_col = normalValue 过滤条件（对调用方透明）
+        if (ld != null) {
+            groupJoiner.add("(" + ld.getColumnName() + " = ?)");
+            params.add(ld.getNormalValue());
+        }
+        if (hasGroups) {
+            for (VKConditionGroup group : query.getGroups()) {
+                groupJoiner.add(buildGroup(meta, group, params));
+            }
         }
         sb.append(groupJoiner);
     }

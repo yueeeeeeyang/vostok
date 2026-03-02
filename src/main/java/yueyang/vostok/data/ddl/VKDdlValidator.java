@@ -113,8 +113,13 @@ public final class VKDdlValidator {
                     def.append(" ").append(auto);
                 }
             }
-            if (field.isId() || field.getField().getType().isPrimitive()) {
+            // NOT NULL 条件：主键、基本类型（不能为 null）、或 @VKColumn(nullable=false)
+            if (field.isId() || field.getField().getType().isPrimitive() || !field.isNullable()) {
                 def.append(" NOT NULL");
+            }
+            // UNIQUE 约束：@VKColumn(unique=true)，主键本身通过 PRIMARY KEY 保证唯一，无需重复添加
+            if (field.isUnique() && !field.isId()) {
+                def.append(" UNIQUE");
             }
             columns.add(def.toString());
             if (field.isId()) {
@@ -141,9 +146,10 @@ public final class VKDdlValidator {
         }
         if (type == String.class) {
             if (field.isEncrypted()) {
+                // 加密字段固定使用 1024，忽略 length 属性（密文长度不可预测）
                 return "VARCHAR(1024)";
             }
-            return "VARCHAR(255)";
+            return "VARCHAR(" + field.getLength() + ")";
         }
         if (type == int.class || type == Integer.class) {
             return "INT";
@@ -188,7 +194,8 @@ public final class VKDdlValidator {
             return "BLOB";
         }
         if (type.isEnum()) {
-            return "VARCHAR(64)";
+            // 枚举默认 VARCHAR(64)；如有 @VKColumn(length=N) 则使用指定长度
+            return "VARCHAR(" + field.getLength() + ")";
         }
         throw new VKMetaException("Unsupported field type for DDL: " + type.getName());
     }

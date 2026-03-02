@@ -86,11 +86,22 @@
 
     <span class="kw">private</span> <span class="ty">String</span> name;
 
-    <span class="an">@VKColumn</span>(name = <span class="st">"email_addr"</span>)  <span class="cm">// 指定列名与 Java 字段名不一致时使用</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"email_addr"</span>, nullable = <span class="kw">false</span>, length = <span class="nu">100</span>, unique = <span class="kw">true</span>)  <span class="cm">// 非空、长度、唯一约束（自动建表生效）</span>
     <span class="kw">private</span> <span class="ty">String</span> email;
 
     <span class="an">@VKColumn</span>(name = <span class="st">"phone"</span>, encrypted = <span class="kw">true</span>)  <span class="cm">// 开启字段透明加密</span>
     <span class="kw">private</span> <span class="ty">String</span> phone;
+
+    <span class="an">@VKColumn</span>(name = <span class="st">"created_at"</span>, updatable = <span class="kw">false</span>)  <span class="cm">// 只写入 INSERT，UPDATE 中忽略</span>
+    <span class="kw">private</span> <span class="ty">String</span> createdAt;
+
+    <span class="an">@VKVersion</span>                   <span class="cm">// 乐观锁版本字段，框架自动维护递增与冲突检测</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"version"</span>)
+    <span class="kw">private</span> <span class="ty">Long</span> version;
+
+    <span class="an">@VKLogicDelete</span>(deletedValue = <span class="st">"1"</span>, normalValue = <span class="st">"0"</span>)  <span class="cm">// 逻辑删除标志</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"is_deleted"</span>)
+    <span class="kw">private</span> <span class="ty">Integer</span> isDeleted;
 
     <span class="an">@VKIgnore</span>                   <span class="cm">// 标记该字段不参与持久化</span>
     <span class="kw">private</span> <span class="ty">String</span> tempToken;
@@ -106,7 +117,9 @@
   <tbody>
     <tr><td class="param-name">@VKEntity(table)</td><td>类</td><td>标记持久化实体，<code>table</code> 指定表名（默认类名转下划线）</td></tr>
     <tr><td class="param-name">@VKId(auto)</td><td>字段</td><td>标记主键字段；<code>auto=true</code> 时 INSERT 不写入该列并回填生成的主键</td></tr>
-    <tr><td class="param-name">@VKColumn(name, encrypted, keyId)</td><td>字段</td><td>自定义列名；<code>encrypted=true</code> 开启透明加密；<code>keyId</code> 指定密钥（空时取默认密钥）</td></tr>
+    <tr><td class="param-name">@VKColumn(name, encrypted, keyId, insertable, updatable, nullable, length, unique)</td><td>字段</td><td>自定义列名；<code>encrypted=true</code> 开启透明加密；<code>insertable=false</code> 排除 INSERT；<code>updatable=false</code> 排除 UPDATE SET 子句；<code>nullable=false</code> 自动建表生成 NOT NULL；<code>length</code> 指定 VARCHAR 长度（默认 255）；<code>unique=true</code> 自动建表生成 UNIQUE 约束</td></tr>
+    <tr><td class="param-name">@VKVersion</td><td>字段</td><td>乐观锁版本字段（Long/Integer）；INSERT 初始化为 0；UPDATE 自动 <code>version+1</code> 并校验旧版本，冲突抛 <code>VKOptimisticLockException</code></td></tr>
+    <tr><td class="param-name">@VKLogicDelete(deletedValue, normalValue)</td><td>字段</td><td>逻辑删除标志字段；DELETE 转为软删 UPDATE；所有查询自动注入 normalValue 过滤</td></tr>
     <tr><td class="param-name">@VKIgnore</td><td>字段</td><td>排除字段，不参与任何 SQL 操作</td></tr>
   </tbody>
 </table>
@@ -167,6 +180,163 @@ user.setEmail(<span class="st">"alice@example.com"</span>);
 <span class="cm">// 批量操作明细（适合 CONTINUE 失败策略场景）</span>
 <span class="ty">VKBatchDetailResult</span> detail = <span class="ty">Vostok</span>.Data.batchDeleteDetail(<span class="ty">User</span>.class, ids);
 <span class="ty">System</span>.out.println(<span class="st">"成功: "</span> + detail.totalSuccess() + <span class="st">" 失败: "</span> + detail.totalFail());</code></pre>
+
+<h2>乐观锁（@VKVersion）</h2>
+
+<p>在字段上标注 <code>@VKVersion</code> 即可启用乐观锁机制，无需额外配置。</p>
+
+<pre><code><span class="an">@VKEntity</span>(table = <span class="st">"orders"</span>)
+<span class="kw">public class</span> <span class="ty">Order</span> {
+    <span class="an">@VKId</span>
+    <span class="kw">private</span> <span class="ty">Long</span> id;
+
+    <span class="kw">private</span> <span class="ty">String</span> title;
+
+    <span class="an">@VKVersion</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"version"</span>)
+    <span class="kw">private</span> <span class="ty">Long</span> version;  <span class="cm">// Long 或 Integer 均可</span>
+}
+
+<span class="cm">// INSERT：version 未设置时自动初始化为 0</span>
+<span class="ty">Order</span> order = <span class="kw">new</span> <span class="ty">Order</span>();
+order.setTitle(<span class="st">"New Order"</span>);
+<span class="ty">Vostok</span>.Data.insert(order);
+<span class="cm">// → INSERT INTO orders (title, version) VALUES (?, 0)</span>
+
+<span class="cm">// UPDATE：自动追加 version = version + 1，同时校验旧版本</span>
+order.setTitle(<span class="st">"Updated"</span>);
+<span class="ty">Vostok</span>.Data.update(order);
+<span class="cm">// → UPDATE orders SET title = ?, version = version + 1 WHERE id = ? AND version = ?</span>
+<span class="cm">// 成功后 order.getVersion() 自动 +1，与数据库保持同步</span>
+
+<span class="cm">// 并发冲突：另一事务已先行更新时，抛出 VKOptimisticLockException</span>
+<span class="ty">Order</span> copy1 = <span class="ty">Vostok</span>.Data.findById(<span class="ty">Order</span>.class, <span class="nu">1L</span>);
+<span class="ty">Order</span> copy2 = <span class="ty">Vostok</span>.Data.findById(<span class="ty">Order</span>.class, <span class="nu">1L</span>);
+<span class="ty">Vostok</span>.Data.update(copy1);  <span class="cm">// 成功，版本 0→1</span>
+<span class="kw">try</span> {
+    <span class="ty">Vostok</span>.Data.update(copy2);  <span class="cm">// 失败：copy2 版本仍为 0，与数据库 1 不匹配</span>
+} <span class="kw">catch</span> (<span class="ty">VKOptimisticLockException</span> e) {
+    <span class="cm">// 重新读取最新数据后重试</span>
+    copy2 = <span class="ty">Vostok</span>.Data.findById(<span class="ty">Order</span>.class, <span class="nu">1L</span>);
+    <span class="ty">Vostok</span>.Data.update(copy2);
+}</code></pre>
+
+<div class="callout">
+  <div class="callout-title">说明</div>
+  <ul>
+    <li>版本字段类型支持 <code>Long</code>、<code>long</code>、<code>Integer</code>、<code>int</code>，每个实体类最多一个 <code>@VKVersion</code>。</li>
+    <li>批量更新（<code>batchUpdate</code>）同样在 WHERE 中带版本条件，但不抛异常——通过 <code>VKBatchItemResult.getCount()==0</code> 判断冲突。</li>
+    <li><code>update()</code> 成功后，框架自动将实体版本字段 +1，无需手动同步。</li>
+  </ul>
+</div>
+
+<h2>逻辑删除（@VKLogicDelete）</h2>
+
+<p>标注 <code>@VKLogicDelete</code> 后，框架将所有物理删除转换为字段标记更新，所有查询自动过滤已删除记录，对业务代码完全透明。</p>
+
+<pre><code><span class="an">@VKEntity</span>(table = <span class="st">"articles"</span>)
+<span class="kw">public class</span> <span class="ty">Article</span> {
+    <span class="an">@VKId</span>
+    <span class="kw">private</span> <span class="ty">Long</span> id;
+
+    <span class="kw">private</span> <span class="ty">String</span> title;
+
+    <span class="an">@VKLogicDelete</span>(deletedValue = <span class="st">"1"</span>, normalValue = <span class="st">"0"</span>)
+    <span class="an">@VKColumn</span>(name = <span class="st">"is_deleted"</span>)
+    <span class="kw">private</span> <span class="ty">Integer</span> isDeleted;
+}
+
+<span class="cm">// INSERT：is_deleted 未设置时自动初始化为 normalValue（0）</span>
+<span class="ty">Article</span> a = <span class="kw">new</span> <span class="ty">Article</span>();
+a.setTitle(<span class="st">"Hello"</span>);
+<span class="ty">Vostok</span>.Data.insert(a);
+<span class="cm">// → INSERT INTO articles (title, is_deleted) VALUES (?, 0)</span>
+
+<span class="cm">// DELETE：转为软删 UPDATE，物理记录保留</span>
+<span class="ty">Vostok</span>.Data.delete(<span class="ty">Article</span>.class, a.getId());
+<span class="cm">// → UPDATE articles SET is_deleted = 1 WHERE id = ?</span>
+
+<span class="cm">// findById：自动过滤已删除记录，软删后返回 null</span>
+<span class="ty">Article</span> found = <span class="ty">Vostok</span>.Data.findById(<span class="ty">Article</span>.class, a.getId());
+<span class="cm">// found == null（记录被软删）</span>
+<span class="cm">// → SELECT ... FROM articles WHERE id = ? AND is_deleted = 0</span>
+
+<span class="cm">// findAll / query / count：自动注入 is_deleted = 0 过滤</span>
+<span class="ty">List</span>&lt;<span class="ty">Article</span>&gt; list = <span class="ty">Vostok</span>.Data.findAll(<span class="ty">Article</span>.class);
+<span class="cm">// → SELECT ... FROM articles WHERE is_deleted = 0</span>
+
+<span class="cm">// 恢复逻辑删除记录：直接 update isDeleted = 0</span>
+<span class="ty">Article</span> restored = <span class="kw">new</span> <span class="ty">Article</span>();
+restored.setId(a.getId());
+restored.setTitle(<span class="st">"Hello"</span>);
+restored.setIsDeleted(<span class="nu">0</span>);  <span class="cm">// 恢复为 normalValue</span>
+<span class="ty">Vostok</span>.Data.update(restored);</code></pre>
+
+<div class="callout">
+  <div class="callout-title">说明</div>
+  <ul>
+    <li>字段类型支持 <code>String</code>、<code>Integer/int</code>、<code>Long/long</code>、<code>Boolean/boolean</code>，注解的 <code>deletedValue</code>/<code>normalValue</code> 会按字段类型自动转换。</li>
+    <li>每个实体类最多一个 <code>@VKLogicDelete</code> 字段。</li>
+    <li>逻辑删除过滤对 <code>query()</code>、<code>count()</code>、<code>aggregate()</code> 等动态查询同样生效，调用方无需手动添加条件。</li>
+    <li>如需查询所有记录（含已删除），请使用原生 SQL 或注册 Raw SQL 白名单后执行。</li>
+  </ul>
+</div>
+
+<h2>列约束（nullable / length / unique）</h2>
+
+<p>通过 <code>@VKColumn</code> 的 <code>nullable</code>、<code>length</code>、<code>unique</code> 属性可以声明列级约束。这些属性<strong>仅在自动建表（<code>autoCreateTable=true</code>）时生效</strong>，不影响运行时的 INSERT / UPDATE 行为。</p>
+
+<pre><code><span class="an">@VKEntity</span>(table = <span class="st">"users"</span>)
+<span class="kw">public class</span> <span class="ty">User</span> {
+    <span class="an">@VKId</span>(auto = <span class="kw">true</span>)
+    <span class="kw">private</span> <span class="ty">Long</span> id;
+
+    <span class="cm">// nullable=false → NOT NULL；length=100 → VARCHAR(100)；unique=true → UNIQUE</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"email"</span>, nullable = <span class="kw">false</span>, length = <span class="nu">100</span>, unique = <span class="kw">true</span>)
+    <span class="kw">private</span> <span class="ty">String</span> email;
+
+    <span class="cm">// nullable=false, length=50 → VARCHAR(50) NOT NULL</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"username"</span>, nullable = <span class="kw">false</span>, length = <span class="nu">50</span>)
+    <span class="kw">private</span> <span class="ty">String</span> username;
+
+    <span class="cm">// 默认：nullable=true, length=255 → VARCHAR(255)</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"bio"</span>)
+    <span class="kw">private</span> <span class="ty">String</span> bio;
+
+    <span class="cm">// Integer 包装类型 + nullable=false → INT NOT NULL</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"score"</span>, nullable = <span class="kw">false</span>)
+    <span class="kw">private</span> <span class="ty">Integer</span> score;
+}
+
+<span class="cm">// 以上实体的自动建表 SQL（MySQL 方言）：</span>
+<span class="cm">// CREATE TABLE users (</span>
+<span class="cm">//   id BIGINT AUTO_INCREMENT NOT NULL,</span>
+<span class="cm">//   email VARCHAR(100) NOT NULL UNIQUE,</span>
+<span class="cm">//   username VARCHAR(50) NOT NULL,</span>
+<span class="cm">//   bio VARCHAR(255),</span>
+<span class="cm">//   score INT NOT NULL,</span>
+<span class="cm">//   PRIMARY KEY (id)</span>
+<span class="cm">// )</span></code></pre>
+
+<table class="config-table">
+  <thead>
+    <tr><th>属性</th><th>类型</th><th>默认值</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="param-name">nullable</td><td>boolean</td><td>true</td><td>列是否允许为空；<code>false</code> 时自动建表生成 <code>NOT NULL</code>。对基本类型（int、long 等）无论此属性如何，始终生成 <code>NOT NULL</code>。</td></tr>
+    <tr><td class="param-name">length</td><td>int</td><td>255</td><td>字符串（<code>String</code>）及枚举类型对应的 <code>VARCHAR</code> 长度。非字符串类型（INT、BIGINT 等）忽略此属性。加密字段固定使用 <code>VARCHAR(1024)</code>，忽略 <code>length</code>。</td></tr>
+    <tr><td class="param-name">unique</td><td>boolean</td><td>false</td><td>列是否添加唯一约束；<code>true</code> 时自动建表在列定义后追加 <code>UNIQUE</code>。主键列本身通过 <code>PRIMARY KEY</code> 保证唯一，无需设置此属性。</td></tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <div class="callout-title">说明</div>
+  <ul>
+    <li>这三个属性<strong>仅影响 DDL 自动建表</strong>，框架在运行时不会校验或拦截违反约束的值——约束由数据库本身强制执行。</li>
+    <li>对于已存在的表，修改这些属性不会触发 ALTER TABLE；需手动执行 DDL 或先删除表再让框架重建。</li>
+    <li><code>length</code> 对 <code>BLOB</code>、<code>DATE</code>、<code>TIMESTAMP</code>、<code>DECIMAL</code> 等固定格式类型无效。</li>
+  </ul>
+</div>
 
 <h2>查询构建器 VKQuery</h2>
 
@@ -684,6 +854,9 @@ executor.submit(task2);</code></pre>
     <span class="ty">System</span>.err.println(e.getCode() + <span class="st">" "</span> + e.getMessage());
     <span class="ty">System</span>.err.println(<span class="st">"SQL: "</span> + e.getSql());
     <span class="ty">System</span>.err.println(<span class="st">"SQLState: "</span> + e.getSqlState());
+} <span class="kw">catch</span> (<span class="ty">VKOptimisticLockException</span> e) {
+    <span class="cm">// 乐观锁冲突：@VKVersion 版本不匹配，UPDATE 影响行数为 0</span>
+    <span class="cm">// 建议：重新查询最新实体，合并变更后重试</span>
 } <span class="kw">catch</span> (<span class="ty">VKPoolException</span> e) {
     <span class="cm">// 连接池耗尽或连接获取超时</span>
 } <span class="kw">catch</span> (<span class="ty">VKTxException</span> e) {
@@ -708,6 +881,7 @@ executor.submit(task2);</code></pre>
     <tr><td><code>VKScanException</code></td><td>DK-510</td><td>实体扫描失败</td></tr>
     <tr><td><code>VKPoolException</code></td><td>DK-520</td><td>连接池耗尽或超时</td></tr>
     <tr><td><code>VKTxException</code></td><td>DK-530</td><td>事务提交/回滚/传播违规</td></tr>
+    <tr><td><code>VKOptimisticLockException</code></td><td>DK-550</td><td>乐观锁冲突（版本号不匹配，UPDATE 影响行数为 0）</td></tr>
   </tbody>
 </table>
 
