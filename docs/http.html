@@ -44,157 +44,710 @@
 <div class="page-header">
   <div class="module-tag">🔗 Vostok.Http</div>
   <h1>Http 客户端模块</h1>
-  <p class="desc">统一 HTTP 客户端，支持命名 Client、重试与退避、连接池、JSON 自动解析、流式响应、SSE 事件流、请求拦截器和指标统计。</p>
+  <p class="desc">统一 HTTP 客户端，支持命名 Client（baseUrl + 独立配置）、链式请求构建器、重试与指数退避、熔断器（Circuit Breaker）、舱壁（Bulkhead）、客户端限流、JSON 自动序列化/反序列化、流式响应、SSE 事件流、WebSocket、请求拦截器链、Cookie 管理、mTLS 以及请求指标统计。</p>
 </div>
 
-<h2>初始化</h2>
+<h2>初始化（可选）</h2>
+
+<h3>零配置启动</h3>
+<pre><code><span class="cm">// 无需显式初始化，首次请求时自动以默认配置启动</span>
+<span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users"</span>).execute();</code></pre>
+
+<h3>显式初始化</h3>
 <pre><code><span class="ty">Vostok</span>.Http.init(<span class="kw">new</span> <span class="ty">VKHttpConfig</span>()
-    .connectTimeoutMs(<span class="nu">3000</span>)
-    .totalTimeoutMs(<span class="nu">10000</span>)
-    .maxRetries(<span class="nu">1</span>)
-    .retryBackoffBaseMs(<span class="nu">200</span>)
+    .connectTimeoutMs(<span class="num">3000</span>)
+    .totalTimeoutMs(<span class="num">10000</span>)
+    .readTimeoutMs(<span class="num">0</span>)             <span class="cm">// 0 = 不限制</span>
+    .maxRetries(<span class="num">2</span>)
+    .retryBackoffBaseMs(<span class="num">100</span>)
+    .retryBackoffMaxMs(<span class="num">1000</span>)
+    .retryJitterEnabled(<span class="kw">true</span>)
+    .retryOnStatuses(<span class="num">429</span>, <span class="num">502</span>, <span class="num">503</span>, <span class="num">504</span>)
+    .retryMethods(<span class="st">"GET"</span>, <span class="st">"HEAD"</span>, <span class="st">"PUT"</span>, <span class="st">"DELETE"</span>)
+    .failOnNon2xx(<span class="kw">true</span>)
+    .followRedirects(<span class="kw">true</span>)
+    .maxResponseBodyBytes(<span class="num">8</span> * <span class="num">1024</span> * <span class="num">1024</span>)  <span class="cm">// 8MB</span>
+    .userAgent(<span class="st">"MyApp/1.0"</span>)
+    .metricsEnabled(<span class="kw">true</span>)
 );</code></pre>
 
 <h2>快速请求</h2>
-<pre><code><span class="cm">// GET</span>
-<span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users"</span>)
+
+<h3>GET</h3>
+<pre><code><span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users"</span>)
     .header(<span class="st">"Accept"</span>, <span class="st">"application/json"</span>)
     .execute();
-<span class="ty">System</span>.out.println(res.status() + <span class="st">" "</span> + res.body());
 
-<span class="cm">// GET 并自动解析 JSON</span>
-<span class="ty">User</span> user = <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users/1"</span>)
-    .executeJson(<span class="ty">User</span>.class);
+<span class="ty">System</span>.out.println(res.statusCode() + <span class="st">" "</span> + res.bodyText());</code></pre>
 
-<span class="cm">// POST JSON</span>
-<span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"https://api.example.com/users"</span>)
-    .bodyJson(user)
+<h3>GET 并自动解析 JSON</h3>
+<pre><code><span class="ty">User</span> user = <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users/1"</span>)
+    .executeJson(<span class="ty">User</span>.class);</code></pre>
+
+<h3>POST JSON</h3>
+<pre><code><span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"https://api.example.com/users"</span>)
+    .bodyJson(<span class="kw">new</span> <span class="ty">User</span>(<span class="st">"alice"</span>, <span class="st">"alice@example.com"</span>))
+    .execute();
+<span class="ty">User</span> created = res.bodyJson(<span class="ty">User</span>.class);</code></pre>
+
+<h3>表单提交（application/x-www-form-urlencoded）</h3>
+<pre><code><span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"https://example.com/login"</span>)
+    .form(<span class="st">"username"</span>, <span class="st">"alice"</span>)
+    .form(<span class="st">"password"</span>, <span class="st">"secret"</span>)
     .execute();
 
-<span class="cm">// 表单提交</span>
-<span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"https://example.com/form"</span>)
-    .form(<span class="ty">Map</span>.of(<span class="st">"username"</span>, <span class="st">"alice"</span>, <span class="st">"password"</span>, <span class="st">"secret"</span>))
+<span class="cm">// 或批量设置</span>
+<span class="ty">Vostok</span>.Http.post(<span class="st">"https://example.com/form"</span>)
+    .form(<span class="ty">Map</span>.of(<span class="st">"key1"</span>, <span class="st">"val1"</span>, <span class="st">"key2"</span>, <span class="st">"val2"</span>))
     .execute();</code></pre>
 
-<h2>请求构建器</h2>
-<pre><code><span class="cm">// 使用 put/patch/delete/head</span>
-<span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.put(<span class="st">"https://api.example.com/users/1"</span>)
-    .bearer(token)
-    .query(<span class="st">"dryRun"</span>, <span class="st">"true"</span>)
-    .bodyJson(<span class="ty">Map</span>.of(<span class="st">"name"</span>, <span class="st">"Bob"</span>))
-    .timeoutMs(<span class="nu">5000</span>)
-    .retry(<span class="nu">2</span>)
+<h3>Multipart 上传</h3>
+<pre><code><span class="cm">// 文本字段 + 文件字段混合</span>
+<span class="ty">Vostok</span>.Http.post(<span class="st">"https://api.example.com/upload"</span>)
+    .multipart(<span class="st">"description"</span>, <span class="st">"profile photo"</span>)
+    .multipart(<span class="st">"file"</span>, <span class="st">"avatar.jpg"</span>, <span class="st">"image/jpeg"</span>, fileBytes)
     .execute();</code></pre>
+
+<h3>PUT / PATCH / DELETE / HEAD / OPTIONS</h3>
+<pre><code><span class="ty">Vostok</span>.Http.put(<span class="st">"https://api.example.com/users/1"</span>)
+    .bodyJson(<span class="ty">Map</span>.of(<span class="st">"name"</span>, <span class="st">"Bob"</span>))
+    .execute();
+
+<span class="ty">Vostok</span>.Http.patch(<span class="st">"https://api.example.com/users/1"</span>)
+    .bodyJson(<span class="ty">Map</span>.of(<span class="st">"email"</span>, <span class="st">"bob@example.com"</span>))
+    .execute();
+
+<span class="ty">Vostok</span>.Http.delete(<span class="st">"https://api.example.com/users/1"</span>).execute();
+
+<span class="ty">Vostok</span>.Http.head(<span class="st">"https://api.example.com/users"</span>).execute();
+
+<span class="ty">Vostok</span>.Http.request().options(<span class="st">"https://api.example.com/users"</span>).execute();</code></pre>
+
+<h2>请求构建器详解</h2>
+
+<h3>URL 路径参数</h3>
+<pre><code><span class="cm">// URL 模板中的 {userId} 被替换为实际值</span>
+<span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users/{userId}/orders/{orderId}"</span>)
+    .path(<span class="st">"userId"</span>, <span class="num">42</span>)
+    .path(<span class="st">"orderId"</span>, <span class="num">100</span>)
+    .execute();</code></pre>
+
+<h3>查询参数</h3>
+<pre><code><span class="cm">// 单值查询参数</span>
+<span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users"</span>)
+    .query(<span class="st">"page"</span>, <span class="num">1</span>)
+    .query(<span class="st">"size"</span>, <span class="num">20</span>)
+    .query(<span class="st">"status"</span>, <span class="st">"active"</span>)
+    .execute();
+
+<span class="cm">// 多值查询参数（同名多值）</span>
+<span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/items"</span>)
+    .query(<span class="st">"ids"</span>, <span class="ty">List</span>.of(<span class="st">"1"</span>, <span class="st">"2"</span>, <span class="st">"3"</span>))
+    .execute();</code></pre>
+
+<h3>请求头</h3>
+<pre><code><span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/data"</span>)
+    .header(<span class="st">"X-Request-ID"</span>, requestId)
+    .header(<span class="st">"Accept"</span>, <span class="st">"application/json"</span>)
+    .headers(<span class="ty">Map</span>.of(<span class="st">"X-App"</span>, <span class="st">"myapp"</span>, <span class="st">"X-Version"</span>, <span class="st">"1.0"</span>))
+    .execute();</code></pre>
+
+<h3>认证</h3>
+<pre><code><span class="cm">// Bearer Token（OAuth2 / JWT）</span>
+<span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/me"</span>)
+    .bearer(accessToken)
+    .execute();
+
+<span class="cm">// HTTP Basic Auth</span>
+<span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/resource"</span>)
+    .basic(<span class="st">"username"</span>, <span class="st">"password"</span>)
+    .execute();
+
+<span class="cm">// API Key（Header 方式）</span>
+<span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/data"</span>)
+    .apiKeyHeader(<span class="st">"X-Api-Key"</span>, apiKey)
+    .execute();
+
+<span class="cm">// API Key（Query 参数方式）</span>
+<span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/data"</span>)
+    .apiKeyQuery(<span class="st">"api_key"</span>, apiKey)
+    .execute();</code></pre>
+
+<h3>请求体</h3>
+<pre><code><span class="cm">// JSON 对象（自动序列化，Content-Type: application/json）</span>
+.bodyJson(object)
+
+<span class="cm">// 纯文本（Content-Type: text/plain; charset=UTF-8）</span>
+.bodyText(<span class="st">"hello world"</span>)
+
+<span class="cm">// 原始字节（自定义 Content-Type）</span>
+.bodyBytes(bytes, <span class="st">"application/octet-stream"</span>)
+
+<span class="cm">// 仅修改 Content-Type，不改变已设置的 body</span>
+.contentType(<span class="st">"application/xml; charset=UTF-8"</span>)</code></pre>
+
+<h3>请求级超时与重试覆盖</h3>
+<pre><code><span class="cm">// 覆盖全局超时配置（仅对本次请求生效）</span>
+<span class="ty">Vostok</span>.Http.post(<span class="st">"https://slow-service.example.com/process"</span>)
+    .bodyJson(payload)
+    .timeoutMs(<span class="num">60000</span>)         <span class="cm">// 总超时 60 秒（等价于 totalTimeoutMs）</span>
+    .readTimeoutMs(<span class="num">30000</span>)     <span class="cm">// 读取超时 30 秒</span>
+    .retry(<span class="num">3</span>)                  <span class="cm">// 最多重试 3 次</span>
+    .retryOnStatuses(<span class="num">503</span>, <span class="num">429</span>)<span class="cm">// 仅对这些状态码重试</span>
+    .retryMethods(<span class="st">"POST"</span>)     <span class="cm">// 允许 POST 重试（覆盖全局配置）</span>
+    .retryOnNetworkError(<span class="kw">true</span>)
+    .retryOnTimeout(<span class="kw">false</span>)
+    .failOnNon2xx(<span class="kw">false</span>)      <span class="cm">// 本次不在非 2xx 时抛异常</span>
+    .maxResponseBodyBytes(<span class="num">64</span> * <span class="num">1024</span> * <span class="num">1024</span>)  <span class="cm">// 允许最大 64MB 响应</span>
+    .execute();</code></pre>
+
+<h2>VKHttpResponse 响应对象</h2>
+<pre><code><span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users/1"</span>).execute();
+
+<span class="cm">// 状态码</span>
+<span class="kw">int</span> status = res.statusCode();           <span class="cm">// 如 200</span>
+<span class="kw">boolean</span> ok = res.is2xx();               <span class="cm">// true 表示 2xx</span>
+
+<span class="cm">// 响应头</span>
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">List</span>&lt;<span class="ty">String</span>&gt;&gt; headers = res.headers();
+
+<span class="cm">// 响应体：文本</span>
+<span class="ty">String</span> text = res.bodyText();            <span class="cm">// UTF-8 解码</span>
+<span class="ty">String</span> text = res.bodyText(<span class="ty">Charset</span>.forName(<span class="st">"GBK"</span>));  <span class="cm">// 指定编码</span>
+
+<span class="cm">// 响应体：JSON 反序列化</span>
+<span class="ty">User</span> user = res.bodyJson(<span class="ty">User</span>.class);
+
+<span class="cm">// 响应体：原始字节</span>
+<span class="kw">byte</span>[] bytes = res.bodyBytes();</code></pre>
+
+<div class="callout tip">
+  <div class="callout-title">failOnNon2xx 说明</div>
+  当全局或请求级 <code>failOnNon2xx=true</code>（默认）时，非 2xx 响应会抛出 <code>VKHttpException</code>，不会返回 <code>VKHttpResponse</code>。
+  设置 <code>.failOnNon2xx(false)</code> 可关闭此行为，自行检查 <code>res.statusCode()</code>。
+</div>
 
 <h2>命名 Client</h2>
-<pre><code><span class="cm">// 注册带 baseUrl 的命名 Client</span>
-<span class="ty">Vostok</span>.Http.registerClient(<span class="st">"payments"</span>, <span class="kw">new</span> <span class="ty">VKHttpClientConfig</span>()
-    .baseUrl(<span class="st">"https://payments.internal"</span>)
-    .connectTimeoutMs(<span class="nu">2000</span>)
-    .maxRetries(<span class="nu">5</span>)
-    .defaultHeader(<span class="st">"X-Api-Key"</span>, apiKey));
+<p>命名 Client 绑定 baseUrl 和独立配置。使用相对路径时，运行时自动拼接 baseUrl。</p>
 
-<span class="cm">// 在命名 Client 上下文中使用相对路径</span>
+<h3>注册命名 Client</h3>
+<pre><code><span class="ty">Vostok</span>.Http.registerClient(<span class="st">"payments"</span>, <span class="kw">new</span> <span class="ty">VKHttpClientConfig</span>()
+    .baseUrl(<span class="st">"https://payments.internal"</span>)
+    .connectTimeoutMs(<span class="num">2000</span>)
+    .totalTimeoutMs(<span class="num">8000</span>)
+    .maxRetries(<span class="num">3</span>)
+    .putHeader(<span class="st">"X-Api-Key"</span>, apiKey)   <span class="cm">// 此 Client 的默认请求头</span>
+    .bearer(serviceToken)               <span class="cm">// 默认 Bearer Token 认证</span>
+);
+
+<span class="ty">Vostok</span>.Http.registerClient(<span class="st">"audit"</span>, <span class="kw">new</span> <span class="ty">VKHttpClientConfig</span>()
+    .baseUrl(<span class="st">"https://audit.internal"</span>)
+    .circuitEnabled(<span class="kw">true</span>)
+    .circuitFailureRateThreshold(<span class="num">50</span>)
+    .circuitOpenWaitMs(<span class="num">5000L</span>)
+);</code></pre>
+
+<h3>使用命名 Client 发请求</h3>
+<pre><code><span class="cm">// 方式一：withClient(Runnable) 切换上下文，所有相对路径请求使用该 Client</span>
 <span class="ty">Vostok</span>.Http.withClient(<span class="st">"payments"</span>, () -&gt; {
     <span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"/charge"</span>)
-        .bodyText(chargeJson)
+        .bodyJson(chargeRequest)
         .execute();
-});</code></pre>
+    processResult(res);
+});
+
+<span class="cm">// 方式二：withClient(Supplier) 切换上下文并返回值</span>
+<span class="ty">User</span> user = <span class="ty">Vostok</span>.Http.withClient(<span class="st">"payments"</span>, () -&gt;
+    <span class="ty">Vostok</span>.Http.get(<span class="st">"/account/info"</span>).executeJson(<span class="ty">User</span>.class)
+);
+
+<span class="cm">// 方式三：通过请求构建器的 client() 指定，不依赖 withClient 上下文</span>
+<span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.request()
+    .client(<span class="st">"payments"</span>)
+    .post(<span class="st">"/refund"</span>)
+    .bodyJson(refundRequest)
+    .execute();
+
+<span class="cm">// 查看所有已注册的命名 Client</span>
+<span class="ty">Set</span>&lt;<span class="ty">String</span>&gt; names = <span class="ty">Vostok</span>.Http.clientNames();
+
+<span class="cm">// 获取当前线程上下文中激活的 Client 名（withClient 内返回名称，否则返回 null）</span>
+<span class="ty">String</span> current = <span class="ty">Vostok</span>.Http.currentClientName();</code></pre>
 
 <h2>异步请求</h2>
-<pre><code><span class="cm">// 异步执行，返回 CompletableFuture</span>
+<pre><code><span class="cm">// 异步 GET，返回 CompletableFuture&lt;VKHttpResponse&gt;</span>
 <span class="ty">CompletableFuture</span>&lt;<span class="ty">VKHttpResponse</span>&gt; future =
     <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/data"</span>).executeAsync();
 
-future.thenAccept(res -&gt; <span class="ty">System</span>.out.println(res.body()));
+future.thenAccept(res -&gt;
+    <span class="ty">Vostok</span>.Log.info(<span class="st">"got {} bytes"</span>, res.bodyBytes().length));
 
-<span class="cm">// 异步 JSON 解析</span>
-<span class="ty">CompletableFuture</span>&lt;<span class="ty">User</span>&gt; futureUser =
-    <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users/1"</span>)
-        .executeJsonAsync(<span class="ty">User</span>.class);</code></pre>
+<span class="cm">// 异步 POST 并解析 JSON</span>
+<span class="ty">CompletableFuture</span>&lt;<span class="ty">Order</span>&gt; futureOrder =
+    <span class="ty">Vostok</span>.Http.post(<span class="st">"https://api.example.com/orders"</span>)
+        .bodyJson(orderRequest)
+        .executeJsonAsync(<span class="ty">Order</span>.class);
+
+futureOrder.thenAccept(order -&gt; <span class="ty">Vostok</span>.Log.info(<span class="st">"created order {}"</span>, order.id()))
+           .exceptionally(ex -&gt; { <span class="ty">Vostok</span>.Log.error(<span class="st">"failed"</span>, ex); <span class="kw">return null</span>; });</code></pre>
 
 <h2>流式响应</h2>
-<pre><code><span class="cm">// 分块接收大文件</span>
+<p>流式响应适合下载大文件或实时接收数据，不将全部响应体读入内存。</p>
+
+<h3>同步流式接收（executeStream）</h3>
+<pre><code><span class="cm">// 同步阻塞，直到流结束</span>
 <span class="ty">Vostok</span>.Http.get(<span class="st">"https://files.example.com/large.zip"</span>)
-    .executeStream((chunk, done) -&gt; {
-        outputStream.write(chunk);
-        <span class="kw">if</span> (done) outputStream.close();
+    .executeStream(<span class="kw">new</span> <span class="ty">VKHttpChunkListener</span>() {
+        <span class="kw">public void</span> onOpen(<span class="ty">VKHttpResponseMeta</span> meta) {
+            <span class="ty">System</span>.out.println(<span class="st">"status: "</span> + meta.statusCode());
+        }
+        <span class="kw">public void</span> onChunk(<span class="kw">byte</span>[] chunk) {
+            outputStream.write(chunk, <span class="num">0</span>, chunk.length);
+        }
+        <span class="kw">public void</span> onError(<span class="ty">Throwable</span> t) {
+            <span class="ty">Vostok</span>.Log.error(<span class="st">"stream error"</span>, t);
+        }
+        <span class="kw">public void</span> onComplete() {
+            outputStream.close();
+        }
     });</code></pre>
 
+<h3>异步流式接收（executeStreamAsync）</h3>
+<pre><code><span class="ty">CompletableFuture</span>&lt;<span class="ty">Void</span>&gt; streamFuture =
+    <span class="ty">Vostok</span>.Http.get(<span class="st">"https://files.example.com/data.csv"</span>)
+        .executeStreamAsync(<span class="kw">new</span> <span class="ty">VKHttpChunkListener</span>() {
+            <span class="kw">public void</span> onChunk(<span class="kw">byte</span>[] chunk) { process(chunk); }
+            <span class="kw">public void</span> onComplete() { finalize(); }
+        });
+
+streamFuture.join();  <span class="cm">// 等待流结束</span></code></pre>
+
+<h3>持久化流会话（openStream）</h3>
+<pre><code><span class="cm">// 返回 Session 对象，可随时主动关闭</span>
+<span class="ty">VKHttpStreamSession</span> session = <span class="ty">Vostok</span>.Http.get(<span class="st">"https://stream.example.com/feed"</span>)
+    .openStream(<span class="kw">new</span> <span class="ty">VKHttpChunkListener</span>() {
+        <span class="kw">public void</span> onChunk(<span class="kw">byte</span>[] chunk) { process(chunk); }
+        <span class="kw">public void</span> onComplete() {}
+    });
+
+<span class="ty">System</span>.out.println(session.isOpen());  <span class="cm">// true</span>
+
+<span class="cm">// 主动关闭流</span>
+session.close();
+<span class="cm">// 或</span>
+session.cancel();</code></pre>
+
 <h2>SSE（Server-Sent Events）</h2>
-<pre><code><span class="cm">// 接收 SSE 事件流</span>
+
+<h3>同步 SSE（executeSse）</h3>
+<pre><code><span class="cm">// 同步阻塞，直到 SSE 流结束</span>
 <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/events"</span>)
     .header(<span class="st">"Accept"</span>, <span class="st">"text/event-stream"</span>)
     .executeSse(<span class="kw">new</span> <span class="ty">VKHttpSseListener</span>() {
-        <span class="kw">public void</span> <span class="fn">onEvent</span>(<span class="ty">String</span> event, <span class="ty">String</span> data, <span class="ty">String</span> id) {
-            <span class="ty">System</span>.out.println(<span class="st">"event="</span> + event + <span class="st">" data="</span> + data);
+        <span class="kw">public void</span> onOpen(<span class="ty">VKHttpResponseMeta</span> meta) {
+            <span class="ty">Vostok</span>.Log.info(<span class="st">"SSE connected, status={}"</span>, meta.statusCode());
         }
-        <span class="kw">public void</span> <span class="fn">onError</span>(<span class="ty">Throwable</span> ex) {}
-        <span class="kw">public void</span> <span class="fn">onComplete</span>() {}
+        <span class="kw">public void</span> onEvent(<span class="ty">VKHttpSseEvent</span> event) {
+            <span class="ty">Vostok</span>.Log.info(<span class="st">"event={}, id={}, data={}"</span>,
+                event.getEvent(), event.getId(), event.getData());
+        }
+        <span class="kw">public void</span> onError(<span class="ty">Throwable</span> t) {
+            <span class="ty">Vostok</span>.Log.error(<span class="st">"SSE error"</span>, t);
+        }
+        <span class="kw">public void</span> onComplete() {
+            <span class="ty">Vostok</span>.Log.info(<span class="st">"SSE stream closed"</span>);
+        }
+    });</code></pre>
+
+<h3>异步 SSE（executeSseAsync）</h3>
+<pre><code><span class="cm">// 异步执行，返回 CompletableFuture&lt;Void&gt;，流结束时 complete</span>
+<span class="ty">CompletableFuture</span>&lt;<span class="ty">Void</span>&gt; sseFuture =
+    <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/events"</span>)
+        .executeSseAsync(<span class="kw">new</span> <span class="ty">VKHttpSseListener</span>() {
+            <span class="kw">public void</span> onEvent(<span class="ty">VKHttpSseEvent</span> event) {
+                handleEvent(event.getData());
+            }
+        });
+
+sseFuture.thenRun(() -&gt; <span class="ty">System</span>.out.println(<span class="st">"SSE done"</span>));</code></pre>
+
+<h3>持久化 SSE 会话（openSse）</h3>
+<pre><code><span class="cm">// 返回 Session，可手动关闭（适合需要主动断开的场景）</span>
+<span class="ty">VKHttpStreamSession</span> session = <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/events"</span>)
+    .openSse(<span class="kw">new</span> <span class="ty">VKHttpSseListener</span>() {
+        <span class="kw">public void</span> onEvent(<span class="ty">VKHttpSseEvent</span> event) {
+            <span class="kw">if</span> (<span class="st">"done"</span>.equals(event.getEvent())) {
+                session.close();  <span class="cm">// 收到特定事件后关闭</span>
+            }
+        }
     });
 
-<span class="cm">// 保持长连接（返回 Session 对象，可手动关闭）</span>
-<span class="ty">VKHttpStreamSession</span> session = <span class="ty">Vostok</span>.Http.get(url)
-    .openSse(listener);
 <span class="cm">// 稍后关闭</span>
 session.close();</code></pre>
 
+<p><code>VKHttpSseEvent</code> 字段说明：</p>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>getEvent()</code></td><td>String</td><td>事件类型名（SSE <code>event:</code> 字段），无则为 null</td></tr>
+    <tr><td><code>getId()</code></td><td>String</td><td>事件 ID（SSE <code>id:</code> 字段），无则为 null</td></tr>
+    <tr><td><code>getData()</code></td><td>String</td><td>事件数据（SSE <code>data:</code> 字段，多行自动合并）</td></tr>
+    <tr><td><code>getRetryMs()</code></td><td>Long</td><td>服务端建议的重连延迟（SSE <code>retry:</code> 字段，ms），无则为 null</td></tr>
+    <tr><td><code>getExtFields()</code></td><td>Map&lt;String,String&gt;</td><td>扩展字段（非标准 SSE 字段），不可修改</td></tr>
+  </tbody>
+</table>
+
+<h2>WebSocket</h2>
+<pre><code><span class="cm">// 建立 WebSocket 连接（阻塞直到连接建立或超时）</span>
+<span class="ty">VKHttpWebSocketSession</span> ws = <span class="ty">Vostok</span>.Http.request()
+    .get(<span class="st">"wss://ws.example.com/chat"</span>)
+    .header(<span class="st">"Authorization"</span>, <span class="st">"Bearer "</span> + token)
+    .build()
+    .let(req -&gt; <span class="ty">Vostok</span>.Http.websocket(req, <span class="kw">new</span> <span class="ty">VKHttpWebSocketListener</span>() {
+        <span class="kw">public void</span> onOpen(<span class="ty">VKHttpWebSocketSession</span> session) {
+            session.sendText(<span class="st">"hello"</span>);
+        }
+        <span class="kw">public void</span> onMessage(<span class="ty">VKHttpWebSocketSession</span> session, <span class="ty">String</span> text) {
+            <span class="ty">Vostok</span>.Log.info(<span class="st">"received: {}"</span>, text);
+        }
+        <span class="kw">public void</span> onBinary(<span class="ty">VKHttpWebSocketSession</span> session, <span class="kw">byte</span>[] data) {
+            processBinary(data);
+        }
+        <span class="kw">public void</span> onClose(<span class="ty">VKHttpWebSocketSession</span> session, <span class="kw">int</span> code, <span class="ty">String</span> reason) {
+            <span class="ty">Vostok</span>.Log.info(<span class="st">"closed: {} {}"</span>, code, reason);
+        }
+        <span class="kw">public void</span> onError(<span class="ty">VKHttpWebSocketSession</span> session, <span class="ty">Throwable</span> err) {
+            <span class="ty">Vostok</span>.Log.error(<span class="st">"ws error"</span>, err);
+        }
+    }));
+
+<span class="cm">// 通过 websocket(VKHttpRequest, listener) 建立连接</span>
+<span class="ty">VKHttpRequest</span> req = <span class="ty">Vostok</span>.Http.get(<span class="st">"wss://ws.example.com/chat"</span>).build();
+<span class="ty">VKHttpWebSocketSession</span> ws = <span class="ty">Vostok</span>.Http.websocket(req, listener);
+
+<span class="cm">// 发送消息</span>
+ws.sendText(<span class="st">"ping"</span>);                          <span class="cm">// 异步发送文本</span>
+ws.sendBinary(data);                           <span class="cm">// 异步发送二进制</span>
+ws.sendText(<span class="st">"bye"</span>).thenRun(() -&gt; ws.close()); <span class="cm">// 发送后关闭</span>
+
+<span class="cm">// 关闭连接</span>
+ws.close();                       <span class="cm">// 正常关闭（状态码 1000）</span>
+ws.close(<span class="num">1001</span>, <span class="st">"going away"</span>);    <span class="cm">// 指定状态码和原因</span>
+<span class="kw">boolean</span> open = ws.isOpen();       <span class="cm">// 查询连接状态</span></code></pre>
+
 <h2>拦截器</h2>
-<pre><code><span class="cm">// 全局拦截器（请求/响应日志）</span>
-<span class="ty">Vostok</span>.Http.addInterceptor((req, chain) -&gt; {
-    <span class="ty">Vostok</span>.Log.debug(<span class="st">"→ {} {}"</span>, req.method(), req.url());
-    <span class="ty">VKHttpResponse</span> res = chain.proceed(req);
-    <span class="ty">Vostok</span>.Log.debug(<span class="st">"← {}"</span>, res.status());
+<p>拦截器执行顺序：全局拦截器（按注册顺序）→ 客户端级拦截器（按注册顺序）→ 实际 HTTP 执行（含重试）。</p>
+
+<pre><code><span class="cm">// 全局拦截器——追加请求追踪 Header</span>
+<span class="ty">Vostok</span>.Http.addInterceptor(chain -&gt; {
+    <span class="ty">VKHttpRequest</span> req = chain.request();
+    <span class="ty">Vostok</span>.Log.debug(<span class="st">"→ {} {}"</span>, req.getMethod(), req.getUrlOrPath());
+    <span class="ty">VKHttpResponse</span> res = chain.proceed();
+    <span class="ty">Vostok</span>.Log.debug(<span class="st">"← {}"</span>, res.statusCode());
     <span class="kw">return</span> res;
 });
 
-<span class="cm">// 针对命名 Client 的拦截器</span>
-<span class="ty">Vostok</span>.Http.addInterceptor(<span class="st">"payments"</span>, (req, chain) -&gt; {
-    <span class="kw">return</span> chain.proceed(req.withHeader(<span class="st">"X-Trace"</span>, <span class="ty">UUID</span>.randomUUID().toString()));
-});</code></pre>
+<span class="cm">// 修改请求（追加 Header 后透传）</span>
+<span class="ty">Vostok</span>.Http.addInterceptor(chain -&gt; {
+    <span class="ty">VKHttpRequest</span> original = chain.request();
+    <span class="cm">// 构建新请求：复制原请求，追加 Header</span>
+    <span class="ty">VKHttpRequest</span> modified = <span class="ty">Vostok</span>.Http.request()
+        .client(original.getClientName())
+        .method(original.getMethod())
+        .url(original.getUrlOrPath())
+        .header(<span class="st">"X-Trace-ID"</span>, <span class="ty">UUID</span>.randomUUID().toString())
+        .build();
+    <span class="kw">return</span> chain.proceed(modified);
+});
 
-<h2>指标</h2>
-<pre><code><span class="ty">VKHttpMetrics</span> m = <span class="ty">Vostok</span>.Http.metrics();
-<span class="ty">System</span>.out.printf(<span class="st">"totalReq=%d, errors=%d, avgMs=%.1f%n"</span>,
-    m.totalRequests(), m.errorCount(), m.avgResponseMs());
+<span class="cm">// 针对特定命名 Client 的拦截器</span>
+<span class="ty">Vostok</span>.Http.addInterceptor(<span class="st">"payments"</span>, chain -&gt; {
+    <span class="ty">Vostok</span>.Log.debug(<span class="st">"payments call: {}"</span>, chain.request().getUrlOrPath());
+    <span class="kw">return</span> chain.proceed();
+});
 
-<span class="ty">Vostok</span>.Http.metrics(<span class="st">"payments"</span>);  <span class="cm">// 命名 Client 指标</span>
+<span class="cm">// 在 VKHttpConfig / VKHttpClientConfig 中预置拦截器</span>
+<span class="ty">Vostok</span>.Http.init(<span class="kw">new</span> <span class="ty">VKHttpConfig</span>()
+    .addInterceptor(chain -&gt; {
+        <span class="cm">// 全局签名拦截器</span>
+        <span class="kw">return</span> chain.proceed();
+    })
+);
+<span class="ty">Vostok</span>.Http.registerClient(<span class="st">"billing"</span>, <span class="kw">new</span> <span class="ty">VKHttpClientConfig</span>()
+    .baseUrl(<span class="st">"https://billing.internal"</span>)
+    .addInterceptor(chain -&gt; chain.proceed())  <span class="cm">// 客户端级拦截器</span>
+);</code></pre>
+
+<h2>熔断器（Circuit Breaker）</h2>
+<pre><code><span class="cm">// 全局启用熔断器</span>
+<span class="ty">Vostok</span>.Http.init(<span class="kw">new</span> <span class="ty">VKHttpConfig</span>()
+    .circuitEnabled(<span class="kw">true</span>)
+    .circuitWindowSize(<span class="num">20</span>)              <span class="cm">// 滑动窗口请求数</span>
+    .circuitMinCalls(<span class="num">10</span>)               <span class="cm">// 触发熔断计算的最小请求数</span>
+    .circuitFailureRateThreshold(<span class="num">50</span>)   <span class="cm">// 失败率阈值（%），超过则熔断</span>
+    .circuitOpenWaitMs(<span class="num">5000</span>)           <span class="cm">// 熔断开启后等待 5s 再尝试半开</span>
+    .circuitHalfOpenMaxCalls(<span class="num">3</span>)        <span class="cm">// 半开状态最多允许 3 次请求探测</span>
+    .circuitRecordStatuses(<span class="num">429</span>, <span class="num">500</span>, <span class="num">502</span>, <span class="num">503</span>, <span class="num">504</span>)  <span class="cm">// 计为失败的状态码</span>
+);
+
+<span class="cm">// 或仅对特定命名 Client 启用</span>
+<span class="ty">Vostok</span>.Http.registerClient(<span class="st">"risky"</span>, <span class="kw">new</span> <span class="ty">VKHttpClientConfig</span>()
+    .baseUrl(<span class="st">"https://risky.internal"</span>)
+    .circuitEnabled(<span class="kw">true</span>)
+    .circuitFailureRateThreshold(<span class="num">60</span>)
+);</code></pre>
+
+<h2>舱壁（Bulkhead）</h2>
+<pre><code><span class="cm">// 全局舱壁：限制最大并发请求数</span>
+<span class="ty">Vostok</span>.Http.init(<span class="kw">new</span> <span class="ty">VKHttpConfig</span>()
+    .bulkheadEnabled(<span class="kw">true</span>)
+    .bulkheadMaxConcurrent(<span class="num">100</span>)      <span class="cm">// 最大并发数</span>
+    .bulkheadQueueSize(<span class="num">50</span>)           <span class="cm">// 等待队列大小（0 = 无队列，满即拒绝）</span>
+    .bulkheadAcquireTimeoutMs(<span class="num">2000</span>) <span class="cm">// 等待获取许可的超时时间（0 = 立即失败）</span>
+);</code></pre>
+
+<h2>客户端限流</h2>
+<pre><code><span class="cm">// 限制发出请求的速率</span>
+<span class="ty">Vostok</span>.Http.init(<span class="kw">new</span> <span class="ty">VKHttpConfig</span>()
+    .rateLimitQps(<span class="num">100</span>)   <span class="cm">// 每秒最多 100 个请求</span>
+    .rateLimitBurst(<span class="num">20</span>)  <span class="cm">// 突发容量（令牌桶，0 = 与 QPS 相同）</span>
+);</code></pre>
+
+<h2>TLS / mTLS（命名 Client）</h2>
+<pre><code><span class="ty">Vostok</span>.Http.registerClient(<span class="st">"secure"</span>, <span class="kw">new</span> <span class="ty">VKHttpClientConfig</span>()
+    .baseUrl(<span class="st">"https://secure.internal"</span>)
+    <span class="cm">// 信任自签名证书（服务端证书验证）</span>
+    .trustStore(<span class="st">"/etc/certs/server.p12"</span>, <span class="st">"trustpass"</span>)            <span class="cm">// 默认 PKCS12</span>
+    .trustStore(<span class="st">"/etc/certs/server.jks"</span>, <span class="st">"trustpass"</span>, <span class="st">"JKS"</span>)  <span class="cm">// 指定格式</span>
+    <span class="cm">// mTLS：客户端证书</span>
+    .keyStore(<span class="st">"/etc/certs/client.p12"</span>, <span class="st">"keystorepass"</span>)
+    .keyStore(<span class="st">"/etc/certs/client.p12"</span>, <span class="st">"keystorepass"</span>, <span class="st">"keypass"</span>, <span class="st">"PKCS12"</span>)
+);</code></pre>
+
+<h2>Cookie 管理</h2>
+<pre><code><span class="cm">// 全局启用 Cookie（自动接受所有 Set-Cookie）</span>
+<span class="ty">Vostok</span>.Http.init(<span class="kw">new</span> <span class="ty">VKHttpConfig</span>()
+    .cookiePolicy(<span class="st">"ACCEPT_ALL"</span>)
+    <span class="cm">// 可选值：ACCEPT_ALL / ACCEPT_NONE / ACCEPT_ORIGINAL_SERVER</span>
+);
+
+<span class="cm">// 仅对特定命名 Client 启用</span>
+<span class="ty">Vostok</span>.Http.registerClient(<span class="st">"web"</span>, <span class="kw">new</span> <span class="ty">VKHttpClientConfig</span>()
+    .baseUrl(<span class="st">"https://webapp.example.com"</span>)
+    .cookiePolicy(<span class="st">"ACCEPT_ORIGINAL_SERVER"</span>)
+);</code></pre>
+
+<h2>指标统计</h2>
+<pre><code><span class="cm">// 全局指标快照</span>
+<span class="ty">VKHttpMetrics</span> m = <span class="ty">Vostok</span>.Http.metrics();
+<span class="ty">System</span>.out.printf(
+    <span class="st">"total=%d, success=%d, failed=%d, retried=%d, timeout=%d, netErr=%d%n"</span>,
+    m.totalCalls(), m.successCalls(), m.failedCalls(),
+    m.retriedCalls(), m.timeoutCalls(), m.networkErrorCalls());
+<span class="ty">System</span>.out.printf(
+    <span class="st">"streamOpens=%d, sseEvents=%d, totalCostMs=%d%n"</span>,
+    m.streamOpens(), m.sseEvents(), m.totalCostMs());
+<span class="cm">// 按状态码分布</span>
+m.statusCounts().forEach((status, count) -&gt;
+    <span class="ty">System</span>.out.println(status + <span class="st">": "</span> + count));
+
+<span class="cm">// 特定命名 Client 的独立指标</span>
+<span class="ty">VKHttpMetrics</span> pm = <span class="ty">Vostok</span>.Http.metrics(<span class="st">"payments"</span>);
+
+<span class="cm">// 重置全局指标（慎用，会清零所有计数）</span>
 <span class="ty">Vostok</span>.Http.resetMetrics();</code></pre>
 
-<h2>配置参数</h2>
+<p><code>VKHttpMetrics</code> 字段说明：</p>
+<table class="api-table">
+  <thead><tr><th>字段方法</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>totalCalls()</code></td><td>long</td><td>总请求次数（含重试）</td></tr>
+    <tr><td><code>successCalls()</code></td><td>long</td><td>成功请求次数（2xx）</td></tr>
+    <tr><td><code>failedCalls()</code></td><td>long</td><td>最终失败的请求次数</td></tr>
+    <tr><td><code>retriedCalls()</code></td><td>long</td><td>触发过重试的请求次数</td></tr>
+    <tr><td><code>timeoutCalls()</code></td><td>long</td><td>超时次数</td></tr>
+    <tr><td><code>networkErrorCalls()</code></td><td>long</td><td>网络错误次数（连接失败等）</td></tr>
+    <tr><td><code>streamOpens()</code></td><td>long</td><td>流/SSE 连接建立次数</td></tr>
+    <tr><td><code>streamCloses()</code></td><td>long</td><td>流/SSE 正常关闭次数</td></tr>
+    <tr><td><code>streamErrors()</code></td><td>long</td><td>流/SSE 出错次数</td></tr>
+    <tr><td><code>sseEvents()</code></td><td>long</td><td>接收到的 SSE 事件总数</td></tr>
+    <tr><td><code>totalCostMs()</code></td><td>long</td><td>所有请求累计耗时（ms）</td></tr>
+    <tr><td><code>statusCounts()</code></td><td>Map&lt;Integer,Long&gt;</td><td>按 HTTP 状态码统计的响应次数</td></tr>
+  </tbody>
+</table>
+
+<h2>生命周期</h2>
+<pre><code><span class="cm">// 检查是否已初始化</span>
+<span class="kw">boolean</span> running = <span class="ty">Vostok</span>.Http.started();
+
+<span class="cm">// 获取当前配置快照（返回副本）</span>
+<span class="ty">VKHttpConfig</span> cfg = <span class="ty">Vostok</span>.Http.config();
+
+<span class="cm">// 重新初始化（替换全局配置，不影响已注册的命名 Client）</span>
+<span class="ty">Vostok</span>.Http.reinit(<span class="kw">new</span> <span class="ty">VKHttpConfig</span>().totalTimeoutMs(<span class="num">5000</span>));
+
+<span class="cm">// 关闭 HTTP 模块（释放连接池资源）</span>
+<span class="ty">Vostok</span>.Http.close();</code></pre>
+
+<h2>工具方法</h2>
+<pre><code><span class="cm">// URL 编码（对查询参数值或路径段进行 percent encoding）</span>
+<span class="ty">String</span> encoded = <span class="ty">Vostok</span>.Http.urlEncode(<span class="st">"hello world &amp; more"</span>);
+<span class="cm">// → "hello+world+%26+more"</span></code></pre>
+
+<h2>VKHttpConfig 配置参数</h2>
 <table class="config-table">
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td class="param-name">connectTimeoutMs</td><td>long</td><td>3000</td><td>TCP 连接超时（ms）</td></tr>
-    <tr><td class="param-name">totalTimeoutMs</td><td>long</td><td>10000</td><td>请求总超时（ms，0=无限制）</td></tr>
-    <tr><td class="param-name">readTimeoutMs</td><td>long</td><td>0</td><td>读取超时（0=无限制）</td></tr>
-    <tr><td class="param-name">maxRetries</td><td>int</td><td>1</td><td>失败最大重试次数</td></tr>
-    <tr><td class="param-name">retryBackoffBaseMs</td><td>long</td><td>100</td><td>重试基础退避时间（指数退避）</td></tr>
-    <tr><td class="param-name">failOnNon2xx</td><td>boolean</td><td>true</td><td>非 2xx 状态码时是否抛异常</td></tr>
-    <tr><td class="param-name">maxResponseBodyBytes</td><td>long</td><td>8388608</td><td>响应体最大字节数（8MB）</td></tr>
-    <tr><td class="param-name">metricsEnabled</td><td>boolean</td><td>true</td><td>开启请求指标统计</td></tr>
-    <tr><td class="param-name">requestBodyCompression</td><td>boolean</td><td>false</td><td>自动 GZIP 压缩请求体</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">基础</td></tr>
+    <tr><td class="param-name">connectTimeoutMs</td><td>long</td><td>3000</td><td>TCP 连接超时（ms，最小 1）</td></tr>
+    <tr><td class="param-name">totalTimeoutMs / requestTimeoutMs</td><td>long</td><td>10000</td><td>请求总超时（ms，含重试），两者等价</td></tr>
+    <tr><td class="param-name">readTimeoutMs</td><td>long</td><td>0</td><td>读取超时（ms，0 = 不限制）</td></tr>
+    <tr><td class="param-name">followRedirects</td><td>boolean</td><td>true</td><td>是否自动跟随重定向</td></tr>
+    <tr><td class="param-name">failOnNon2xx</td><td>boolean</td><td>true</td><td>非 2xx 状态码时抛 VKHttpException</td></tr>
+    <tr><td class="param-name">maxResponseBodyBytes</td><td>long</td><td>8 MB</td><td>响应体最大字节数（超出时抛异常）</td></tr>
+    <tr><td class="param-name">userAgent</td><td>String</td><td>"VostokHttp/1.0"</td><td>User-Agent 请求头</td></tr>
+    <tr><td class="param-name">defaultHeaders / putHeader</td><td>Map / String,String</td><td>空</td><td>所有请求的默认 Header；<code>putHeader</code> 单个添加</td></tr>
+    <tr><td class="param-name">cookiePolicy</td><td>String</td><td>null（不启用）</td><td>Cookie 策略：ACCEPT_ALL / ACCEPT_NONE / ACCEPT_ORIGINAL_SERVER</td></tr>
+    <tr><td class="param-name">logEnabled</td><td>boolean</td><td>true</td><td>是否开启内置请求日志</td></tr>
+    <tr><td class="param-name">metricsEnabled</td><td>boolean</td><td>true</td><td>是否收集请求指标</td></tr>
+    <tr><td class="param-name">clientReuseIdleEvictMs</td><td>long</td><td>600000</td><td>底层 HttpClient 空闲驱逐时间（ms）</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">重试</td></tr>
+    <tr><td class="param-name">maxRetries</td><td>int</td><td>1</td><td>最大重试次数（0 = 不重试）</td></tr>
+    <tr><td class="param-name">retryBackoffBaseMs</td><td>long</td><td>100</td><td>指数退避基础时间（ms）</td></tr>
+    <tr><td class="param-name">retryBackoffMaxMs</td><td>long</td><td>1000</td><td>指数退避单次最大时间（ms）</td></tr>
+    <tr><td class="param-name">maxRetryDelayMs</td><td>long</td><td>30000</td><td>所有重试累计等待上限（ms）</td></tr>
+    <tr><td class="param-name">retryJitterEnabled</td><td>boolean</td><td>true</td><td>退避时间加随机抖动，避免惊群效应</td></tr>
+    <tr><td class="param-name">retryOnNetworkError</td><td>boolean</td><td>true</td><td>网络异常时是否重试</td></tr>
+    <tr><td class="param-name">retryOnTimeout</td><td>boolean</td><td>true</td><td>超时时是否重试</td></tr>
+    <tr><td class="param-name">respectRetryAfter</td><td>boolean</td><td>true</td><td>遵守响应头 Retry-After 的等待时间</td></tr>
+    <tr><td class="param-name">retryOnStatuses</td><td>Set&lt;Integer&gt;</td><td>{429,502,503,504}</td><td>触发重试的 HTTP 状态码集合</td></tr>
+    <tr><td class="param-name">retryMethods</td><td>Set&lt;String&gt;</td><td>{GET,HEAD,OPTIONS,PUT,DELETE}</td><td>允许重试的 HTTP 方法</td></tr>
+    <tr><td class="param-name">requireIdempotencyKeyForUnsafeRetry</td><td>boolean</td><td>true</td><td>POST/PATCH 等非安全方法重试时要求 Idempotency-Key Header</td></tr>
+    <tr><td class="param-name">idempotencyKeyHeader</td><td>String</td><td>"Idempotency-Key"</td><td>幂等键 Header 名称</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">熔断器</td></tr>
+    <tr><td class="param-name">circuitEnabled</td><td>boolean</td><td>false</td><td>是否启用熔断器</td></tr>
+    <tr><td class="param-name">circuitWindowSize</td><td>int</td><td>20</td><td>滑动窗口请求数</td></tr>
+    <tr><td class="param-name">circuitMinCalls</td><td>int</td><td>10</td><td>触发熔断计算的最小请求数</td></tr>
+    <tr><td class="param-name">circuitFailureRateThreshold</td><td>int</td><td>50</td><td>失败率阈值（%），超过则熔断</td></tr>
+    <tr><td class="param-name">circuitOpenWaitMs</td><td>long</td><td>5000</td><td>熔断开启后等待恢复的时间（ms）</td></tr>
+    <tr><td class="param-name">circuitHalfOpenMaxCalls</td><td>int</td><td>3</td><td>半开状态最多允许的探测请求数</td></tr>
+    <tr><td class="param-name">circuitRecordStatuses</td><td>Set&lt;Integer&gt;</td><td>{429,500,502,503,504}</td><td>计入失败统计的 HTTP 状态码</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">舱壁</td></tr>
+    <tr><td class="param-name">bulkheadEnabled</td><td>boolean</td><td>false</td><td>是否启用并发舱壁限制</td></tr>
+    <tr><td class="param-name">bulkheadMaxConcurrent</td><td>int</td><td>100</td><td>最大并发请求数</td></tr>
+    <tr><td class="param-name">bulkheadQueueSize</td><td>int</td><td>0</td><td>等待队列大小（0 = 无队列，满即拒绝）</td></tr>
+    <tr><td class="param-name">bulkheadAcquireTimeoutMs</td><td>long</td><td>0</td><td>等待获取并发许可的超时（0 = 立即失败）</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">限流</td></tr>
+    <tr><td class="param-name">rateLimitQps</td><td>int</td><td>0（不限流）</td><td>每秒最大请求数（令牌桶）</td></tr>
+    <tr><td class="param-name">rateLimitBurst</td><td>int</td><td>0</td><td>突发容量（0 = 与 QPS 相同）</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">流 / SSE</td></tr>
+    <tr><td class="param-name">streamEnabled</td><td>boolean</td><td>true</td><td>是否启用流式响应支持</td></tr>
+    <tr><td class="param-name">streamIdleTimeoutMs</td><td>long</td><td>60000</td><td>流连接空闲超时（ms，0 = 不限制）</td></tr>
+    <tr><td class="param-name">streamTotalTimeoutMs</td><td>long</td><td>0</td><td>流连接总时长上限（ms，0 = 不限制）</td></tr>
+    <tr><td class="param-name">streamExecutorThreads</td><td>int</td><td>4</td><td>流处理线程池线程数</td></tr>
+    <tr><td class="param-name">streamQueueCapacity</td><td>int</td><td>1024</td><td>流任务队列容量</td></tr>
+    <tr><td class="param-name">sseMaxEventBytes</td><td>int</td><td>1 MB</td><td>单个 SSE 事件最大字节数</td></tr>
+    <tr><td class="param-name">sseEmitDoneEvent</td><td>boolean</td><td>false</td><td>流结束时是否触发一个合成的 "done" 事件</td></tr>
+  </tbody>
+</table>
+
+<h2>VKHttpClientConfig 命名 Client 配置</h2>
+<p>命名 Client 配置中，数值型字段默认为 -1（表示继承全局配置）；Boolean 字段默认为 null（同样继承全局）。仅显式设置的字段会覆盖全局配置。</p>
+<table class="config-table">
+  <thead><tr><th>参数</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td class="param-name">baseUrl</td><td>基础 URL，与相对路径拼接</td></tr>
+    <tr><td class="param-name">connectTimeoutMs / totalTimeoutMs / readTimeoutMs</td><td>超时配置，覆盖全局（≤0 时继承全局）</td></tr>
+    <tr><td class="param-name">maxRetries</td><td>最大重试次数（-1 继承全局）</td></tr>
+    <tr><td class="param-name">maxResponseBodyBytes</td><td>响应体上限（≤0 继承全局）</td></tr>
+    <tr><td class="param-name">putHeader(name, value)</td><td>添加此 Client 的默认请求头（叠加到全局 defaultHeaders 之上）</td></tr>
+    <tr><td class="param-name">bearer(token) / basic(user, pass)</td><td>快捷设置认证（等价于 <code>.auth(new VKBearerAuth(...))</code>）</td></tr>
+    <tr><td class="param-name">auth(VKHttpAuth)</td><td>自定义认证实现</td></tr>
+    <tr><td class="param-name">retryOnStatuses / retryMethods</td><td>覆盖全局重试状态码和方法</td></tr>
+    <tr><td class="param-name">circuitEnabled / bulkheadEnabled / rateLimitQps</td><td>覆盖全局弹性配置（null 继承全局）</td></tr>
+    <tr><td class="param-name">trustStore(path, password [, type])</td><td>TLS 信任库（验证服务端证书）</td></tr>
+    <tr><td class="param-name">keyStore(path, storePassword [, keyPassword, type])</td><td>mTLS 客户端证书</td></tr>
+    <tr><td class="param-name">sslContext(SSLContext)</td><td>直接提供自定义 SSLContext</td></tr>
+    <tr><td class="param-name">addInterceptor(VKHttpInterceptor)</td><td>添加客户端级拦截器（在全局拦截器之后执行）</td></tr>
+    <tr><td class="param-name">cookiePolicy</td><td>Cookie 策略（null 继承全局）</td></tr>
   </tbody>
 </table>
 
 <h2>API 速查</h2>
+
+<h3>生命周期</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>init()</code></td><td>void</td><td>以默认配置显式初始化（已初始化时幂等）</td></tr>
+    <tr><td><code>init(VKHttpConfig)</code></td><td>void</td><td>以自定义配置初始化（已初始化时幂等）</td></tr>
+    <tr><td><code>reinit(VKHttpConfig)</code></td><td>void</td><td>重新初始化，替换全局配置</td></tr>
+    <tr><td><code>started()</code></td><td>boolean</td><td>是否已初始化</td></tr>
+    <tr><td><code>config()</code></td><td>VKHttpConfig</td><td>当前全局配置的副本快照</td></tr>
+    <tr><td><code>close()</code></td><td>void</td><td>关闭模块，释放连接池</td></tr>
+  </tbody>
+</table>
+
+<h3>请求构建（VKHttpRequestBuilder）</h3>
 <table class="api-table">
   <thead><tr><th>方法</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>get(url)</code> / <code>post(url)</code> / <code>put(url)</code> / <code>delete(url)</code></td><td>快捷构建请求</td></tr>
-    <tr><td><code>.execute()</code></td><td>同步执行</td></tr>
-    <tr><td><code>.executeAsync()</code></td><td>异步执行（CompletableFuture）</td></tr>
-    <tr><td><code>.executeJson(Class)</code></td><td>同步执行并解析 JSON</td></tr>
-    <tr><td><code>.executeJsonAsync(Class)</code></td><td>异步执行并解析 JSON</td></tr>
-    <tr><td><code>.executeStream(listener)</code></td><td>流式响应</td></tr>
-    <tr><td><code>.executeSse(listener)</code></td><td>SSE 事件流（完成后关闭）</td></tr>
-    <tr><td><code>.openSse(listener)</code></td><td>SSE 持久连接（返回 Session）</td></tr>
-    <tr><td><code>registerClient(name, config)</code></td><td>注册命名 HTTP Client</td></tr>
-    <tr><td><code>withClient(name, action)</code></td><td>切换命名 Client 执行</td></tr>
-    <tr><td><code>addInterceptor(interceptor)</code></td><td>全局拦截器</td></tr>
-    <tr><td><code>addInterceptor(name, interceptor)</code></td><td>命名 Client 拦截器</td></tr>
-    <tr><td><code>metrics()</code></td><td>全局请求指标</td></tr>
-    <tr><td><code>urlEncode(value)</code></td><td>URL 编码工具</td></tr>
+    <tr><td><code>get(url)</code> / <code>post(url)</code> / <code>put(url)</code> / <code>patch(url)</code> / <code>delete(url)</code> / <code>head(url)</code> / <code>options(url)</code></td><td>设置方法和 URL</td></tr>
+    <tr><td><code>client(name)</code></td><td>指定命名 Client</td></tr>
+    <tr><td><code>path(name, value)</code></td><td>路径参数替换（<code>{name}</code> → value）</td></tr>
+    <tr><td><code>query(name, value)</code> / <code>query(name, List)</code></td><td>添加查询参数（支持多值）</td></tr>
+    <tr><td><code>header(name, value)</code> / <code>headers(Map)</code></td><td>请求头</td></tr>
+    <tr><td><code>bearer(token)</code> / <code>basic(user, pass)</code> / <code>apiKeyHeader(n,v)</code> / <code>apiKeyQuery(n,v)</code> / <code>auth(VKHttpAuth)</code></td><td>认证</td></tr>
+    <tr><td><code>bodyJson(obj)</code> / <code>bodyText(str)</code> / <code>bodyBytes(bytes, ct)</code> / <code>contentType(ct)</code></td><td>请求体</td></tr>
+    <tr><td><code>form(name, value)</code> / <code>form(Map)</code></td><td>表单字段（application/x-www-form-urlencoded）</td></tr>
+    <tr><td><code>multipart(name, value)</code> / <code>multipart(name, filename, contentType, bytes)</code></td><td>Multipart 文件上传</td></tr>
+    <tr><td><code>timeoutMs(ms)</code> / <code>totalTimeoutMs(ms)</code> / <code>readTimeoutMs(ms)</code></td><td>请求级超时覆盖</td></tr>
+    <tr><td><code>retry(n)</code> / <code>retryOnStatuses(...)  </code> / <code>retryMethods(...)</code> / <code>retryOnNetworkError(b)</code> / <code>retryOnTimeout(b)</code></td><td>请求级重试覆盖</td></tr>
+    <tr><td><code>failOnNon2xx(b)</code> / <code>maxResponseBodyBytes(n)</code></td><td>请求级行为覆盖</td></tr>
+    <tr><td><code>build()</code></td><td>构建 VKHttpRequest 对象</td></tr>
+  </tbody>
+</table>
+
+<h3>执行方法（VKHttpRequestBuilder / VostokHttp）</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>execute()</code></td><td>VKHttpResponse</td><td>同步执行请求</td></tr>
+    <tr><td><code>executeJson(Class)</code></td><td>T</td><td>同步执行并反序列化 JSON 响应体</td></tr>
+    <tr><td><code>executeAsync()</code></td><td>CompletableFuture&lt;VKHttpResponse&gt;</td><td>异步执行</td></tr>
+    <tr><td><code>executeJsonAsync(Class)</code></td><td>CompletableFuture&lt;T&gt;</td><td>异步执行并反序列化 JSON</td></tr>
+    <tr><td><code>executeStream(VKHttpChunkListener)</code></td><td>void</td><td>同步流式接收，阻塞至完成</td></tr>
+    <tr><td><code>executeStreamAsync(VKHttpChunkListener)</code></td><td>CompletableFuture&lt;Void&gt;</td><td>异步流式接收</td></tr>
+    <tr><td><code>openStream(VKHttpChunkListener)</code></td><td>VKHttpStreamSession</td><td>建立流会话，返回可关闭的 Session</td></tr>
+    <tr><td><code>executeSse(VKHttpSseListener)</code></td><td>void</td><td>同步 SSE，阻塞至流结束</td></tr>
+    <tr><td><code>executeSseAsync(VKHttpSseListener)</code></td><td>CompletableFuture&lt;Void&gt;</td><td>异步 SSE，流结束时 complete</td></tr>
+    <tr><td><code>openSse(VKHttpSseListener)</code></td><td>VKHttpStreamSession</td><td>建立持久 SSE 会话，返回可关闭的 Session</td></tr>
+    <tr><td><code>websocket(VKHttpRequest, VKHttpWebSocketListener)</code></td><td>VKHttpWebSocketSession</td><td>建立 WebSocket 连接（通过门面调用）</td></tr>
+  </tbody>
+</table>
+
+<h3>命名 Client 管理</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>registerClient(name, VKHttpClientConfig)</code></td><td>void</td><td>注册命名 Client</td></tr>
+    <tr><td><code>withClient(name, Runnable)</code></td><td>void</td><td>在命名 Client 上下文中执行操作</td></tr>
+    <tr><td><code>withClient(name, Supplier&lt;T&gt;)</code></td><td>T</td><td>在命名 Client 上下文中执行并返回结果</td></tr>
+    <tr><td><code>clientNames()</code></td><td>Set&lt;String&gt;</td><td>已注册的所有命名 Client 名称集合</td></tr>
+    <tr><td><code>currentClientName()</code></td><td>String</td><td>当前线程激活的 Client 名（withClient 内有效，否则返回 null）</td></tr>
+  </tbody>
+</table>
+
+<h3>拦截器与指标</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>addInterceptor(VKHttpInterceptor)</code></td><td>添加全局拦截器（对所有 Client 生效）</td></tr>
+    <tr><td><code>addInterceptor(name, VKHttpInterceptor)</code></td><td>添加命名 Client 级拦截器</td></tr>
+    <tr><td><code>metrics()</code></td><td>获取全局请求指标快照</td></tr>
+    <tr><td><code>metrics(clientName)</code></td><td>获取指定命名 Client 的指标快照</td></tr>
+    <tr><td><code>resetMetrics()</code></td><td>重置全局指标计数</td></tr>
+    <tr><td><code>urlEncode(value)</code></td><td>对字符串进行 URL percent 编码</td></tr>
   </tbody>
 </table>
 
