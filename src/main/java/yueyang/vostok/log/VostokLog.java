@@ -427,6 +427,68 @@ public class VostokLog {
         reinit(buildDefaultConfig());
     }
 
+    // -------------------------------------------------------------------------
+    // MDC 代理（委托给 VKLogMDC，方便通过门面类统一访问）
+    // -------------------------------------------------------------------------
+
+    /**
+     * 设置当前线程 MDC 中的键值对。
+     * key 为 {@code null} 时忽略（value 可以为 null）。
+     *
+     * @see VKLogMDC#put(String, String)
+     */
+    public static void mdcPut(String key, String value) {
+        VKLogMDC.put(key, value);
+    }
+
+    /**
+     * 批量设置当前线程 MDC（跨线程传播场景）。
+     * map 为 {@code null} 时忽略。
+     *
+     * @see VKLogMDC#putAll(java.util.Map)
+     */
+    public static void mdcPutAll(java.util.Map<String, String> map) {
+        VKLogMDC.putAll(map);
+    }
+
+    /**
+     * 获取当前线程 MDC 中指定键的值，不存在时返回 {@code null}。
+     *
+     * @see VKLogMDC#get(String)
+     */
+    public static String mdcGet(String key) {
+        return VKLogMDC.get(key);
+    }
+
+    /**
+     * 获取当前线程 MDC 的只读快照（有序）。
+     * 返回的 Map 为当前快照，不反映后续的 MDC 变更。
+     *
+     * @see VKLogMDC#getAll()
+     */
+    public static java.util.Map<String, String> mdcGetAll() {
+        return VKLogMDC.getAll();
+    }
+
+    /**
+     * 移除当前线程 MDC 中的指定键。
+     *
+     * @see VKLogMDC#remove(String)
+     */
+    public static void mdcRemove(String key) {
+        VKLogMDC.remove(key);
+    }
+
+    /**
+     * 清除当前线程的全部 MDC 上下文。
+     * 应在请求处理结束后调用，防止线程复用时上下文泄漏。
+     *
+     * @see VKLogMDC#clear()
+     */
+    public static void mdcClear() {
+        VKLogMDC.clear();
+    }
+
     static void resetForTests() {
         reinit(VKLogConfig.defaults());
     }

@@ -131,47 +131,53 @@ log.error(<span class="st">"payment failed"</span>, ex);
 </table>
 
 <h2>MDC（映射诊断上下文）</h2>
-<p>MDC 通过 <code>VKLogMDC</code> 类直接操作，写入的键值对会自动注入到当前线程后续所有日志中。</p>
-<pre><code><span class="cm">// 设置当前线程 MDC 键值</span>
-<span class="ty">VKLogMDC</span>.put(<span class="st">"requestId"</span>, requestId);
-<span class="ty">VKLogMDC</span>.put(<span class="st">"userId"</span>, userId);
+<p>MDC 已集成到 <code>Vostok.Log</code> 门面，也可直接操作底层 <code>VKLogMDC</code> 类，两种方式完全等价。写入的键值对会自动注入到当前线程后续所有日志中。</p>
+<pre><code><span class="cm">// 通过门面访问 MDC（推荐，与其他 Log API 风格统一）</span>
+<span class="ty">Vostok</span>.Log.mdcPut(<span class="st">"requestId"</span>, requestId);
+<span class="ty">Vostok</span>.Log.mdcPut(<span class="st">"userId"</span>, userId);
 
 <span class="ty">Vostok</span>.Log.info(<span class="st">"handling request"</span>);  <span class="cm">// 日志自动包含 requestId / userId</span>
 
 <span class="cm">// 移除单个键</span>
-<span class="ty">VKLogMDC</span>.remove(<span class="st">"userId"</span>);
+<span class="ty">Vostok</span>.Log.mdcRemove(<span class="st">"userId"</span>);
 
 <span class="cm">// 读取当前线程 MDC 值</span>
-<span class="ty">String</span> rid = <span class="ty">VKLogMDC</span>.get(<span class="st">"requestId"</span>);
+<span class="ty">String</span> rid = <span class="ty">Vostok</span>.Log.mdcGet(<span class="st">"requestId"</span>);
 
 <span class="cm">// 获取全部 MDC 快照（只读视图）</span>
-<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; snapshot = <span class="ty">VKLogMDC</span>.getAll();
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; snapshot = <span class="ty">Vostok</span>.Log.mdcGetAll();
 
 <span class="cm">// 批量设置（常用于跨线程传播）</span>
-<span class="ty">VKLogMDC</span>.putAll(snapshot);
+<span class="ty">Vostok</span>.Log.mdcPutAll(snapshot);
 
 <span class="cm">// 清除当前线程全部 MDC（请求结束时务必调用，防止线程复用时上下文泄漏）</span>
-<span class="ty">VKLogMDC</span>.clear();</code></pre>
+<span class="ty">Vostok</span>.Log.mdcClear();</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">两种访问方式</div>
+  <code>Vostok.Log.mdcPut()</code> 等门面方法与直接调用 <code>VKLogMDC.put()</code> 完全等价，底层共享同一个 ThreadLocal。
+  门面方式更简洁，不需要额外 import；<code>VKLogMDC</code> 方式适合已有大量直接调用的代码场景。
+</div>
 
 <h3>Web 请求中的典型用法</h3>
 <pre><code><span class="cm">// 在拦截器 / 过滤器中</span>
-<span class="ty">VKLogMDC</span>.put(<span class="st">"requestId"</span>, ctx.requestId());
-<span class="ty">VKLogMDC</span>.put(<span class="st">"userId"</span>, <span class="ty">String</span>.valueOf(ctx.userId()));
+<span class="ty">Vostok</span>.Log.mdcPut(<span class="st">"requestId"</span>, ctx.requestId());
+<span class="ty">Vostok</span>.Log.mdcPut(<span class="st">"userId"</span>, <span class="ty">String</span>.valueOf(ctx.userId()));
 <span class="kw">try</span> {
     handle(ctx);
 } <span class="kw">finally</span> {
-    <span class="ty">VKLogMDC</span>.clear();  <span class="cm">// 必须清除，防止泄漏到下一个请求</span>
+    <span class="ty">Vostok</span>.Log.mdcClear();  <span class="cm">// 必须清除，防止泄漏到下一个请求</span>
 }</code></pre>
 
 <h3>跨线程传播 MDC</h3>
 <pre><code><span class="cm">// 在提交任务前捕获快照</span>
-<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; snapshot = <span class="ty">VKLogMDC</span>.getAll();
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; snapshot = <span class="ty">Vostok</span>.Log.mdcGetAll();
 executor.submit(() -&gt; {
-    <span class="ty">VKLogMDC</span>.putAll(snapshot);  <span class="cm">// 在子线程中恢复 MDC</span>
+    <span class="ty">Vostok</span>.Log.mdcPutAll(snapshot);  <span class="cm">// 在子线程中恢复 MDC</span>
     <span class="kw">try</span> {
         doWork();
     } <span class="kw">finally</span> {
-        <span class="ty">VKLogMDC</span>.clear();
+        <span class="ty">Vostok</span>.Log.mdcClear();
     }
 });</code></pre>
 
@@ -447,16 +453,17 @@ executor.submit(() -&gt; {
   </tbody>
 </table>
 
-<h3>MDC（VKLogMDC 类）</h3>
+<h3>MDC</h3>
+<p>门面方法（<code>Vostok.Log.mdc*()</code>）与 <code>VKLogMDC</code> 静态方法完全等价，任选其一。</p>
 <table class="api-table">
-  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <thead><tr><th>门面方法</th><th>等价的底层方法</th><th>返回值</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>VKLogMDC.put(key, value)</code></td><td>void</td><td>设置当前线程 MDC 键值</td></tr>
-    <tr><td><code>VKLogMDC.putAll(map)</code></td><td>void</td><td>批量设置（跨线程传播时使用）</td></tr>
-    <tr><td><code>VKLogMDC.get(key)</code></td><td>String</td><td>读取指定键的值，不存在时返回 null</td></tr>
-    <tr><td><code>VKLogMDC.getAll()</code></td><td>Map&lt;String,String&gt;</td><td>获取全部 MDC 只读快照</td></tr>
-    <tr><td><code>VKLogMDC.remove(key)</code></td><td>void</td><td>移除指定键</td></tr>
-    <tr><td><code>VKLogMDC.clear()</code></td><td>void</td><td>清除当前线程全部 MDC（请求结束时务必调用）</td></tr>
+    <tr><td><code>Vostok.Log.mdcPut(key, value)</code></td><td><code>VKLogMDC.put(key, value)</code></td><td>void</td><td>设置当前线程 MDC 键值</td></tr>
+    <tr><td><code>Vostok.Log.mdcPutAll(map)</code></td><td><code>VKLogMDC.putAll(map)</code></td><td>void</td><td>批量设置（跨线程传播时使用）</td></tr>
+    <tr><td><code>Vostok.Log.mdcGet(key)</code></td><td><code>VKLogMDC.get(key)</code></td><td>String</td><td>读取指定键的值，不存在时返回 null</td></tr>
+    <tr><td><code>Vostok.Log.mdcGetAll()</code></td><td><code>VKLogMDC.getAll()</code></td><td>Map&lt;String,String&gt;</td><td>获取全部 MDC 只读快照</td></tr>
+    <tr><td><code>Vostok.Log.mdcRemove(key)</code></td><td><code>VKLogMDC.remove(key)</code></td><td>void</td><td>移除指定键</td></tr>
+    <tr><td><code>Vostok.Log.mdcClear()</code></td><td><code>VKLogMDC.clear()</code></td><td>void</td><td>清除当前线程全部 MDC（请求结束时务必调用）</td></tr>
   </tbody>
 </table>
 
