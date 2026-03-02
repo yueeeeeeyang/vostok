@@ -44,105 +44,367 @@
 <div class="page-header">
   <div class="module-tag">📁 Vostok.File</div>
   <h1>File 文件存储模块</h1>
-  <p class="desc">统一文件访问抽象层，默认实现为本地文件系统，支持读写、目录管理、压缩解压、文件监听，可扩展为对象存储（S3/OSS）等后端。</p>
+  <p class="desc">统一文件访问抽象层，默认实现为本地文件系统，支持文本/字节读写、流式传输、目录管理、压缩解压、图片缩略图、文件加密、目录监听、目录迁移，可扩展为对象存储（S3/OSS）等后端。</p>
 </div>
 
 <h2>初始化</h2>
-<pre><code><span class="ty">Vostok</span>.File.init(<span class="kw">new</span> <span class="ty">VKFileConfig</span>()
-    .baseDir(<span class="st">"./data/files"</span>)
-    .charset(<span class="st">"UTF-8"</span>)
+<p>通过 <code>VKFileConfig</code> 链式配置后调用 <code>Vostok.File.init()</code>。未调用 init 时，首次使用会懒加载，以 JAR 所在目录下的 <code>vkfiles/</code> 作为根目录。</p>
+<pre><code><span class="cm">// 显式初始化（推荐）</span>
+<span class="ty">Vostok</span>.init(cfg -&gt; cfg
+    .fileConfig(<span class="kw">new</span> <span class="ty">VKFileConfig</span>()
+        .baseDir(<span class="st">"./data/files"</span>)
+        .charset(<span class="ty">StandardCharsets</span>.UTF_8)
+        .watchRecursiveDefault(<span class="kw">false</span>)
+        .datePartitionPattern(<span class="st">"yyyy/MM/dd"</span>)
+        .datePartitionZoneId(<span class="st">"Asia/Shanghai"</span>)
+    )
 );</code></pre>
 
-<h2>文件读写</h2>
-<pre><code><span class="cm">// 创建文件</span>
+<div class="callout info">
+  <div class="callout-title">懒加载</div>
+  未调用 <code>init()</code> 时，首次调用任意 File API 会自动以默认配置初始化。初始化是线程安全且幂等的，重复调用 <code>init()</code> 会关闭并重建默认后端。
+</div>
+
+<h2>文本读写</h2>
+<pre><code><span class="cm">// 创建文件（文件已存在时行为由后端决定，通常抛异常）</span>
 <span class="ty">Vostok</span>.File.create(<span class="st">"config/app.conf"</span>, <span class="st">"key=value"</span>);
 
-<span class="cm">// 覆盖写入</span>
+<span class="cm">// 覆盖写入（文件不存在时自动创建）</span>
 <span class="ty">Vostok</span>.File.write(<span class="st">"data/report.txt"</span>, content);
 
-<span class="cm">// 追加写入</span>
+<span class="cm">// 更新已有文件内容（文件不存在时抛 FK-404）</span>
+<span class="ty">Vostok</span>.File.update(<span class="st">"config/app.conf"</span>, newContent);
+
+<span class="cm">// 追加文本</span>
 <span class="ty">Vostok</span>.File.append(<span class="st">"logs/access.log"</span>, <span class="st">"2024-01-01 GET /\n"</span>);
 
-<span class="cm">// 读取文本</span>
+<span class="cm">// 读取全部文本</span>
 <span class="ty">String</span> text = <span class="ty">Vostok</span>.File.read(<span class="st">"config/app.conf"</span>);
 
-<span class="cm">// 读取字节</span>
-<span class="kw">byte</span>[] raw = <span class="ty">Vostok</span>.File.readBytes(<span class="st">"assets/logo.png"</span>);</code></pre>
+<span class="cm">// 按行读取</span>
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; lines = <span class="ty">Vostok</span>.File.readLines(<span class="st">"config/app.conf"</span>);
+
+<span class="cm">// 按行写入（覆盖）</span>
+<span class="ty">Vostok</span>.File.writeLines(<span class="st">"config/app.conf"</span>, <span class="ty">List</span>.of(<span class="st">"k1=v1"</span>, <span class="st">"k2=v2"</span>));</code></pre>
+
+<h2>字节读写</h2>
+<pre><code><span class="cm">// 写入字节（覆盖）</span>
+<span class="ty">Vostok</span>.File.writeBytes(<span class="st">"assets/logo.png"</span>, pngBytes);
+
+<span class="cm">// 追加字节</span>
+<span class="ty">Vostok</span>.File.appendBytes(<span class="st">"data/chunk.bin"</span>, chunk);
+
+<span class="cm">// 读取全部字节</span>
+<span class="kw">byte</span>[] raw = <span class="ty">Vostok</span>.File.readBytes(<span class="st">"assets/logo.png"</span>);
+
+<span class="cm">// 部分读取：从 offset 开始读取 length 字节</span>
+<span class="kw">byte</span>[] slice = <span class="ty">Vostok</span>.File.readRange(<span class="st">"data/large.bin"</span>, <span class="num">1024</span>, <span class="num">512</span>);</code></pre>
+
+<h2>流式读写</h2>
+<pre><code><span class="cm">// 从 InputStream 写入文件，返回写入字节数</span>
+<span class="kw">long</span> written = <span class="ty">Vostok</span>.File.writeFrom(<span class="st">"uploads/avatar.jpg"</span>, inputStream);
+
+<span class="cm">// 写入时控制是否覆盖已有文件</span>
+<span class="kw">long</span> written = <span class="ty">Vostok</span>.File.writeFrom(<span class="st">"uploads/avatar.jpg"</span>, inputStream, <span class="kw">false</span>);
+
+<span class="cm">// 从 InputStream 追加到文件，返回追加字节数</span>
+<span class="kw">long</span> appended = <span class="ty">Vostok</span>.File.appendFrom(<span class="st">"data/stream.log"</span>, inputStream);
+
+<span class="cm">// 将文件全部内容写出到 OutputStream，返回字节数</span>
+<span class="kw">long</span> bytes = <span class="ty">Vostok</span>.File.readTo(<span class="st">"assets/logo.png"</span>, outputStream);
+
+<span class="cm">// 部分读取到 OutputStream：从 offset 开始读取 length 字节</span>
+<span class="kw">long</span> bytes = <span class="ty">Vostok</span>.File.readRangeTo(<span class="st">"data/large.bin"</span>, <span class="num">0L</span>, <span class="num">4096L</span>, outputStream);</code></pre>
 
 <h2>目录操作</h2>
-<pre><code><span class="cm">// 创建目录</span>
-<span class="ty">Vostok</span>.File.createDir(<span class="st">"uploads/2024/01"</span>);
+<pre><code><span class="cm">// 创建单层目录（父目录必须已存在）</span>
+<span class="ty">Vostok</span>.File.mkdir(<span class="st">"uploads/2024"</span>);
 
-<span class="cm">// 列出文件</span>
-<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; files = <span class="ty">Vostok</span>.File.list(<span class="st">"uploads"</span>);
+<span class="cm">// 递归创建目录（含所有父目录，等同 mkdirs）</span>
+<span class="ty">Vostok</span>.File.mkdirs(<span class="st">"uploads/2024/01/photos"</span>);
 
-<span class="cm">// 递归列出</span>
-<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; all = <span class="ty">Vostok</span>.File.listRecursive(<span class="st">"uploads"</span>);
+<span class="cm">// 列出目录直接子项（返回 VKFileInfo 列表）</span>
+<span class="ty">List</span>&lt;<span class="ty">VKFileInfo</span>&gt; items = <span class="ty">Vostok</span>.File.list(<span class="st">"uploads"</span>);
 
-<span class="cm">// 存在检查</span>
-<span class="kw">boolean</span> ok  = <span class="ty">Vostok</span>.File.exists(<span class="st">"config/app.conf"</span>);
-<span class="kw">boolean</span> dir = <span class="ty">Vostok</span>.File.isDirectory(<span class="st">"uploads"</span>);
+<span class="cm">// 递归列出目录所有子项</span>
+<span class="ty">List</span>&lt;<span class="ty">VKFileInfo</span>&gt; all = <span class="ty">Vostok</span>.File.list(<span class="st">"uploads"</span>, <span class="kw">true</span>);
 
-<span class="cm">// 移动 / 重命名</span>
+<span class="cm">// 递归遍历并过滤（只要普通文件）</span>
+<span class="ty">List</span>&lt;<span class="ty">VKFileInfo</span>&gt; files = <span class="ty">Vostok</span>.File.walk(<span class="st">"uploads"</span>, <span class="kw">true</span>,
+    info -&gt; !info.directory());
+
+<span class="cm">// 存在性与类型检查</span>
+<span class="kw">boolean</span> exists = <span class="ty">Vostok</span>.File.exists(<span class="st">"config/app.conf"</span>);
+<span class="kw">boolean</span> isDir  = <span class="ty">Vostok</span>.File.isDirectory(<span class="st">"uploads"</span>);
+<span class="kw">boolean</span> isFile = <span class="ty">Vostok</span>.File.isFile(<span class="st">"config/app.conf"</span>);
+
+<span class="cm">// 获取文件大小（字节）</span>
+<span class="kw">long</span> bytes = <span class="ty">Vostok</span>.File.size(<span class="st">"data/report.txt"</span>);
+
+<span class="cm">// 递归统计目录总大小（字节）</span>
+<span class="kw">long</span> total = <span class="ty">Vostok</span>.File.totalSize(<span class="st">"uploads"</span>);
+
+<span class="cm">// 获取最后修改时间</span>
+<span class="ty">Instant</span> ts = <span class="ty">Vostok</span>.File.lastModified(<span class="st">"data/report.txt"</span>);
+
+<span class="cm">// touch：不存在则创建空文件，已存在则更新修改时间</span>
+<span class="ty">Vostok</span>.File.touch(<span class="st">"logs/app.log"</span>);</code></pre>
+
+<p><code>VKFileInfo</code> 包含以下字段：</p>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>path()</code></td><td>String</td><td>相对于存储根目录的路径</td></tr>
+    <tr><td><code>directory()</code></td><td>boolean</td><td>是否为目录</td></tr>
+    <tr><td><code>size()</code></td><td>long</td><td>文件大小（字节），目录为 0</td></tr>
+    <tr><td><code>lastModified()</code></td><td>Instant</td><td>最后修改时间</td></tr>
+  </tbody>
+</table>
+
+<h2>文件与目录的复制、移动、重命名、删除</h2>
+<pre><code><span class="cm">// 重命名（在同目录下改名）</span>
+<span class="ty">Vostok</span>.File.rename(<span class="st">"temp/draft.txt"</span>, <span class="st">"draft_v2.txt"</span>);
+
+<span class="cm">// 复制文件（默认覆盖目标）</span>
+<span class="ty">Vostok</span>.File.copy(<span class="st">"templates/base.html"</span>, <span class="st">"pages/index.html"</span>);
+
+<span class="cm">// 复制文件，指定是否覆盖</span>
+<span class="ty">Vostok</span>.File.copy(<span class="st">"templates/base.html"</span>, <span class="st">"pages/about.html"</span>, <span class="kw">false</span>);
+
+<span class="cm">// 移动/重命名文件（默认覆盖目标）</span>
 <span class="ty">Vostok</span>.File.move(<span class="st">"temp/draft.txt"</span>, <span class="st">"published/article.txt"</span>);
 
-<span class="cm">// 删除</span>
+<span class="cm">// 移动文件，指定是否覆盖</span>
+<span class="ty">Vostok</span>.File.move(<span class="st">"temp/draft.txt"</span>, <span class="st">"archive/article.txt"</span>, <span class="kw">false</span>);
+
+<span class="cm">// 复制目录（指定冲突策略）</span>
+<span class="ty">Vostok</span>.File.copyDir(<span class="st">"src/assets"</span>, <span class="st">"dist/assets"</span>, <span class="ty">VKFileConflictStrategy</span>.OVERWRITE);
+
+<span class="cm">// 移动目录（指定冲突策略）</span>
+<span class="ty">Vostok</span>.File.moveDir(<span class="st">"staging/release"</span>, <span class="st">"production/release"</span>, <span class="ty">VKFileConflictStrategy</span>.SKIP);
+
+<span class="cm">// 删除文件（文件不存在时抛 FK-404）</span>
 <span class="ty">Vostok</span>.File.delete(<span class="st">"temp/draft.txt"</span>);
-<span class="ty">Vostok</span>.File.deleteDir(<span class="st">"temp"</span>);</code></pre>
+
+<span class="cm">// 删除文件（文件不存在时静默返回 false，存在且删除成功返回 true）</span>
+<span class="kw">boolean</span> deleted = <span class="ty">Vostok</span>.File.deleteIfExists(<span class="st">"temp/maybe.txt"</span>);
+
+<span class="cm">// 递归删除目录及其所有内容</span>
+<span class="kw">boolean</span> ok = <span class="ty">Vostok</span>.File.deleteRecursively(<span class="st">"temp"</span>);</code></pre>
+
+<p><code>VKFileConflictStrategy</code> 枚举值：</p>
+<table class="api-table">
+  <thead><tr><th>值</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>FAIL</code></td><td>目标已存在时抛出异常（默认）</td></tr>
+    <tr><td><code>SKIP</code></td><td>目标已存在时跳过，不覆盖</td></tr>
+    <tr><td><code>OVERWRITE</code></td><td>目标已存在时覆盖</td></tr>
+  </tbody>
+</table>
+
+<h2>日期分区路径</h2>
+<p>按当前时间自动插入日期目录，路径格式由 <code>datePartitionPattern</code> 配置（默认 <code>yyyy/MM/dd</code>）。</p>
+<pre><code><span class="cm">// 生成日期分区路径（不写入文件）</span>
+<span class="cm">// 例如今天 2024-01-15，relativePath="report.csv"</span>
+<span class="cm">// 返回 "2024/01/15/report.csv"</span>
+<span class="ty">String</span> path = <span class="ty">Vostok</span>.File.suggestDatePath(<span class="st">"report.csv"</span>);
+
+<span class="cm">// 指定时刻生成路径</span>
+<span class="ty">String</span> path = <span class="ty">Vostok</span>.File.suggestDatePath(<span class="st">"report.csv"</span>, <span class="ty">Instant</span>.parse(<span class="st">"2024-06-01T00:00:00Z"</span>));
+
+<span class="cm">// 按日期分区写入文本，返回实际写入路径</span>
+<span class="ty">String</span> writtenPath = <span class="ty">Vostok</span>.File.writeByDatePath(<span class="st">"report.csv"</span>, csvContent);
+
+<span class="cm">// 按日期分区写入字节，返回实际写入路径</span>
+<span class="ty">String</span> writtenPath = <span class="ty">Vostok</span>.File.writeBytesByDatePath(<span class="st">"photo.jpg"</span>, jpegBytes);
+
+<span class="cm">// 按日期分区从流写入，返回实际写入路径</span>
+<span class="ty">String</span> writtenPath = <span class="ty">Vostok</span>.File.writeFromByDatePath(<span class="st">"upload.bin"</span>, inputStream);</code></pre>
+
+<h2>临时文件</h2>
+<pre><code><span class="cm">// 在 tmp/ 目录下创建临时文件，返回相对路径</span>
+<span class="ty">String</span> tmpPath = <span class="ty">Vostok</span>.File.createTemp(<span class="st">"upload_"</span>, <span class="st">".tmp"</span>);
+
+<span class="cm">// 在指定子目录下创建临时文件</span>
+<span class="ty">String</span> tmpPath = <span class="ty">Vostok</span>.File.createTemp(<span class="st">"processing"</span>, <span class="st">"chunk_"</span>, <span class="st">".bin"</span>);</code></pre>
 
 <h2>压缩与解压</h2>
-<pre><code><span class="cm">// GZIP 压缩</span>
+<pre><code><span class="cm">// ZIP 压缩（文件或目录）</span>
+<span class="ty">Vostok</span>.File.zip(<span class="st">"data/reports"</span>, <span class="st">"archives/reports.zip"</span>);
+
+<span class="cm">// ZIP 解压（使用配置中的安全限制）</span>
+<span class="ty">Vostok</span>.File.unzip(<span class="st">"archives/data.zip"</span>, <span class="st">"output/"</span>);
+
+<span class="cm">// ZIP 解压，指定是否覆盖已有文件</span>
+<span class="ty">Vostok</span>.File.unzip(<span class="st">"archives/data.zip"</span>, <span class="st">"output/"</span>, <span class="kw">false</span>);
+
+<span class="cm">// ZIP 解压，自定义安全选项</span>
+<span class="ty">VKUnzipOptions</span> opts = <span class="ty">VKUnzipOptions</span>.builder()
+    .replaceExisting(<span class="kw">true</span>)
+    .maxEntries(<span class="num">500</span>)
+    .maxTotalUncompressedBytes(<span class="num">100L</span> * <span class="num">1024</span> * <span class="num">1024</span>)  <span class="cm">// 100 MB</span>
+    .maxEntryUncompressedBytes(<span class="num">50L</span> * <span class="num">1024</span> * <span class="num">1024</span>)   <span class="cm">// 50 MB</span>
+    .build();
+<span class="ty">Vostok</span>.File.unzip(<span class="st">"archives/data.zip"</span>, <span class="st">"output/"</span>, opts);
+
+<span class="cm">// GZip 压缩</span>
 <span class="ty">Vostok</span>.File.gzip(<span class="st">"data/large.log"</span>, <span class="st">"data/large.log.gz"</span>);
 
-<span class="cm">// GZIP 解压</span>
-<span class="ty">Vostok</span>.File.ungzip(<span class="st">"data/large.log.gz"</span>, <span class="st">"data/large.log"</span>);
-
-<span class="cm">// ZIP 解压（含 Zip Slip 防护）</span>
-<span class="ty">Vostok</span>.File.unzip(<span class="st">"archives/data.zip"</span>, <span class="st">"output/"</span>);</code></pre>
+<span class="cm">// GZip 解压（方法名为 gunzip，非 ungzip）</span>
+<span class="ty">Vostok</span>.File.gunzip(<span class="st">"data/large.log.gz"</span>, <span class="st">"data/large.log"</span>);</code></pre>
 
 <div class="callout warn">
   <div class="callout-title">安全</div>
-  ZIP 解压内置 Zip Slip 路径穿越防护和 Zip Bomb 炸弹检测，通过 <code>unzipMaxEntries</code> / <code>unzipMaxTotalUncompressedBytes</code> 限制解压规模。
+  ZIP 解压内置 Zip Slip 路径穿越防护和 Zip Bomb 检测。安全上限通过 <code>VKUnzipOptions</code> 或 <code>VKFileConfig</code> 中的 <code>unzipMaxEntries</code>、<code>unzipMaxTotalUncompressedBytes</code>、<code>unzipMaxEntryUncompressedBytes</code> 控制；默认值 <code>-1</code> 表示不限制，生产环境建议显式配置。
 </div>
 
+<h2>图片缩略图</h2>
+<pre><code><span class="cm">// 生成缩略图字节，返回 byte[]</span>
+<span class="ty">VKThumbnailOptions</span> opts = <span class="ty">VKThumbnailOptions</span>.builder(<span class="num">200</span>, <span class="num">200</span>)
+    .mode(<span class="ty">VKThumbnailMode</span>.FIT)      <span class="cm">// FIT：等比缩放；FILL：裁剪填充</span>
+    .format(<span class="st">"jpg"</span>)
+    .quality(<span class="num">0.85f</span>)
+    .keepAspectRatio(<span class="kw">true</span>)
+    .upscale(<span class="kw">false</span>)
+    .stripMetadata(<span class="kw">true</span>)
+    .build();
+<span class="kw">byte</span>[] thumb = <span class="ty">Vostok</span>.File.thumbnail(<span class="st">"uploads/photo.jpg"</span>, opts);
+
+<span class="cm">// 生成缩略图并写入指定路径</span>
+<span class="ty">Vostok</span>.File.thumbnailTo(<span class="st">"uploads/photo.jpg"</span>, <span class="st">"thumbs/photo_200x200.jpg"</span>, opts);</code></pre>
+
+<h2>文件哈希</h2>
+<pre><code><span class="cm">// 计算文件哈希，算法名同 MessageDigest（MD5 / SHA-1 / SHA-256 等）</span>
+<span class="ty">String</span> md5    = <span class="ty">Vostok</span>.File.hash(<span class="st">"data/package.zip"</span>, <span class="st">"MD5"</span>);
+<span class="ty">String</span> sha256 = <span class="ty">Vostok</span>.File.hash(<span class="st">"data/package.zip"</span>, <span class="st">"SHA-256"</span>);</code></pre>
+
+<h2>文件加密与解密</h2>
+<p>委托 <code>Vostok.Security</code> 的 AES-256-GCM 实现。加密格式为：原始字节 → Base64 → AES-GCM → Base64 密文文本文件。</p>
+<pre><code><span class="cm">// 加密文件：sourcePath 明文 → targetPath 密文</span>
+<span class="ty">Vostok</span>.File.encryptFile(<span class="st">"data/secret.bin"</span>, <span class="st">"data/secret.enc"</span>, <span class="st">"my-secret-key"</span>);
+
+<span class="cm">// 解密文件：sourcePath 密文 → targetPath 明文</span>
+<span class="ty">Vostok</span>.File.decryptFile(<span class="st">"data/secret.enc"</span>, <span class="st">"data/secret.bin"</span>, <span class="st">"my-secret-key"</span>);</code></pre>
+
 <h2>文件监听</h2>
-<pre><code><span class="cm">// 监听目录变化（非递归）</span>
-<span class="ty">Vostok</span>.File.watch(<span class="st">"config/"</span>, event -&gt; {
-    <span class="ty">System</span>.out.println(<span class="st">"changed: "</span> + event.path() + <span class="st">" type="</span> + event.type());
+<p><code>watch()</code> 返回 <code>VKFileWatchHandle</code>（实现 <code>AutoCloseable</code>），调用 <code>close()</code> 停止监听。</p>
+<pre><code><span class="cm">// 监听目录变化（是否递归由 watchRecursiveDefault 配置决定，默认 false）</span>
+<span class="ty">VKFileWatchHandle</span> handle = <span class="ty">Vostok</span>.File.watch(<span class="st">"config/"</span>, event -&gt; {
+    <span class="ty">System</span>.out.println(event.type() + <span class="st">": "</span> + event.path() + <span class="st">" at "</span> + event.time());
 });
 
-<span class="cm">// 递归监听</span>
-<span class="ty">Vostok</span>.File.watch(<span class="st">"uploads/"</span>, event -&gt; { <span class="cm">/* … */</span> }, <span class="kw">true</span>);</code></pre>
+<span class="cm">// 监听目录变化，显式指定是否递归</span>
+<span class="ty">VKFileWatchHandle</span> handle = <span class="ty">Vostok</span>.File.watch(<span class="st">"uploads/"</span>, <span class="kw">true</span>, event -&gt; {
+    <span class="kw">if</span> (event.type() == <span class="ty">VKFileWatchEventType</span>.CREATE) {
+        processUpload(event.path());
+    }
+});
+
+<span class="cm">// 停止监听</span>
+handle.close();
+
+<span class="cm">// 使用 try-with-resources 自动停止</span>
+<span class="kw">try</span> (<span class="ty">VKFileWatchHandle</span> h = <span class="ty">Vostok</span>.File.watch(<span class="st">"hot-reload/"</span>, <span class="kw">false</span>, this::onFileChanged)) {
+    <span class="cm">// 监听期间执行业务逻辑…</span>
+}</code></pre>
+
+<p><code>VKFileWatchEvent</code> 字段：</p>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>type()</code></td><td>VKFileWatchEventType</td><td>事件类型：CREATE / MODIFY / DELETE / OVERFLOW</td></tr>
+    <tr><td><code>path()</code></td><td>String</td><td>发生变化的文件相对路径</td></tr>
+    <tr><td><code>time()</code></td><td>Instant</td><td>事件发生时刻</td></tr>
+  </tbody>
+</table>
+
+<h2>目录迁移</h2>
+<p>将当前存储根目录下的所有文件迁移到新的目录，支持复制或移动模式、并行迁移、断点续传、进度回调。</p>
+<pre><code><span class="cm">// 简单迁移（COPY_ONLY，冲突时抛异常）</span>
+<span class="ty">VKFileMigrateResult</span> result = <span class="ty">Vostok</span>.File.migrateBaseDir(<span class="st">"/new/storage"</span>);
+
+<span class="cm">// 高级迁移选项</span>
+<span class="ty">VKFileMigrateOptions</span> opts = <span class="kw">new</span> <span class="ty">VKFileMigrateOptions</span>()
+    .mode(<span class="ty">VKFileMigrateMode</span>.MOVE)                       <span class="cm">// COPY_ONLY 或 MOVE</span>
+    .conflictStrategy(<span class="ty">VKFileConflictStrategy</span>.OVERWRITE)
+    .verifyHash(<span class="kw">true</span>)                                    <span class="cm">// 迁移后校验哈希</span>
+    .dryRun(<span class="kw">false</span>)                                        <span class="cm">// true 时只模拟不实际操作</span>
+    .parallelism(<span class="num">4</span>)                                       <span class="cm">// 并行线程数</span>
+    .maxRetries(<span class="num">3</span>)                                        <span class="cm">// 单文件失败最大重试次数</span>
+    .retryIntervalMs(<span class="num">500L</span>)                               <span class="cm">// 重试间隔毫秒</span>
+    .checkpointFile(<span class="st">"migrate.checkpoint"</span>)               <span class="cm">// 断点续传文件</span>
+    .progressListener(p -&gt; {
+        <span class="ty">System</span>.out.printf(<span class="st">"[%s] %s (%d/%d)%n"</span>,
+            p.status(), p.path(), p.migratedFiles(), p.totalFiles());
+    });
+
+<span class="ty">VKFileMigrateResult</span> result = <span class="ty">Vostok</span>.File.migrateBaseDir(<span class="st">"/new/storage"</span>, opts);
+
+<span class="cm">// 检查迁移结果</span>
+<span class="kw">if</span> (!result.success()) {
+    result.failures().forEach(f -&gt;
+        <span class="ty">System</span>.out.println(<span class="st">"FAILED: "</span> + f.path() + <span class="st">" - "</span> + f.message()));
+}
+<span class="ty">System</span>.out.printf(<span class="st">"迁移完成：%d 个文件，%d 字节，耗时 %d ms%n"</span>,
+    result.migratedFiles(), result.migratedBytes(), result.durationMs());</code></pre>
 
 <h2>多存储后端</h2>
-<pre><code><span class="cm">// 注册自定义存储实现</span>
+<pre><code><span class="cm">// 注册自定义存储实现（实现 VKFileStore 接口）</span>
 <span class="ty">Vostok</span>.File.registerStore(<span class="st">"s3"</span>, <span class="kw">new</span> S3FileStore(s3Client, bucket));
 
-<span class="cm">// 切换默认后端</span>
+<span class="cm">// 切换全局默认后端</span>
 <span class="ty">Vostok</span>.File.setDefaultMode(<span class="st">"s3"</span>);
 
-<span class="cm">// 临时使用指定后端</span>
+<span class="cm">// 查询当前默认后端名称</span>
+<span class="ty">String</span> mode = <span class="ty">Vostok</span>.File.defaultMode();
+
+<span class="cm">// 查询所有已注册后端名称</span>
+<span class="ty">Set</span>&lt;<span class="ty">String</span>&gt; modes = <span class="ty">Vostok</span>.File.modes();
+
+<span class="cm">// 在当前线程临时切换后端（Runnable 形式）</span>
 <span class="ty">Vostok</span>.File.withMode(<span class="st">"s3"</span>, () -&gt; {
     <span class="ty">Vostok</span>.File.write(<span class="st">"remote/file.txt"</span>, data);
-});</code></pre>
+});
+
+<span class="cm">// 在当前线程临时切换后端（Supplier 形式，带返回值）</span>
+<span class="ty">String</span> content = <span class="ty">Vostok</span>.File.withMode(<span class="st">"s3"</span>, () -&gt; <span class="ty">Vostok</span>.File.read(<span class="st">"remote/config.txt"</span>));
+
+<span class="cm">// 查询当前线程实际使用的后端（含 withMode 覆盖）</span>
+<span class="ty">String</span> current = <span class="ty">Vostok</span>.File.currentMode();</code></pre>
 
 <h2>只读模式</h2>
-<pre><code><span class="ty">Vostok</span>.File.setReadOnly(<span class="kw">true</span>);   <span class="cm">// 开启只读（写操作将抛出 FK-560）</span>
+<pre><code><span class="ty">Vostok</span>.File.setReadOnly(<span class="kw">true</span>);   <span class="cm">// 开启只读，所有写操作抛 FK-560</span>
 <span class="ty">Vostok</span>.File.setReadOnly(<span class="kw">false</span>);  <span class="cm">// 恢复可写</span>
 <span class="kw">boolean</span> ro = <span class="ty">Vostok</span>.File.isReadOnly();</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">提示</div>
+  <code>Vostok.File.close()</code> 会自动将只读状态重置为 <code>false</code>，防止重新初始化后残留只读状态。
+</div>
+
+<h2>模块状态</h2>
+<pre><code><span class="cm">// 检查模块是否已初始化</span>
+<span class="kw">boolean</span> ready = <span class="ty">Vostok</span>.File.started();
+
+<span class="cm">// 获取当前配置副本</span>
+<span class="ty">VKFileConfig</span> cfg = <span class="ty">Vostok</span>.File.config();
+
+<span class="cm">// 关闭模块，释放所有后端资源</span>
+<span class="ty">Vostok</span>.File.close();</code></pre>
 
 <h2>配置参数</h2>
 <table class="config-table">
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
     <tr><td class="param-name">mode</td><td>String</td><td>"local"</td><td>默认存储后端名称</td></tr>
-    <tr><td class="param-name">baseDir</td><td>String</td><td>user.dir/vkfiles</td><td>本地存储根目录</td></tr>
-    <tr><td class="param-name">charset</td><td>String</td><td>"UTF-8"</td><td>文本编码</td></tr>
-    <tr><td class="param-name">unzipMaxEntries</td><td>int</td><td>1000</td><td>ZIP 解压最大条目数</td></tr>
-    <tr><td class="param-name">unzipMaxTotalUncompressedBytes</td><td>long</td><td>500MB</td><td>ZIP 解压总字节上限</td></tr>
-    <tr><td class="param-name">unzipMaxEntryUncompressedBytes</td><td>long</td><td>200MB</td><td>单条目解压字节上限</td></tr>
-    <tr><td class="param-name">watchRecursiveDefault</td><td>boolean</td><td>false</td><td>watch 默认是否递归</td></tr>
-    <tr><td class="param-name">datePartitionPattern</td><td>String</td><td>—</td><td>日期分区目录格式（如 yyyy/MM/dd）</td></tr>
+    <tr><td class="param-name">baseDir</td><td>String</td><td>user.dir</td><td>本地存储根目录（懒加载默认为 JAR 所在目录/vkfiles）</td></tr>
+    <tr><td class="param-name">charset</td><td>Charset</td><td>StandardCharsets.UTF_8</td><td>文本读写编码，需传入 Charset 对象</td></tr>
+    <tr><td class="param-name">unzipMaxEntries</td><td>long</td><td>-1（不限）</td><td>ZIP 解压最大条目数，-1 表示不限制</td></tr>
+    <tr><td class="param-name">unzipMaxTotalUncompressedBytes</td><td>long</td><td>-1（不限）</td><td>ZIP 解压总字节上限，-1 表示不限制</td></tr>
+    <tr><td class="param-name">unzipMaxEntryUncompressedBytes</td><td>long</td><td>-1（不限）</td><td>单条目解压字节上限，-1 表示不限制</td></tr>
+    <tr><td class="param-name">watchRecursiveDefault</td><td>boolean</td><td>false</td><td>watch(path, listener) 是否默认递归监听</td></tr>
+    <tr><td class="param-name">datePartitionPattern</td><td>String</td><td>"yyyy/MM/dd"</td><td>日期分区目录格式，需符合 DateTimeFormatter 语法</td></tr>
+    <tr><td class="param-name">datePartitionZoneId</td><td>String</td><td>系统默认时区</td><td>日期分区所用时区 ID，如 "Asia/Shanghai"</td></tr>
   </tbody>
 </table>
 
@@ -150,35 +412,131 @@
 <table class="api-table">
   <thead><tr><th>方法</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>create(path, content)</code></td><td>创建文件</td></tr>
-    <tr><td><code>write(path, content)</code></td><td>覆盖写入</td></tr>
-    <tr><td><code>append(path, content)</code></td><td>追加写入</td></tr>
-    <tr><td><code>read(path)</code></td><td>读取文本</td></tr>
-    <tr><td><code>readBytes(path)</code></td><td>读取字节</td></tr>
-    <tr><td><code>delete(path)</code></td><td>删除文件</td></tr>
-    <tr><td><code>deleteDir(path)</code></td><td>删除目录（递归）</td></tr>
-    <tr><td><code>exists(path)</code></td><td>文件/目录是否存在</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">文本读写</td></tr>
+    <tr><td><code>create(path, content)</code></td><td>创建新文件并写入内容</td></tr>
+    <tr><td><code>write(path, content)</code></td><td>覆盖写入文本</td></tr>
+    <tr><td><code>update(path, content)</code></td><td>更新已有文件内容（不存在抛 FK-404）</td></tr>
+    <tr><td><code>append(path, content)</code></td><td>追加文本</td></tr>
+    <tr><td><code>read(path)</code></td><td>读取全部文本</td></tr>
+    <tr><td><code>readLines(path)</code></td><td>按行读取，返回 List&lt;String&gt;</td></tr>
+    <tr><td><code>writeLines(path, lines)</code></td><td>按行覆盖写入</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">字节读写</td></tr>
+    <tr><td><code>writeBytes(path, bytes)</code></td><td>覆盖写入字节</td></tr>
+    <tr><td><code>appendBytes(path, bytes)</code></td><td>追加字节</td></tr>
+    <tr><td><code>readBytes(path)</code></td><td>读取全部字节</td></tr>
+    <tr><td><code>readRange(path, offset, length)</code></td><td>部分读取字节</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">流式读写</td></tr>
+    <tr><td><code>writeFrom(path, input)</code></td><td>从 InputStream 写入，返回字节数</td></tr>
+    <tr><td><code>writeFrom(path, input, replace)</code></td><td>从流写入，指定是否覆盖</td></tr>
+    <tr><td><code>appendFrom(path, input)</code></td><td>从流追加，返回字节数</td></tr>
+    <tr><td><code>readTo(path, output)</code></td><td>读取全部内容到 OutputStream</td></tr>
+    <tr><td><code>readRangeTo(path, offset, len, output)</code></td><td>部分读取到 OutputStream</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">目录与文件管理</td></tr>
+    <tr><td><code>mkdir(path)</code></td><td>创建单层目录</td></tr>
+    <tr><td><code>mkdirs(path)</code></td><td>递归创建目录（含父目录）</td></tr>
+    <tr><td><code>list(path)</code></td><td>列出直接子项，返回 List&lt;VKFileInfo&gt;</td></tr>
+    <tr><td><code>list(path, recursive)</code></td><td>列出子项，可递归</td></tr>
+    <tr><td><code>walk(path, recursive, filter)</code></td><td>遍历并过滤</td></tr>
+    <tr><td><code>exists(path)</code></td><td>是否存在</td></tr>
+    <tr><td><code>isFile(path)</code></td><td>是否为普通文件</td></tr>
     <tr><td><code>isDirectory(path)</code></td><td>是否为目录</td></tr>
-    <tr><td><code>list(path)</code></td><td>列出直接子文件/目录</td></tr>
-    <tr><td><code>listRecursive(path)</code></td><td>递归列出所有文件</td></tr>
-    <tr><td><code>createDir(path)</code></td><td>创建目录（含父目录）</td></tr>
-    <tr><td><code>move(from, to)</code></td><td>移动/重命名</td></tr>
-    <tr><td><code>gzip(src, dest)</code></td><td>GZIP 压缩</td></tr>
-    <tr><td><code>ungzip(src, dest)</code></td><td>GZIP 解压</td></tr>
-    <tr><td><code>unzip(src, destDir)</code></td><td>ZIP 解压</td></tr>
-    <tr><td><code>watch(path, handler)</code></td><td>监听文件/目录变化</td></tr>
+    <tr><td><code>size(path)</code></td><td>文件大小（字节）</td></tr>
+    <tr><td><code>totalSize(dirPath)</code></td><td>目录总大小（字节）</td></tr>
+    <tr><td><code>lastModified(path)</code></td><td>最后修改时间（Instant）</td></tr>
+    <tr><td><code>touch(path)</code></td><td>创建空文件或更新修改时间</td></tr>
+    <tr><td><code>rename(path, newName)</code></td><td>重命名（同目录）</td></tr>
+    <tr><td><code>copy(src, dest)</code></td><td>复制文件（默认覆盖）</td></tr>
+    <tr><td><code>copy(src, dest, replace)</code></td><td>复制文件，指定是否覆盖</td></tr>
+    <tr><td><code>move(src, dest)</code></td><td>移动文件（默认覆盖）</td></tr>
+    <tr><td><code>move(src, dest, replace)</code></td><td>移动文件，指定是否覆盖</td></tr>
+    <tr><td><code>copyDir(src, dest, strategy)</code></td><td>复制目录</td></tr>
+    <tr><td><code>moveDir(src, dest, strategy)</code></td><td>移动目录</td></tr>
+    <tr><td><code>delete(path)</code></td><td>删除文件（不存在抛 FK-404）</td></tr>
+    <tr><td><code>deleteIfExists(path)</code></td><td>删除文件（不存在返回 false）</td></tr>
+    <tr><td><code>deleteRecursively(path)</code></td><td>递归删除目录</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">日期分区</td></tr>
+    <tr><td><code>suggestDatePath(relativePath)</code></td><td>生成当前时间的分区路径</td></tr>
+    <tr><td><code>suggestDatePath(relativePath, atTime)</code></td><td>生成指定时刻的分区路径</td></tr>
+    <tr><td><code>writeByDatePath(relativePath, content)</code></td><td>按日期分区写入文本，返回实际路径</td></tr>
+    <tr><td><code>writeBytesByDatePath(relativePath, bytes)</code></td><td>按日期分区写入字节，返回实际路径</td></tr>
+    <tr><td><code>writeFromByDatePath(relativePath, input)</code></td><td>按日期分区从流写入，返回实际路径</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">临时文件</td></tr>
+    <tr><td><code>createTemp(prefix, suffix)</code></td><td>在 tmp/ 下创建临时文件，返回相对路径</td></tr>
+    <tr><td><code>createTemp(subDir, prefix, suffix)</code></td><td>在指定子目录下创建临时文件</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">压缩与解压</td></tr>
+    <tr><td><code>zip(src, zipPath)</code></td><td>ZIP 压缩文件或目录</td></tr>
+    <tr><td><code>unzip(zipPath, destDir)</code></td><td>ZIP 解压（使用配置安全限制）</td></tr>
+    <tr><td><code>unzip(zipPath, destDir, replace)</code></td><td>ZIP 解压，指定是否覆盖</td></tr>
+    <tr><td><code>unzip(zipPath, destDir, options)</code></td><td>ZIP 解压，自定义安全选项</td></tr>
+    <tr><td><code>gzip(src, gzPath)</code></td><td>GZip 压缩</td></tr>
+    <tr><td><code>gunzip(gzPath, dest)</code></td><td>GZip 解压</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">图片与哈希</td></tr>
+    <tr><td><code>thumbnail(imagePath, options)</code></td><td>生成缩略图字节</td></tr>
+    <tr><td><code>thumbnailTo(imagePath, targetPath, options)</code></td><td>生成缩略图并写入文件</td></tr>
+    <tr><td><code>hash(path, algorithm)</code></td><td>计算文件哈希（MD5/SHA-256 等）</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">加密与解密</td></tr>
+    <tr><td><code>encryptFile(src, dest, secret)</code></td><td>AES-256-GCM 加密文件</td></tr>
+    <tr><td><code>decryptFile(src, dest, secret)</code></td><td>AES-256-GCM 解密文件</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">文件监听</td></tr>
+    <tr><td><code>watch(path, listener)</code></td><td>监听文件/目录变化，返回 VKFileWatchHandle</td></tr>
+    <tr><td><code>watch(path, recursive, listener)</code></td><td>监听，显式指定是否递归</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">目录迁移</td></tr>
+    <tr><td><code>migrateBaseDir(targetBaseDir)</code></td><td>迁移存储根目录（默认选项）</td></tr>
+    <tr><td><code>migrateBaseDir(targetBaseDir, options)</code></td><td>迁移存储根目录（自定义选项）</td></tr>
+    <tr><td colspan="2" style="font-weight:600;color:var(--accent)">多后端与状态</td></tr>
     <tr><td><code>registerStore(mode, store)</code></td><td>注册自定义存储后端</td></tr>
-    <tr><td><code>withMode(mode, action)</code></td><td>临时切换存储后端</td></tr>
+    <tr><td><code>setDefaultMode(mode)</code></td><td>切换全局默认后端</td></tr>
+    <tr><td><code>defaultMode()</code></td><td>获取当前默认后端名称</td></tr>
+    <tr><td><code>modes()</code></td><td>获取所有已注册后端名称</td></tr>
+    <tr><td><code>withMode(mode, action)</code></td><td>当前线程临时切换后端（Runnable）</td></tr>
+    <tr><td><code>withMode(mode, supplier)</code></td><td>当前线程临时切换后端（Supplier&lt;T&gt;）</td></tr>
+    <tr><td><code>currentMode()</code></td><td>获取当前线程实际使用的后端名称</td></tr>
     <tr><td><code>setReadOnly(flag)</code></td><td>设置只读模式</td></tr>
+    <tr><td><code>isReadOnly()</code></td><td>查询只读模式</td></tr>
+    <tr><td><code>started()</code></td><td>查询模块是否已初始化</td></tr>
+    <tr><td><code>config()</code></td><td>获取当前配置副本</td></tr>
+    <tr><td><code>close()</code></td><td>关闭模块，释放所有后端资源</td></tr>
+  </tbody>
+</table>
+
+<h2>错误码</h2>
+<table class="api-table">
+  <thead><tr><th>错误码</th><th>常量</th><th>触发场景</th></tr></thead>
+  <tbody>
+    <tr><td><code>FK-400</code></td><td>INVALID_ARGUMENT</td><td>参数为 null 或空白</td></tr>
+    <tr><td><code>FK-401</code></td><td>NOT_INITIALIZED</td><td>模块未初始化（极少见，通常会触发懒加载）</td></tr>
+    <tr><td><code>FK-402</code></td><td>CONFIG_ERROR</td><td>配置错误（如无效的日期格式、未注册的后端）</td></tr>
+    <tr><td><code>FK-403</code></td><td>STATE_ERROR</td><td>后端未找到或状态异常</td></tr>
+    <tr><td><code>FK-404</code></td><td>NOT_FOUND</td><td>目标路径不存在</td></tr>
+    <tr><td><code>FK-410</code></td><td>PATH_ERROR</td><td>路径非法或路径穿越（Zip Slip）</td></tr>
+    <tr><td><code>FK-500</code></td><td>IO_ERROR</td><td>底层 IO 操作失败</td></tr>
+    <tr><td><code>FK-520</code></td><td>SECURITY_ERROR</td><td>安全校验失败</td></tr>
+    <tr><td><code>FK-530</code></td><td>UNSUPPORTED</td><td>当前后端不支持该操作</td></tr>
+    <tr><td><code>FK-540</code></td><td>ZIP_BOMB_RISK</td><td>解压超过安全限制（Zip Bomb 检测）</td></tr>
+    <tr><td><code>FK-550</code></td><td>IMAGE_DECODE_ERROR</td><td>图片解码失败</td></tr>
+    <tr><td><code>FK-551</code></td><td>IMAGE_ENCODE_ERROR</td><td>图片编码失败</td></tr>
+    <tr><td><code>FK-552</code></td><td>IMAGE_LIMIT_EXCEEDED</td><td>图片像素数超过安全上限</td></tr>
+    <tr><td><code>FK-553</code></td><td>UNSUPPORTED_IMAGE_FORMAT</td><td>不支持的图片格式</td></tr>
+    <tr><td><code>FK-560</code></td><td>READ_ONLY_ERROR</td><td>只读模式下执行写操作</td></tr>
+    <tr><td><code>FK-561</code></td><td>ENCRYPT_ERROR</td><td>文件加密或解密失败（含密钥错误）</td></tr>
+    <tr><td><code>FK-562</code></td><td>GZIP_ERROR</td><td>GZip 压缩或解压失败</td></tr>
   </tbody>
 </table>
 
 <h2>异常处理</h2>
-<pre><code><span class="kw">try</span> {
+<pre><code><span class="kw">import</span> yueyang.vostok.file.exception.VKFileException;
+
+<span class="kw">try</span> {
     <span class="ty">Vostok</span>.File.read(<span class="st">"missing.txt"</span>);
-} <span class="kw">catch</span> (yueyang.vostok.file.exception.<span class="ty">VKFileException</span> e) {
-    <span class="ty">System</span>.out.println(e.getCode() + <span class="st">" "</span> + e.getMessage());
-    <span class="cm">// e.g. FK-404 路径不存在</span>
+} <span class="kw">catch</span> (<span class="ty">VKFileException</span> e) {
+    <span class="ty">System</span>.out.println(e.getCode() + <span class="st">": "</span> + e.getMessage());
+    <span class="cm">// e.g. FK-404: Path not found</span>
+    <span class="kw">switch</span> (e.getErrorCode()) {
+        <span class="kw">case</span> NOT_FOUND       -&gt; handleNotFound();
+        <span class="kw">case</span> READ_ONLY_ERROR -&gt; handleReadOnly();
+        <span class="kw">case</span> IO_ERROR        -&gt; handleIoError(e);
+        <span class="kw">default</span>              -&gt; <span class="kw">throw</span> e;
+    }
 }</code></pre>
 
 <p>完整错误码见 <a href="errors.html">错误码参考</a>。</p>
