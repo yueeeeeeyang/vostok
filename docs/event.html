@@ -44,103 +44,401 @@
 <div class="page-header">
   <div class="module-tag">📡 Vostok.Event</div>
   <h1>Event 事件总线模块</h1>
-  <p class="desc">进程内轻量事件总线，支持同步/异步监听器、优先级调度、一次性订阅、Predicate 过滤器，以异步方式发布时监听器互不阻塞。</p>
+  <p class="desc">进程内轻量事件总线，支持同步/异步监听器、五档优先级调度、一次性订阅、Predicate 过滤器、多态事件匹配、注解式注册（<code>@VKEventHandler</code> + <code>scan()</code>）、死信处理器，以及带执行统计的发布结果（<code>VKEventPublishResult</code>）。异步监听器在独立线程池中执行，不阻塞发布者线程；首次使用自动初始化，无需显式调用 <code>init()</code>。</p>
 </div>
 
-<h2>初始化</h2>
-<pre><code><span class="ty">Vostok</span>.Event.init();  <span class="cm">// 默认配置</span>
+<h2>初始化（可选）</h2>
 
+<h3>零配置启动（默认行为）</h3>
+<pre><code><span class="cm">// 无需任何初始化——直接发布/订阅即可。
+// 首次操作时自动以默认配置启动。</span>
+<span class="ty">Vostok</span>.Event.publish(<span class="kw">new</span> <span class="ty">OrderCreatedEvent</span>(<span class="num">42L</span>));</code></pre>
+
+<h3>显式初始化</h3>
+<pre><code><span class="cm">// 使用内置默认配置</span>
+<span class="ty">Vostok</span>.Event.init();
+
+<span class="cm">// 自定义配置</span>
 <span class="ty">Vostok</span>.Event.init(<span class="kw">new</span> <span class="ty">VKEventConfig</span>()
-    .asyncCoreThreads(<span class="nu">4</span>)           <span class="cm">// 默认 CPU/2</span>
-    .asyncMaxThreads(<span class="nu">16</span>)           <span class="cm">// 默认 CPU*2</span>
-    .asyncQueueCapacity(<span class="nu">4096</span>)
-    .listenerErrorStrategy(<span class="ty">VKEventListenerErrorStrategy</span>.CONTINUE)  <span class="cm">// 某监听失败继续后续</span>
+    .asyncCoreThreads(<span class="num">4</span>)
+    .asyncMaxThreads(<span class="num">16</span>)
+    .asyncQueueCapacity(<span class="num">4096</span>)
+    .asyncKeepAliveMs(<span class="num">60000</span>)
+    .listenerErrorStrategy(<span class="ty">VKEventListenerErrorStrategy</span>.CONTINUE)
     .rejectionPolicy(<span class="ty">VKEventRejectionPolicy</span>.CALLER_RUNS)
+    .shutdownWaitMs(<span class="num">3000</span>)
 );</code></pre>
 
+<div class="callout tip">
+  <div class="callout-title">零配置启动</div>
+  Event 模块无需显式初始化。任何 <code>on()</code>、<code>publish()</code> 等调用都会在首次使用时自动以默认配置启动线程池。
+  如需自定义线程数或异常策略，在第一次订阅/发布前调用 <code>init(VKEventConfig)</code> 即可。
+  <code>init()</code> 是幂等的：若已初始化则不重复执行。如需替换配置，请使用 <code>reinit()</code>。
+</div>
+
 <h2>定义事件类</h2>
-<pre><code><span class="cm">// 任意 POJO 皆可作为事件</span>
+<pre><code><span class="cm">// 任意 POJO、Record 或类均可作为事件，无需继承任何基类</span>
 <span class="kw">public record</span> <span class="ty">OrderCreatedEvent</span>(<span class="ty">Long</span> orderId, <span class="ty">String</span> userId, <span class="ty">BigDecimal</span> amount) {}
-<span class="kw">public record</span> <span class="ty">UserLoginEvent</span>(<span class="ty">String</span> userId, <span class="ty">String</span> ip, <span class="ty">Instant</span> time) {}</code></pre>
+<span class="kw">public record</span> <span class="ty">UserLoginEvent</span>(<span class="ty">String</span> userId, <span class="ty">String</span> ip, <span class="ty">Instant</span> time) {}
+
+<span class="cm">// 支持多态匹配：注册父类/接口的监听器，可以接收所有子类事件</span>
+<span class="kw">public class</span> <span class="ty">BaseEvent</span> {}
+<span class="kw">public class</span> <span class="ty">OrderEvent</span> <span class="kw">extends</span> <span class="ty">BaseEvent</span> {}
+<span class="kw">public class</span> <span class="ty">PaymentEvent</span> <span class="kw">extends</span> <span class="ty">BaseEvent</span> {}</code></pre>
 
 <h2>订阅事件</h2>
 
-<h3>同步监听器</h3>
+<h3>同步监听器（默认 NORMAL 优先级）</h3>
 <pre><code><span class="ty">VKEventSubscription</span> sub = <span class="ty">Vostok</span>.Event.on(<span class="ty">OrderCreatedEvent</span>.class, event -&gt; {
     <span class="ty">Vostok</span>.Log.info(<span class="st">"order {} created"</span>, event.orderId());
 });</code></pre>
 
 <h3>异步监听器</h3>
 <pre><code><span class="ty">Vostok</span>.Event.on(<span class="ty">OrderCreatedEvent</span>.class, <span class="ty">VKListenerMode</span>.ASYNC, event -&gt; {
-    <span class="cm">// 在异步线程池中执行，不阻塞发布者</span>
+    <span class="cm">// 在异步线程池中执行，不阻塞发布者线程</span>
     sendEmail(event.userId(), <span class="st">"Your order is confirmed"</span>);
 });</code></pre>
 
-<h3>带优先级</h3>
-<pre><code><span class="cm">// CRITICAL &gt; HIGH &gt; NORMAL &gt; LOW</span>
-<span class="ty">Vostok</span>.Event.on(<span class="ty">UserLoginEvent</span>.class,
+<h3>指定优先级（仅指定优先级，默认同步）</h3>
+<pre><code><span class="cm">// 优先级：HIGHEST &gt; HIGH &gt; NORMAL &gt; LOW &gt; LOWEST
+// 同一 publish 中，高优先级监听器先执行；同优先级按注册顺序执行</span>
+<span class="ty">Vostok</span>.Event.on(<span class="ty">UserLoginEvent</span>.class, <span class="ty">VKEventPriority</span>.HIGH, event -&gt; {
+    auditLog(event.userId(), event.ip());
+});</code></pre>
+
+<h3>指定模式 + 优先级</h3>
+<pre><code><span class="ty">Vostok</span>.Event.on(<span class="ty">UserLoginEvent</span>.class,
     <span class="ty">VKListenerMode</span>.SYNC,
     <span class="ty">VKEventPriority</span>.HIGH,
     event -&gt; auditLog(event.userId(), event.ip()));</code></pre>
 
-<h3>带过滤器</h3>
-<pre><code><span class="ty">Vostok</span>.Event.on(<span class="ty">OrderCreatedEvent</span>.class,
+<h3>带 Predicate 过滤器（全参数版本）</h3>
+<pre><code><span class="cm">// 过滤器为 null 表示不过滤；过滤器不满足时跳过（不消耗 once token）</span>
+<span class="ty">Vostok</span>.Event.on(<span class="ty">OrderCreatedEvent</span>.class,
     <span class="ty">VKListenerMode</span>.ASYNC,
     <span class="ty">VKEventPriority</span>.NORMAL,
-    event -&gt; event.amount().compareTo(<span class="ty">BigDecimal</span>.valueOf(<span class="nu">1000</span>)) &gt; <span class="nu">0</span>,  <span class="cm">// 只处理大单</span>
+    event -&gt; event.amount().compareTo(<span class="ty">BigDecimal</span>.valueOf(<span class="num">1000</span>)) &gt; <span class="num">0</span>,  <span class="cm">// 只处理大额订单</span>
     event -&gt; notifyRiskSystem(event));</code></pre>
 
-<h3>一次性订阅</h3>
-<pre><code><span class="cm">// 触发一次后自动移除</span>
-<span class="ty">Vostok</span>.Event.once(<span class="ty">UserLoginEvent</span>.class, event -&gt; {
+<h3>一次性订阅（触发一次后自动注销）</h3>
+<pre><code><span class="cm">// 同步一次性监听器（默认 NORMAL 优先级）</span>
+<span class="ty">VKEventSubscription</span> sub = <span class="ty">Vostok</span>.Event.once(<span class="ty">UserLoginEvent</span>.class, event -&gt; {
     <span class="ty">System</span>.out.println(<span class="st">"first login: "</span> + event.userId());
 });
 
-<span class="ty">Vostok</span>.Event.once(<span class="ty">UserLoginEvent</span>.class, <span class="ty">VKListenerMode</span>.ASYNC, event -&gt; { <span class="cm">/* … */</span> });</code></pre>
+<span class="cm">// 异步一次性监听器
+// 注意：CAS 保证并发 publish 场景下仍只触发一次</span>
+<span class="ty">Vostok</span>.Event.once(<span class="ty">UserLoginEvent</span>.class, <span class="ty">VKListenerMode</span>.ASYNC, event -&gt; {
+    <span class="cm">// 仅异步执行一次</span>
+});</code></pre>
+
+<h3>多态监听（父类/接口监听器接收子类事件）</h3>
+<pre><code><span class="cm">// 注册 BaseEvent 的监听器，OrderEvent 和 PaymentEvent 发布时均会触发</span>
+<span class="ty">Vostok</span>.Event.on(<span class="ty">BaseEvent</span>.class, event -&gt; {
+    <span class="ty">Vostok</span>.Log.info(<span class="st">"received base event: {}"</span>, event.getClass().getSimpleName());
+});</code></pre>
+
+<h2>注解式注册（@VKEventHandler + scan()）</h2>
+<p>在 Bean 类的方法上添加 <code>@VKEventHandler</code> 注解，然后调用 <code>scan(bean)</code> 批量注册。被注解的方法必须恰好有 1 个参数，参数类型即为监听的事件类型。扫描时会遍历本类及所有父类（不含 Object）。</p>
+
+<pre><code><span class="kw">public class</span> <span class="ty">OrderEventHandler</span> {
+
+    <span class="cm">// 同步监听，HIGH 优先级</span>
+    @<span class="ty">VKEventHandler</span>(priority = <span class="ty">VKEventPriority</span>.HIGH)
+    <span class="kw">public void</span> onOrderCreated(<span class="ty">OrderCreatedEvent</span> e) {
+        <span class="ty">Vostok</span>.Log.info(<span class="st">"order {} created, amount={}"</span>, e.orderId(), e.amount());
+    }
+
+    <span class="cm">// 异步监听，默认 NORMAL 优先级</span>
+    @<span class="ty">VKEventHandler</span>(mode = <span class="ty">VKListenerMode</span>.ASYNC)
+    <span class="kw">public void</span> onOrderCreatedAsync(<span class="ty">OrderCreatedEvent</span> e) {
+        sendNotification(e.userId());
+    }
+
+    <span class="cm">// 一次性监听，触发后自动注销</span>
+    @<span class="ty">VKEventHandler</span>(mode = <span class="ty">VKListenerMode</span>.ASYNC, once = <span class="kw">true</span>)
+    <span class="kw">public void</span> onFirstPayment(<span class="ty">PaymentEvent</span> e) {
+        sendWelcomeBonus(e.userId());
+    }
+
+    <span class="cm">// 也支持 private 方法</span>
+    @<span class="ty">VKEventHandler</span>
+    <span class="kw">private void</span> onUserLogin(<span class="ty">UserLoginEvent</span> e) {
+        auditLog(e.userId(), e.ip());
+    }
+}
+
+<span class="cm">// 批量注册，返回所有订阅句柄（可统一取消）</span>
+<span class="ty">List</span>&lt;<span class="ty">VKEventSubscription</span>&gt; subs = <span class="ty">Vostok</span>.Event.scan(<span class="kw">new</span> <span class="ty">OrderEventHandler</span>());</code></pre>
+
+<p><code>@VKEventHandler</code> 属性说明：</p>
+<table class="api-table">
+  <thead><tr><th>属性</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>mode</code></td><td>VKListenerMode</td><td>SYNC</td><td>执行模式：SYNC（在 publish 调用线程执行）或 ASYNC（提交到线程池）</td></tr>
+    <tr><td><code>priority</code></td><td>VKEventPriority</td><td>NORMAL</td><td>监听器优先级，高优先级在同一次 publish 中先执行</td></tr>
+    <tr><td><code>once</code></td><td>boolean</td><td>false</td><td>是否一次性监听，触发一次后自动注销；CAS 保证并发安全</td></tr>
+  </tbody>
+</table>
 
 <h2>发布事件</h2>
-<pre><code><span class="cm">// 同步发布（等所有同步监听器执行完毕）</span>
-<span class="ty">Vostok</span>.Event.publish(<span class="kw">new</span> <span class="ty">OrderCreatedEvent</span>(<span class="nu">42L</span>, <span class="st">"user-1"</span>, amount));
 
-<span class="cm">// 异步发布（立即返回，监听器在后台线程执行）</span>
-<span class="ty">Vostok</span>.Event.publishAsync(<span class="kw">new</span> <span class="ty">OrderCreatedEvent</span>(<span class="nu">42L</span>, <span class="st">"user-1"</span>, amount));</code></pre>
+<h3>同步发布</h3>
+<pre><code><span class="cm">// 同步发布：在当前线程依次执行所有同步监听器；异步监听器提交到线程池后立即返回（不等待）
+// 返回本次发布的执行统计</span>
+<span class="ty">VKEventPublishResult</span> result = <span class="ty">Vostok</span>.Event.publish(<span class="kw">new</span> <span class="ty">OrderCreatedEvent</span>(<span class="num">42L</span>, <span class="st">"user-1"</span>, amount));
+
+<span class="ty">System</span>.out.printf(<span class="st">"matched=%d, syncOk=%d, syncFail=%d, asyncSubmit=%d, costNs=%d%n"</span>,
+    result.getMatchedListeners(),
+    result.getSyncExecuted(),
+    result.getSyncFailed(),
+    result.getAsyncSubmitted(),
+    result.getCostNs());</code></pre>
+
+<h3>异步发布（等待所有异步监听器完成）</h3>
+<pre><code><span class="cm">// publishAsync 等待所有 ASYNC 监听器 future 全部完成后，结果 CompletableFuture 才 complete
+// 可通过 .join() / .get() 确认所有异步监听器执行完毕，asyncFailed 反映执行失败数</span>
+<span class="ty">CompletableFuture</span>&lt;<span class="ty">VKEventPublishResult</span>&gt; future =
+    <span class="ty">Vostok</span>.Event.publishAsync(<span class="kw">new</span> <span class="ty">OrderCreatedEvent</span>(<span class="num">42L</span>, <span class="st">"user-1"</span>, amount));
+
+<span class="cm">// 非阻塞回调</span>
+future.thenAccept(result -&gt; {
+    <span class="ty">Vostok</span>.Log.info(<span class="st">"all async listeners done, failed={}"</span>, result.getAsyncFailed());
+});
+
+<span class="cm">// 或阻塞等待（测试场景）</span>
+<span class="ty">VKEventPublishResult</span> result = future.join();</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">publish vs publishAsync 的区别</div>
+  <ul>
+    <li><code>publish()</code>：在当前线程同步执行所有 SYNC 监听器；ASYNC 监听器提交到线程池后立即返回，<strong>不等待</strong>异步结果，<code>asyncFailed</code> 固定为 0。</li>
+    <li><code>publishAsync()</code>：同样立即提交异步任务，但返回一个 <code>CompletableFuture</code>，该 Future 在<strong>所有异步监听器完成后</strong>才 complete，<code>asyncFailed</code> 反映实际失败数。</li>
+  </ul>
+</div>
+
+<h2>VKEventPublishResult 发布结果</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>getMatchedListeners()</code></td><td>int</td><td>本次发布匹配到的监听器总数（含被过滤器拦截的）</td></tr>
+    <tr><td><code>getSyncExecuted()</code></td><td>int</td><td>同步监听器成功执行数</td></tr>
+    <tr><td><code>getSyncFailed()</code></td><td>int</td><td>同步监听器执行异常数</td></tr>
+    <tr><td><code>getAsyncSubmitted()</code></td><td>int</td><td>成功提交到线程池的异步任务数</td></tr>
+    <tr><td><code>getAsyncRejected()</code></td><td>int</td><td>被线程池拒绝的异步任务数（队列满）</td></tr>
+    <tr><td><code>getAsyncFailed()</code></td><td>int</td><td>异步监听器执行失败数（<code>publishAsync()</code> 专用；<code>publish()</code> 固定为 0）</td></tr>
+    <tr><td><code>getCostNs()</code></td><td>long</td><td>发布耗时（纳秒，System.nanoTime 精度）</td></tr>
+  </tbody>
+</table>
+
+<h2>死信处理器</h2>
+<p>当发布的事件没有任何匹配的监听器时，死信处理器被调用。全局唯一，后注册覆盖前注册，用于监控未被消费的事件。</p>
+<pre><code><span class="ty">Vostok</span>.Event.onDeadLetter(event -&gt; {
+    <span class="ty">Vostok</span>.Log.warn(<span class="st">"unhandled event: {}"</span>, event.getClass().getSimpleName());
+    <span class="cm">// 可投递到告警队列、监控系统等</span>
+    metrics.increment(<span class="st">"event.dead_letter"</span>);
+});</code></pre>
+
+<div class="callout tip">
+  <div class="callout-title">死信处理器注意事项</div>
+  死信处理器在 <code>publish()</code> 的调用线程上执行（同步），应保持低延迟，避免阻塞 IO。如需网络操作，请投递到独立队列异步处理。
+</div>
 
 <h2>取消订阅</h2>
-<pre><code><span class="cm">// 取消单个订阅</span>
+<pre><code><span class="cm">// 方式一：通过订阅句柄的 cancel() 方法（等价于 Vostok.Event.off(sub)）</span>
+<span class="ty">VKEventSubscription</span> sub = <span class="ty">Vostok</span>.Event.on(<span class="ty">OrderCreatedEvent</span>.class, event -&gt; { <span class="cm">/* … */</span> });
+sub.cancel();  <span class="cm">// 线程安全，原子操作</span>
+
+<span class="cm">// 方式二：通过门面方法</span>
 <span class="ty">Vostok</span>.Event.off(sub);
 
 <span class="cm">// 移除某事件类型的全部监听器</span>
-<span class="ty">Vostok</span>.Event.offAll(<span class="ty">OrderCreatedEvent</span>.class);</code></pre>
+<span class="ty">Vostok</span>.Event.offAll(<span class="ty">OrderCreatedEvent</span>.class);
+
+<span class="cm">// 批量取消（scan() 返回的订阅列表）</span>
+<span class="ty">List</span>&lt;<span class="ty">VKEventSubscription</span>&gt; subs = <span class="ty">Vostok</span>.Event.scan(<span class="kw">new</span> <span class="ty">MyHandler</span>());
+subs.forEach(<span class="ty">VKEventSubscription</span>::cancel);</code></pre>
+
+<h2>生命周期</h2>
+<pre><code><span class="cm">// 检查是否已初始化</span>
+<span class="kw">boolean</span> running = <span class="ty">Vostok</span>.Event.started();
+
+<span class="cm">// 获取当前配置快照（返回副本，不可修改运行时）</span>
+<span class="ty">VKEventConfig</span> cfg = <span class="ty">Vostok</span>.Event.config();
+
+<span class="cm">// 重新初始化：替换配置，重建线程池，清空所有已注册监听器</span>
+<span class="ty">Vostok</span>.Event.reinit(<span class="kw">new</span> <span class="ty">VKEventConfig</span>().asyncCoreThreads(<span class="num">8</span>));
+
+<span class="cm">// 关闭事件总线：等待线程池任务完成（最长 shutdownWaitMs），清空所有监听器</span>
+<span class="ty">Vostok</span>.Event.close();</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">reinit() 说明</div>
+  <code>reinit()</code> 会清空所有已注册的监听器并重建线程池，等待旧线程池任务在 <code>shutdownWaitMs</code> 内完成后关闭。
+  调用后需重新注册所有监听器。与 <code>init()</code> 不同，<code>reinit()</code> 在已初始化时仍会执行。
+</div>
+
+<h2>完整使用示例</h2>
+
+<h3>Web 请求事件追踪</h3>
+<pre><code><span class="cm">// 定义事件</span>
+<span class="kw">public record</span> <span class="ty">RequestCompletedEvent</span>(<span class="ty">String</span> path, <span class="kw">int</span> status, <span class="kw">long</span> elapsedMs) {}
+
+<span class="cm">// 注册监听器</span>
+<span class="ty">Vostok</span>.Event.on(<span class="ty">RequestCompletedEvent</span>.class,
+    <span class="ty">VKListenerMode</span>.ASYNC,
+    <span class="ty">VKEventPriority</span>.LOW,
+    event -&gt; metrics.record(event.path(), event.status(), event.elapsedMs()));
+
+<span class="cm">// 慢请求告警（过滤器：只处理超过 1 秒的请求）</span>
+<span class="ty">Vostok</span>.Event.on(<span class="ty">RequestCompletedEvent</span>.class,
+    <span class="ty">VKListenerMode</span>.ASYNC,
+    <span class="ty">VKEventPriority</span>.NORMAL,
+    event -&gt; event.elapsedMs() &gt; <span class="num">1000</span>,
+    event -&gt; alertQueue.offer(<span class="st">"slow: "</span> + event.path()));
+
+<span class="cm">// 在 handler 中发布</span>
+<span class="kw">long</span> start = <span class="ty">System</span>.currentTimeMillis();
+handle(ctx);
+<span class="ty">Vostok</span>.Event.publish(<span class="kw">new</span> <span class="ty">RequestCompletedEvent</span>(
+    ctx.path(), ctx.status(), <span class="ty">System</span>.currentTimeMillis() - start));</code></pre>
+
+<h3>注解式注册（与 scan() 结合）</h3>
+<pre><code><span class="kw">public class</span> <span class="ty">AuditHandler</span> {
+
+    @<span class="ty">VKEventHandler</span>(priority = <span class="ty">VKEventPriority</span>.HIGHEST)
+    <span class="kw">public void</span> onUserLogin(<span class="ty">UserLoginEvent</span> e) {
+        <span class="ty">Vostok</span>.Log.info(<span class="st">"[AUDIT] login: user={} ip={}"</span>, e.userId(), e.ip());
+    }
+
+    @<span class="ty">VKEventHandler</span>(mode = <span class="ty">VKListenerMode</span>.ASYNC, priority = <span class="ty">VKEventPriority</span>.LOW)
+    <span class="kw">public void</span> onOrderCreated(<span class="ty">OrderCreatedEvent</span> e) {
+        writeAuditLog(e.orderId(), e.userId(), e.amount());
+    }
+}
+
+<span class="cm">// 应用启动时注册</span>
+<span class="ty">List</span>&lt;<span class="ty">VKEventSubscription</span>&gt; auditSubs = <span class="ty">Vostok</span>.Event.scan(<span class="kw">new</span> <span class="ty">AuditHandler</span>());
+
+<span class="cm">// 关闭时批量注销</span>
+auditSubs.forEach(<span class="ty">VKEventSubscription</span>::cancel);</code></pre>
 
 <h2>配置参数</h2>
 <table class="config-table">
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td class="param-name">enabled</td><td>boolean</td><td>true</td><td>是否启用事件总线</td></tr>
-    <tr><td class="param-name">asyncCoreThreads</td><td>int</td><td>CPU/2</td><td>异步线程池核心线程数</td></tr>
-    <tr><td class="param-name">asyncMaxThreads</td><td>int</td><td>CPU*2</td><td>异步线程池最大线程数</td></tr>
-    <tr><td class="param-name">asyncQueueCapacity</td><td>int</td><td>4096</td><td>异步任务队列容量</td></tr>
-    <tr><td class="param-name">asyncKeepAliveMs</td><td>long</td><td>60000</td><td>空闲线程存活时间（ms）</td></tr>
-    <tr><td class="param-name">shutdownWaitMs</td><td>long</td><td>3000</td><td>关闭时等待任务完成的最长时间</td></tr>
-    <tr><td class="param-name">rejectionPolicy</td><td>VKEventRejectionPolicy</td><td>CALLER_RUNS</td><td>队列满时策略：CALLER_RUNS / DISCARD</td></tr>
-    <tr><td class="param-name">listenerErrorStrategy</td><td>VKEventListenerErrorStrategy</td><td>CONTINUE</td><td>监听器异常策略：CONTINUE（继续后续）/ STOP</td></tr>
+    <tr><td class="param-name">enabled</td><td>boolean</td><td>true</td><td>是否启用事件总线；false 时 publish/publishAsync 立即返回空结果</td></tr>
+    <tr><td class="param-name">asyncCoreThreads</td><td>int</td><td>CPU/2（最小 1）</td><td>异步线程池核心线程数；设置时自动保证不超过 asyncMaxThreads</td></tr>
+    <tr><td class="param-name">asyncMaxThreads</td><td>int</td><td>CPU*2（最小 1）</td><td>异步线程池最大线程数；设置时自动保证不小于 asyncCoreThreads</td></tr>
+    <tr><td class="param-name">asyncQueueCapacity</td><td>int</td><td>4096</td><td>异步任务队列容量（ArrayBlockingQueue）；队列满时触发 rejectionPolicy</td></tr>
+    <tr><td class="param-name">asyncKeepAliveMs</td><td>long</td><td>60000</td><td>空闲线程存活时间（ms）；超时后多余线程被回收</td></tr>
+    <tr><td class="param-name">rejectionPolicy</td><td>VKEventRejectionPolicy</td><td>CALLER_RUNS</td><td>线程池队列满时的拒绝策略，见枚举说明</td></tr>
+    <tr><td class="param-name">listenerErrorStrategy</td><td>VKEventListenerErrorStrategy</td><td>CONTINUE</td><td>监听器抛出异常时的处理策略，见枚举说明</td></tr>
+    <tr><td class="param-name">shutdownWaitMs</td><td>long</td><td>3000</td><td>关闭（close/reinit）时等待线程池任务完成的最长时间（ms）；超时后强制 shutdownNow</td></tr>
+  </tbody>
+</table>
+
+<h2>枚举说明</h2>
+
+<h3>VKEventPriority</h3>
+<p>优先级数值越小，执行越靠前。同优先级的监听器按注册顺序（ID 升序）执行。</p>
+<table class="api-table">
+  <thead><tr><th>枚举值</th><th>数值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>HIGHEST</code></td><td>1</td><td>最高优先级，最先执行</td></tr>
+    <tr><td><code>HIGH</code></td><td>2</td><td>高优先级</td></tr>
+    <tr><td><code>NORMAL</code></td><td>3</td><td>默认优先级</td></tr>
+    <tr><td><code>LOW</code></td><td>4</td><td>低优先级</td></tr>
+    <tr><td><code>LOWEST</code></td><td>5</td><td>最低优先级，最后执行</td></tr>
+  </tbody>
+</table>
+
+<h3>VKListenerMode</h3>
+<table class="api-table">
+  <thead><tr><th>枚举值</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>SYNC</code></td><td>在 publish() 的调用线程上同步执行，阻塞直到该监听器完成</td></tr>
+    <tr><td><code>ASYNC</code></td><td>提交到内部线程池异步执行，不阻塞发布者线程</td></tr>
+  </tbody>
+</table>
+
+<h3>VKEventRejectionPolicy</h3>
+<table class="api-table">
+  <thead><tr><th>枚举值</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>CALLER_RUNS</code></td><td>队列满时在调用者线程（发布者线程）同步执行该任务（默认）</td></tr>
+    <tr><td><code>ABORT</code></td><td>队列满时抛出 <code>RejectedExecutionException</code>，发布方可捕获</td></tr>
+    <tr><td><code>DISCARD</code></td><td>队列满时静默丢弃该异步任务，<code>asyncRejected</code> 计数加 1</td></tr>
+  </tbody>
+</table>
+
+<h3>VKEventListenerErrorStrategy</h3>
+<table class="api-table">
+  <thead><tr><th>枚举值</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>CONTINUE</code></td><td>某监听器抛出异常后，记录错误日志并继续执行后续监听器（默认）</td></tr>
+    <tr><td><code>FAIL_FAST</code></td><td>同步监听器异常时立即重新抛出（RuntimeException），终止后续执行；异步监听器异常时将 future 标记为失败（<code>publishAsync</code> 的调用方可检测到 asyncFailed &gt; 0）</td></tr>
   </tbody>
 </table>
 
 <h2>API 速查</h2>
+
+<h3>生命周期</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>init()</code></td><td>void</td><td>以默认配置显式初始化（已初始化时幂等）</td></tr>
+    <tr><td><code>init(VKEventConfig)</code></td><td>void</td><td>以自定义配置显式初始化（已初始化时幂等）</td></tr>
+    <tr><td><code>reinit(VKEventConfig)</code></td><td>void</td><td>重新初始化，替换配置并清空所有监听器（已初始化时强制执行）</td></tr>
+    <tr><td><code>started()</code></td><td>boolean</td><td>返回是否已初始化</td></tr>
+    <tr><td><code>config()</code></td><td>VKEventConfig</td><td>返回当前配置的副本快照</td></tr>
+    <tr><td><code>close()</code></td><td>void</td><td>关闭事件总线，等待线程池任务完成，清空所有监听器</td></tr>
+  </tbody>
+</table>
+
+<h3>订阅（on / once）</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>on(Class, listener)</code></td><td>VKEventSubscription</td><td>注册同步监听器，默认 NORMAL 优先级</td></tr>
+    <tr><td><code>on(Class, mode, listener)</code></td><td>VKEventSubscription</td><td>指定执行模式，默认 NORMAL 优先级</td></tr>
+    <tr><td><code>on(Class, priority, listener)</code></td><td>VKEventSubscription</td><td>同步监听器，指定优先级</td></tr>
+    <tr><td><code>on(Class, mode, priority, listener)</code></td><td>VKEventSubscription</td><td>指定执行模式和优先级</td></tr>
+    <tr><td><code>on(Class, mode, priority, filter, listener)</code></td><td>VKEventSubscription</td><td>全参数版本，含 Predicate 过滤器（null 表示不过滤）</td></tr>
+    <tr><td><code>once(Class, listener)</code></td><td>VKEventSubscription</td><td>一次性同步监听器，触发一次后自动注销</td></tr>
+    <tr><td><code>once(Class, mode, listener)</code></td><td>VKEventSubscription</td><td>一次性监听器，指定执行模式</td></tr>
+    <tr><td><code>scan(bean)</code></td><td>List&lt;VKEventSubscription&gt;</td><td>扫描 bean 中 <code>@VKEventHandler</code> 注解方法并批量注册</td></tr>
+  </tbody>
+</table>
+
+<h3>取消订阅</h3>
 <table class="api-table">
   <thead><tr><th>方法</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>on(Class, listener)</code></td><td>同步监听（NORMAL 优先级）</td></tr>
-    <tr><td><code>on(Class, mode, listener)</code></td><td>指定模式监听（SYNC/ASYNC）</td></tr>
-    <tr><td><code>on(Class, mode, priority, listener)</code></td><td>指定模式 + 优先级</td></tr>
-    <tr><td><code>on(Class, mode, priority, filter, listener)</code></td><td>带 Predicate 过滤器</td></tr>
-    <tr><td><code>once(Class, listener)</code></td><td>一次性同步监听</td></tr>
-    <tr><td><code>once(Class, mode, listener)</code></td><td>一次性异步监听</td></tr>
-    <tr><td><code>off(subscription)</code></td><td>取消单个订阅</td></tr>
-    <tr><td><code>offAll(Class)</code></td><td>移除指定事件类型的所有监听器</td></tr>
-    <tr><td><code>publish(event)</code></td><td>同步发布事件</td></tr>
-    <tr><td><code>publishAsync(event)</code></td><td>异步发布事件</td></tr>
+    <tr><td><code>subscription.cancel()</code></td><td>取消该订阅（线程安全，通过 ConcurrentHashMap.compute 原子移除）</td></tr>
+    <tr><td><code>off(VKEventSubscription)</code></td><td>取消指定订阅，等价于 <code>subscription.cancel()</code></td></tr>
+    <tr><td><code>offAll(Class)</code></td><td>移除指定事件类型的全部监听器</td></tr>
+  </tbody>
+</table>
+
+<h3>发布</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>publish(event)</code></td><td>VKEventPublishResult</td><td>同步发布；SYNC 监听器在当前线程执行；ASYNC 监听器提交后立即返回（不等待）；<code>asyncFailed</code> 固定为 0</td></tr>
+    <tr><td><code>publishAsync(event)</code></td><td>CompletableFuture&lt;VKEventPublishResult&gt;</td><td>发布并等待所有 ASYNC 监听器完成；<code>asyncFailed</code> 反映实际失败数</td></tr>
+  </tbody>
+</table>
+
+<h3>死信与 VKEventSubscription</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>onDeadLetter(VKEventDeadLetterHandler)</code></td><td>注册死信处理器（全局唯一，后注册覆盖）；事件无匹配监听器时调用</td></tr>
+    <tr><td><code>subscription.getId()</code></td><td>返回订阅的唯一 ID（long，单调递增）</td></tr>
+    <tr><td><code>subscription.getEventType()</code></td><td>返回订阅时指定的事件类型</td></tr>
+    <tr><td><code>subscription.getMode()</code></td><td>返回监听器执行模式（SYNC/ASYNC）</td></tr>
+    <tr><td><code>subscription.getPriority()</code></td><td>返回监听器优先级</td></tr>
   </tbody>
 </table>
 
