@@ -1,6 +1,6 @@
 # Vostok
 
-面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合十三个模块能力，一次初始化即可使用数据访问、Web 服务、缓存、日志、配置、安全、事件、游戏引擎、HTTP 客户端、AI 等全部功能。
+面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合十二个模块能力，各模块按需独立初始化，可使用数据访问、Web 服务、缓存、日志、配置、安全、事件、HTTP 客户端、AI 等全部功能。
 
 > 当前版本定位为实验与技术验证，不建议直接用于生产环境。
 
@@ -20,7 +20,6 @@
 | `Vostok.Config` | `VostokConfig` | 自动扫描配置文件、热监听、插值、多优先级覆盖 |
 | `Vostok.Security` | `VostokSecurity` | SQL 注入、XSS、路径穿越等检测，AES/RSA 加密 |
 | `Vostok.Event` | `VostokEvent` | 进程内事件总线、同步/异步监听器、优先级 |
-| `Vostok.Game` | `VostokGame` | 房间 Tick 引擎、帧同步、匹配、断线重连 |
 | `Vostok.Http` | `VostokHttp` | HTTP 客户端、命名 Client、重试、SSE 流 |
 | `Vostok.AI` | `VostokAI` | 多模型 Chat、Session、RAG、向量检索、Tool Call |
 | `Vostok.Util` | `VostokUtil` | JSON、字符串、ID 生成、时间工具 |
@@ -37,7 +36,9 @@ mvn test           # 运行测试
 mvn package        # 打包
 ```
 
-### 统一初始化
+### 按需初始化各模块
+
+各模块通过 `Vostok.<Module>.init(...)` 独立初始化，仅启动实际需要的模块。
 
 ```java
 import yueyang.vostok.Vostok;
@@ -46,34 +47,32 @@ import yueyang.vostok.web.VKWebConfig;
 import yueyang.vostok.log.VKLogConfig;
 import yueyang.vostok.cache.VKCacheConfig;
 
-Vostok.init(cfg -> cfg
-    // 日志
-    .logConfig(new VKLogConfig().outputDir("logs").consoleEnabled(true))
+// 日志
+Vostok.Log.init(new VKLogConfig().outputDir("logs").consoleEnabled(true));
 
-    // 数据库
-    .dataConfig(new VKDataConfig()
+// 数据库
+Vostok.Data.init(
+    new VKDataConfig()
         .url("jdbc:mysql://127.0.0.1:3306/demo")
         .username("root").password("123456")
-        .maxActive(20))
-    .dataPackages("com.example.entity")
+        .maxActive(20),
+    "com.example.entity");
 
-    // 缓存（内存）
-    .cacheConfig(new VKCacheConfig()
-        .providerType("MEMORY").maxEntries(10000))
+// 缓存（内存）
+Vostok.Cache.init(new VKCacheConfig()
+    .providerType("MEMORY").maxEntries(10000));
 
-    // Web 服务器
-    .webConfig(new VKWebConfig().port(8080))
-    .webSetup(web -> web
-        .get("/hello", (req, res) -> res.ok("Hello, Vostok!"))
-    )
-    .webStart(true)
-);
+// Web 服务器
+Vostok.Web.init(new VKWebConfig().port(8080));
+Vostok.Web.get("/hello", (req, res) -> res.ok("Hello, Vostok!"));
+Vostok.Web.start();
 
-// 关闭所有模块
-Vostok.close();
+// 关闭各模块
+Vostok.Web.stop();
+Vostok.Cache.close();
+Vostok.Data.close();
+Vostok.Log.close();
 ```
-
-配置了哪个模块就启动哪个，未配置的不会被触发。初始化顺序：`Config → Log → Security → Data → Cache → Event → Game → Http → File → AI → Web`。
 
 ---
 
