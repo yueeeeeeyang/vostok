@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Web 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html" class="active"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">🌐 Vostok.Web</div>
+  <h1>Web 服务器模块</h1>
+  <p class="desc">基于 Java NIO Reactor 模式的高性能 HTTP 服务器，支持路由、中间件、WebSocket、SSE、静态资源、GZIP、CORS，以及根据实体类自动生成 REST CRUD API。</p>
+</div>
+
+<h2>初始化与启动</h2>
+<pre><code><span class="ty">Vostok</span>.Web.init(<span class="kw">new</span> <span class="ty">VKWebConfig</span>()
+    .port(<span class="nu">8080</span>)
+    .ioThreads(<span class="nu">2</span>)
+    .workerThreads(<span class="nu">16</span>)
+);
+
+<span class="cm">// 注册路由</span>
+<span class="ty">Vostok</span>.Web.get(<span class="st">"/hello"</span>, (req, res) -&gt; res.ok(<span class="st">"Hello!"</span>));
+<span class="ty">Vostok</span>.Web.post(<span class="st">"/users"</span>, (req, res) -&gt; {
+    <span class="ty">String</span> body = req.body();
+    res.status(<span class="nu">201</span>).json(<span class="st">"{\"created\":true}"</span>);
+});
+
+<span class="ty">Vostok</span>.Web.start();</code></pre>
+
+<h2>路由</h2>
+
+<h3>基本路由</h3>
+<pre><code><span class="cm">// GET / POST / PUT / DELETE / PATCH</span>
+<span class="ty">Vostok</span>.Web.get(<span class="st">"/items"</span>, handler);
+<span class="ty">Vostok</span>.Web.post(<span class="st">"/items"</span>, handler);
+<span class="ty">Vostok</span>.Web.put(<span class="st">"/items/{id}"</span>, handler);
+<span class="ty">Vostok</span>.Web.delete(<span class="st">"/items/{id}"</span>, handler);
+
+<span class="cm">// 路径参数</span>
+<span class="ty">Vostok</span>.Web.get(<span class="st">"/users/{id}"</span>, (req, res) -&gt; {
+    <span class="ty">String</span> id = req.pathParam(<span class="st">"id"</span>);
+    res.json(<span class="st">"{\"id\":"</span> + id + <span class="st">"}"</span>);
+});
+
+<span class="cm">// 查询参数</span>
+<span class="ty">Vostok</span>.Web.get(<span class="st">"/search"</span>, (req, res) -&gt; {
+    <span class="ty">String</span> q = req.queryParam(<span class="st">"q"</span>);
+    <span class="kw">int</span> page = req.queryParamInt(<span class="st">"page"</span>, <span class="nu">1</span>);
+    res.ok(<span class="st">"q="</span> + q + <span class="st">" page="</span> + page);
+});</code></pre>
+
+<h3>VKRequest 常用方法</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>body()</code></td><td>原始请求体字符串</td></tr>
+    <tr><td><code>bodyBytes()</code></td><td>原始请求体字节</td></tr>
+    <tr><td><code>json(Class)</code></td><td>将请求体解析为指定类型</td></tr>
+    <tr><td><code>pathParam(name)</code></td><td>路径参数</td></tr>
+    <tr><td><code>queryParam(name)</code></td><td>查询参数字符串</td></tr>
+    <tr><td><code>queryParamInt(name, default)</code></td><td>查询参数整数（含默认值）</td></tr>
+    <tr><td><code>header(name)</code></td><td>请求头</td></tr>
+    <tr><td><code>cookie(name)</code></td><td>Cookie 值</td></tr>
+    <tr><td><code>method()</code></td><td>HTTP 方法（GET/POST/…）</td></tr>
+    <tr><td><code>path()</code></td><td>请求路径</td></tr>
+    <tr><td><code>remoteIp()</code></td><td>客户端 IP</td></tr>
+    <tr><td><code>multipart()</code></td><td>获取文件上传信息</td></tr>
+  </tbody>
+</table>
+
+<h3>VKResponse 常用方法</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>ok(body)</code></td><td>200 + 纯文本</td></tr>
+    <tr><td><code>json(obj)</code></td><td>200 + application/json</td></tr>
+    <tr><td><code>status(code)</code></td><td>设置 HTTP 状态码（链式）</td></tr>
+    <tr><td><code>header(k, v)</code></td><td>设置响应头（链式）</td></tr>
+    <tr><td><code>cookie(name, value)</code></td><td>设置 Cookie（链式）</td></tr>
+    <tr><td><code>redirect(url)</code></td><td>302 重定向</td></tr>
+    <tr><td><code>send(bytes)</code></td><td>发送字节响应</td></tr>
+    <tr><td><code>notFound()</code></td><td>404 响应</td></tr>
+    <tr><td><code>badRequest(msg)</code></td><td>400 响应</td></tr>
+    <tr><td><code>serverError(msg)</code></td><td>500 响应</td></tr>
+  </tbody>
+</table>
+
+<h2>中间件</h2>
+<pre><code><span class="cm">// 全局中间件</span>
+<span class="ty">Vostok</span>.Web.use((req, res, next) -&gt; {
+    <span class="ty">String</span> token = req.header(<span class="st">"Authorization"</span>);
+    <span class="kw">if</span> (token == <span class="kw">null</span>) { res.status(<span class="nu">401</span>).json(<span class="st">"{\"error\":\"unauthorized\"}"</span>); <span class="kw">return</span>; }
+    next.handle();  <span class="cm">// 放行</span>
+});</code></pre>
+
+<h3>CORS</h3>
+<pre><code><span class="cm">// 快捷开启（允许所有来源）</span>
+<span class="ty">Vostok</span>.Web.cors();
+
+<span class="cm">// 自定义</span>
+<span class="ty">Vostok</span>.Web.cors(<span class="kw">new</span> <span class="ty">VKCorsConfig</span>()
+    .allowedOrigins(<span class="st">"https://example.com"</span>)
+    .allowedMethods(<span class="st">"GET"</span>, <span class="st">"POST"</span>)
+    .allowCredentials(<span class="kw">true</span>));</code></pre>
+
+<h3>GZIP</h3>
+<pre><code><span class="ty">Vostok</span>.Web.gzip();  <span class="cm">// 默认配置（&gt;1KB 自动压缩）</span>
+<span class="cm">// 或自定义阈值</span>
+<span class="ty">Vostok</span>.Web.gzip(<span class="kw">new</span> <span class="ty">VKGzipConfig</span>().minSizeBytes(<span class="nu">512</span>));</code></pre>
+
+<h2>限流</h2>
+<pre><code><span class="cm">// 全局限流（每秒最多 1000 请求）</span>
+<span class="ty">Vostok</span>.Web.rateLimit(<span class="kw">new</span> <span class="ty">VKRateLimitConfig</span>().qps(<span class="nu">1000</span>));
+
+<span class="cm">// 单路由限流</span>
+<span class="ty">Vostok</span>.Web.rateLimit(<span class="ty">VKHttpMethod</span>.POST, <span class="st">"/login"</span>,
+    <span class="kw">new</span> <span class="ty">VKRateLimitConfig</span>().qps(<span class="nu">10</span>).rejectStatus(<span class="nu">429</span>));</code></pre>
+
+<h2>静态资源</h2>
+<pre><code><span class="ty">Vostok</span>.Web.staticDir(<span class="st">"/static"</span>, <span class="st">"./public"</span>);</code></pre>
+
+<h2>自动 CRUD API</h2>
+<p>扫描 <code>@VKEntity</code> 实体类，自动为每个实体生成标准 REST 接口。</p>
+<pre><code><span class="cm">// 扫描默认包</span>
+<span class="ty">Vostok</span>.Web.autoCrudApi();
+
+<span class="cm">// 指定包 + RESTful 风格</span>
+<span class="ty">Vostok</span>.Web.autoCrudApi(<span class="ty">VKCrudStyle</span>.RESTFUL, <span class="st">"com.example.entity"</span>);</code></pre>
+
+<p>例如 <code>User</code> 实体，自动生成：</p>
+<ul>
+  <li><code>GET /users</code> — 查询全部</li>
+  <li><code>GET /users/{id}</code> — 按主键查询</li>
+  <li><code>POST /users</code> — 新增</li>
+  <li><code>PUT /users/{id}</code> — 更新</li>
+  <li><code>DELETE /users/{id}</code> — 删除</li>
+</ul>
+
+<h2>WebSocket</h2>
+<pre><code><span class="ty">Vostok</span>.Web.websocket(<span class="st">"/ws/chat"</span>, <span class="kw">new</span> <span class="ty">VKWebSocketHandler</span>() {
+    <span class="kw">public void</span> <span class="fn">onOpen</span>(<span class="ty">String</span> sessionId) {
+        <span class="ty">System</span>.out.println(<span class="st">"connected: "</span> + sessionId);
+    }
+    <span class="kw">public void</span> <span class="fn">onMessage</span>(<span class="ty">String</span> sessionId, <span class="ty">String</span> text) {
+        <span class="cm">// 广播给同 path 所有连接</span>
+        <span class="ty">Vostok</span>.Web.websocketBroadcast(<span class="st">"/ws/chat"</span>, text);
+    }
+    <span class="kw">public void</span> <span class="fn">onClose</span>(<span class="ty">String</span> sessionId) {}
+});
+
+<span class="cm">// 按房间广播</span>
+<span class="ty">Vostok</span>.Web.websocketBroadcastRoom(<span class="st">"/ws/chat"</span>, <span class="st">"room-1"</span>, <span class="st">"hello room"</span>);
+
+<span class="cm">// 按分组广播</span>
+<span class="ty">Vostok</span>.Web.websocketBroadcastGroup(<span class="st">"/ws/chat"</span>, <span class="st">"vip"</span>, <span class="st">"vip msg"</span>);</code></pre>
+
+<h2>Server-Sent Events (SSE)</h2>
+<pre><code><span class="ty">Vostok</span>.Web.sse(<span class="st">"/events"</span>, (req, emitter) -&gt; {
+    emitter.send(<span class="st">"data: connected\n\n"</span>);
+    <span class="cm">// emitter.close() 关闭流</span>
+});</code></pre>
+
+<h2>健康检查 / 指标</h2>
+<pre><code><span class="ty">Vostok</span>.Web.health();           <span class="cm">// GET /health</span>
+<span class="ty">Vostok</span>.Web.health(<span class="st">"/_ping"</span>);  <span class="cm">// 自定义路径</span>
+<span class="ty">Vostok</span>.Web.metrics();          <span class="cm">// GET /metrics</span></code></pre>
+
+<h2>错误处理</h2>
+<pre><code><span class="ty">Vostok</span>.Web.error((req, res, ex) -&gt; {
+    res.status(<span class="nu">500</span>).json(<span class="st">"{\"error\":\""</span> + ex.getMessage() + <span class="st">"\"}"</span>);
+});</code></pre>
+
+<h2>配置参数</h2>
+<table class="config-table">
+  <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td class="param-name">port</td><td>int</td><td>8080</td><td>监听端口</td></tr>
+    <tr><td class="param-name">ioThreads</td><td>int</td><td>CPU核数</td><td>NIO Selector 线程数</td></tr>
+    <tr><td class="param-name">workerThreads</td><td>int</td><td>CPU×4</td><td>业务处理线程池大小</td></tr>
+    <tr><td class="param-name">backlog</td><td>int</td><td>1024</td><td>TCP 连接队列</td></tr>
+    <tr><td class="param-name">maxConnections</td><td>int</td><td>10000</td><td>最大并发连接数</td></tr>
+    <tr><td class="param-name">maxBodyBytes</td><td>int</td><td>10MB</td><td>最大请求体大小</td></tr>
+    <tr><td class="param-name">keepAliveTimeoutMs</td><td>long</td><td>30000</td><td>Keep-Alive 超时（ms）</td></tr>
+    <tr><td class="param-name">readTimeoutMs</td><td>long</td><td>10000</td><td>读取超时（ms）</td></tr>
+    <tr><td class="param-name">accessLogEnabled</td><td>boolean</td><td>false</td><td>开启访问日志</td></tr>
+    <tr><td class="param-name">multipartEnabled</td><td>boolean</td><td>true</td><td>允许文件上传</td></tr>
+    <tr><td class="param-name">websocketEnabled</td><td>boolean</td><td>true</td><td>允许 WebSocket</td></tr>
+    <tr><td class="param-name">tlsConfig</td><td>VKTlsConfig</td><td>null</td><td>HTTPS TLS 配置</td></tr>
+  </tbody>
+</table>
+
+</div>
+</main>
+</body>
+</html>

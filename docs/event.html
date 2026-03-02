@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Event 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html" class="active"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">📡 Vostok.Event</div>
+  <h1>Event 事件总线模块</h1>
+  <p class="desc">进程内轻量事件总线，支持同步/异步监听器、优先级调度、一次性订阅、Predicate 过滤器，以异步方式发布时监听器互不阻塞。</p>
+</div>
+
+<h2>初始化</h2>
+<pre><code><span class="ty">Vostok</span>.Event.init();  <span class="cm">// 默认配置</span>
+
+<span class="ty">Vostok</span>.Event.init(<span class="kw">new</span> <span class="ty">VKEventConfig</span>()
+    .asyncCoreThreads(<span class="nu">4</span>)
+    .asyncMaxThreads(<span class="nu">16</span>)
+    .asyncQueueCapacity(<span class="nu">10000</span>)
+    .listenerErrorStrategy(<span class="ty">VKEventListenerErrorStrategy</span>.CONTINUE)  <span class="cm">// 某监听失败继续后续</span>
+    .rejectionPolicy(<span class="ty">VKEventRejectionPolicy</span>.CALLER_RUNS)
+);</code></pre>
+
+<h2>定义事件类</h2>
+<pre><code><span class="cm">// 任意 POJO 皆可作为事件</span>
+<span class="kw">public record</span> <span class="ty">OrderCreatedEvent</span>(<span class="ty">Long</span> orderId, <span class="ty">String</span> userId, <span class="ty">BigDecimal</span> amount) {}
+<span class="kw">public record</span> <span class="ty">UserLoginEvent</span>(<span class="ty">String</span> userId, <span class="ty">String</span> ip, <span class="ty">Instant</span> time) {}</code></pre>
+
+<h2>订阅事件</h2>
+
+<h3>同步监听器</h3>
+<pre><code><span class="ty">VKEventSubscription</span> sub = <span class="ty">Vostok</span>.Event.on(<span class="ty">OrderCreatedEvent</span>.class, event -&gt; {
+    <span class="ty">Vostok</span>.Log.info(<span class="st">"order {} created"</span>, event.orderId());
+});</code></pre>
+
+<h3>异步监听器</h3>
+<pre><code><span class="ty">Vostok</span>.Event.on(<span class="ty">OrderCreatedEvent</span>.class, <span class="ty">VKListenerMode</span>.ASYNC, event -&gt; {
+    <span class="cm">// 在异步线程池中执行，不阻塞发布者</span>
+    sendEmail(event.userId(), <span class="st">"Your order is confirmed"</span>);
+});</code></pre>
+
+<h3>带优先级</h3>
+<pre><code><span class="cm">// CRITICAL &gt; HIGH &gt; NORMAL &gt; LOW</span>
+<span class="ty">Vostok</span>.Event.on(<span class="ty">UserLoginEvent</span>.class,
+    <span class="ty">VKListenerMode</span>.SYNC,
+    <span class="ty">VKEventPriority</span>.HIGH,
+    event -&gt; auditLog(event.userId(), event.ip()));</code></pre>
+
+<h3>带过滤器</h3>
+<pre><code><span class="ty">Vostok</span>.Event.on(<span class="ty">OrderCreatedEvent</span>.class,
+    <span class="ty">VKListenerMode</span>.ASYNC,
+    <span class="ty">VKEventPriority</span>.NORMAL,
+    event -&gt; event.amount().compareTo(<span class="ty">BigDecimal</span>.valueOf(<span class="nu">1000</span>)) &gt; <span class="nu">0</span>,  <span class="cm">// 只处理大单</span>
+    event -&gt; notifyRiskSystem(event));</code></pre>
+
+<h3>一次性订阅</h3>
+<pre><code><span class="cm">// 触发一次后自动移除</span>
+<span class="ty">Vostok</span>.Event.once(<span class="ty">UserLoginEvent</span>.class, event -&gt; {
+    <span class="ty">System</span>.out.println(<span class="st">"first login: "</span> + event.userId());
+});
+
+<span class="ty">Vostok</span>.Event.once(<span class="ty">UserLoginEvent</span>.class, <span class="ty">VKListenerMode</span>.ASYNC, event -&gt; { <span class="cm">/* … */</span> });</code></pre>
+
+<h2>发布事件</h2>
+<pre><code><span class="cm">// 同步发布（等所有同步监听器执行完毕）</span>
+<span class="ty">Vostok</span>.Event.publish(<span class="kw">new</span> <span class="ty">OrderCreatedEvent</span>(<span class="nu">42L</span>, <span class="st">"user-1"</span>, amount));
+
+<span class="cm">// 异步发布（立即返回，监听器在后台线程执行）</span>
+<span class="ty">Vostok</span>.Event.publishAsync(<span class="kw">new</span> <span class="ty">OrderCreatedEvent</span>(<span class="nu">42L</span>, <span class="st">"user-1"</span>, amount));</code></pre>
+
+<h2>取消订阅</h2>
+<pre><code><span class="cm">// 取消单个订阅</span>
+<span class="ty">Vostok</span>.Event.off(sub);
+
+<span class="cm">// 移除某事件类型的全部监听器</span>
+<span class="ty">Vostok</span>.Event.offAll(<span class="ty">OrderCreatedEvent</span>.class);</code></pre>
+
+<h2>配置参数</h2>
+<table class="config-table">
+  <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td class="param-name">enabled</td><td>boolean</td><td>true</td><td>是否启用事件总线</td></tr>
+    <tr><td class="param-name">asyncCoreThreads</td><td>int</td><td>4</td><td>异步线程池核心线程数</td></tr>
+    <tr><td class="param-name">asyncMaxThreads</td><td>int</td><td>16</td><td>异步线程池最大线程数</td></tr>
+    <tr><td class="param-name">asyncQueueCapacity</td><td>int</td><td>10000</td><td>异步任务队列容量</td></tr>
+    <tr><td class="param-name">asyncKeepAliveMs</td><td>long</td><td>60000</td><td>空闲线程存活时间（ms）</td></tr>
+    <tr><td class="param-name">shutdownWaitMs</td><td>long</td><td>5000</td><td>关闭时等待任务完成的最长时间</td></tr>
+    <tr><td class="param-name">rejectionPolicy</td><td>VKEventRejectionPolicy</td><td>CALLER_RUNS</td><td>队列满时策略：CALLER_RUNS / DISCARD</td></tr>
+    <tr><td class="param-name">listenerErrorStrategy</td><td>VKEventListenerErrorStrategy</td><td>CONTINUE</td><td>监听器异常策略：CONTINUE（继续后续）/ STOP</td></tr>
+  </tbody>
+</table>
+
+<h2>API 速查</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>on(Class, listener)</code></td><td>同步监听（NORMAL 优先级）</td></tr>
+    <tr><td><code>on(Class, mode, listener)</code></td><td>指定模式监听（SYNC/ASYNC）</td></tr>
+    <tr><td><code>on(Class, mode, priority, listener)</code></td><td>指定模式 + 优先级</td></tr>
+    <tr><td><code>on(Class, mode, priority, filter, listener)</code></td><td>带 Predicate 过滤器</td></tr>
+    <tr><td><code>once(Class, listener)</code></td><td>一次性同步监听</td></tr>
+    <tr><td><code>once(Class, mode, listener)</code></td><td>一次性异步监听</td></tr>
+    <tr><td><code>off(subscription)</code></td><td>取消单个订阅</td></tr>
+    <tr><td><code>offAll(Class)</code></td><td>移除指定事件类型的所有监听器</td></tr>
+    <tr><td><code>publish(event)</code></td><td>同步发布事件</td></tr>
+    <tr><td><code>publishAsync(event)</code></td><td>异步发布事件</td></tr>
+  </tbody>
+</table>
+
+</div>
+</main>
+</body>
+</html>

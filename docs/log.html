@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Log 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html" class="active"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">📋 Vostok.Log</div>
+  <h1>Log 异步日志模块</h1>
+  <p class="desc">高性能异步日志，支持文件滚动（按大小/时间）、压缩归档、MDC 上下文、命名 Logger、ANSI 彩色控制台输出，写入前经队列缓冲，不阻塞业务线程。</p>
+</div>
+
+<h2>初始化</h2>
+<pre><code><span class="cm">// 使用默认配置（INFO 级别，输出到 ./logs）</span>
+<span class="ty">Vostok</span>.Log.init();
+
+<span class="cm">// 自定义配置</span>
+<span class="ty">Vostok</span>.Log.init(<span class="kw">new</span> <span class="ty">VKLogConfig</span>()
+    .level(<span class="ty">VKLogLevel</span>.DEBUG)
+    .outputDir(<span class="st">"logs"</span>)
+    .filePrefix(<span class="st">"app"</span>)
+    .consoleEnabled(<span class="kw">true</span>)
+    .consoleColor(<span class="kw">true</span>)
+    .maxFileSizeBytes(<span class="nu">100</span> * <span class="nu">1024</span> * <span class="nu">1024</span>)  <span class="cm">// 100 MB 滚动</span>
+    .maxBackups(<span class="nu">10</span>)
+    .rollInterval(<span class="ty">VKLogRollInterval</span>.DAILY)
+    .compressRolledFiles(<span class="kw">true</span>)
+    .queueCapacity(<span class="nu">65536</span>)
+);</code></pre>
+
+<div class="callout tip">
+  <div class="callout-title">懒加载</div>
+  未显式调用 <code>init()</code> 时，首次写日志会自动以默认配置初始化，无需提前调用。
+</div>
+
+<h2>写日志</h2>
+
+<h3>静态 API（自动推断调用者名称）</h3>
+<pre><code><span class="ty">Vostok</span>.Log.trace(<span class="st">"entering method"</span>);
+<span class="ty">Vostok</span>.Log.debug(<span class="st">"config loaded: {}"</span>, configPath);
+<span class="ty">Vostok</span>.Log.info(<span class="st">"server started on port {}"</span>, port);
+<span class="ty">Vostok</span>.Log.warn(<span class="st">"slow query: {} ms"</span>, elapsed);
+<span class="ty">Vostok</span>.Log.error(<span class="st">"failed to connect"</span>, exception);</code></pre>
+
+<h3>命名 Logger</h3>
+<pre><code><span class="cm">// 获取命名 Logger</span>
+<span class="ty">VKLogger</span> log = <span class="ty">Vostok</span>.Log.logger(<span class="st">"payment"</span>);
+
+log.info(<span class="st">"processing order {}"</span>, orderId);
+log.warn(<span class="st">"retry #{}"</span>, retryCount);
+log.error(<span class="st">"payment failed"</span>, ex);</code></pre>
+
+<h2>MDC（映射诊断上下文）</h2>
+<pre><code><span class="cm">// 设置 MDC，后续日志自动携带这些字段</span>
+<span class="ty">Vostok</span>.Log.mdc(<span class="st">"requestId"</span>, requestId);
+<span class="ty">Vostok</span>.Log.mdc(<span class="st">"userId"</span>, userId);
+
+<span class="ty">Vostok</span>.Log.info(<span class="st">"handling request"</span>);  <span class="cm">// 自动包含 requestId / userId</span>
+
+<span class="cm">// 作用域 MDC（自动清理）</span>
+<span class="ty">Vostok</span>.Log.mdc(<span class="ty">Map</span>.of(<span class="st">"traceId"</span>, traceId), () -&gt; {
+    <span class="ty">Vostok</span>.Log.info(<span class="st">"inside scope"</span>);
+});
+
+<span class="cm">// 手动清理</span>
+<span class="ty">Vostok</span>.Log.mdcClear();</code></pre>
+
+<h2>动态调整日志级别</h2>
+<pre><code><span class="ty">Vostok</span>.Log.setLevel(<span class="ty">VKLogLevel</span>.DEBUG);  <span class="cm">// 热切换，无需重启</span></code></pre>
+
+<h2>刷盘</h2>
+<pre><code><span class="ty">Vostok</span>.Log.flush();     <span class="cm">// 刷新当前默认 Logger 队列</span>
+<span class="ty">Vostok</span>.Log.flushAll();  <span class="cm">// 刷新所有 Logger 队列</span></code></pre>
+
+<h2>配置参数</h2>
+<table class="config-table">
+  <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td class="param-name">level</td><td>VKLogLevel</td><td>INFO</td><td>全局日志级别（TRACE/DEBUG/INFO/WARN/ERROR）</td></tr>
+    <tr><td class="param-name">outputDir</td><td>String</td><td>"logs"</td><td>日志文件输出目录</td></tr>
+    <tr><td class="param-name">filePrefix</td><td>String</td><td>"vostok"</td><td>日志文件名前缀</td></tr>
+    <tr><td class="param-name">maxFileSizeBytes</td><td>long</td><td>100MB</td><td>单文件最大大小，超出后滚动</td></tr>
+    <tr><td class="param-name">maxBackups</td><td>int</td><td>10</td><td>保留历史文件数量</td></tr>
+    <tr><td class="param-name">maxBackupDays</td><td>int</td><td>30</td><td>历史文件保留天数</td></tr>
+    <tr><td class="param-name">maxTotalSizeBytes</td><td>long</td><td>1GB</td><td>历史文件总大小上限</td></tr>
+    <tr><td class="param-name">rollInterval</td><td>VKLogRollInterval</td><td>DAILY</td><td>按时间滚动：HOURLY / DAILY / WEEKLY</td></tr>
+    <tr><td class="param-name">compressRolledFiles</td><td>boolean</td><td>false</td><td>归档文件异步 GZIP 压缩</td></tr>
+    <tr><td class="param-name">consoleEnabled</td><td>boolean</td><td>false</td><td>同时输出到控制台</td></tr>
+    <tr><td class="param-name">consoleColor</td><td>boolean</td><td>false</td><td>控制台 ANSI 彩色输出</td></tr>
+    <tr><td class="param-name">queueCapacity</td><td>int</td><td>32768</td><td>异步队列容量</td></tr>
+    <tr><td class="param-name">queueFullPolicy</td><td>VKLogQueueFullPolicy</td><td>DROP</td><td>队列满时策略：DROP / BLOCK / SYNC_FALLBACK</td></tr>
+    <tr><td class="param-name">flushIntervalMs</td><td>long</td><td>500</td><td>自动刷盘间隔（ms）</td></tr>
+    <tr><td class="param-name">fsyncPolicy</td><td>VKLogFsyncPolicy</td><td>NEVER</td><td>fsync 策略：NEVER / EVERY_FLUSH / EVERY_WRITE</td></tr>
+    <tr><td class="param-name">formatter</td><td>VKLogFormatter</td><td>默认格式</td><td>自定义日志格式化器</td></tr>
+    <tr><td class="param-name">errorListener</td><td>VKLogErrorListener</td><td>—</td><td>ERROR 级别事件回调</td></tr>
+  </tbody>
+</table>
+
+<h2>API 速查</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>trace(msg, args...)</code></td><td>TRACE 级别日志</td></tr>
+    <tr><td><code>debug(msg, args...)</code></td><td>DEBUG 级别日志</td></tr>
+    <tr><td><code>info(msg, args...)</code></td><td>INFO 级别日志</td></tr>
+    <tr><td><code>warn(msg, args...)</code></td><td>WARN 级别日志</td></tr>
+    <tr><td><code>error(msg, Throwable)</code></td><td>ERROR 级别日志（含异常栈）</td></tr>
+    <tr><td><code>logger(name)</code></td><td>获取命名 Logger 实例</td></tr>
+    <tr><td><code>mdc(key, value)</code></td><td>设置 MDC 键值</td></tr>
+    <tr><td><code>mdc(map, Runnable)</code></td><td>作用域 MDC</td></tr>
+    <tr><td><code>mdcClear()</code></td><td>清理当前线程 MDC</td></tr>
+    <tr><td><code>setLevel(VKLogLevel)</code></td><td>动态修改全局日志级别</td></tr>
+    <tr><td><code>flush()</code></td><td>刷新默认 Logger 队列</td></tr>
+    <tr><td><code>flushAll()</code></td><td>刷新所有 Logger 队列</td></tr>
+    <tr><td><code>close()</code></td><td>关闭日志系统，等待队列清空</td></tr>
+  </tbody>
+</table>
+
+</div>
+</main>
+</body>
+</html>

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cache 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html" class="active"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">⚡ Vostok.Cache</div>
+  <h1>Cache 缓存模块</h1>
+  <p class="desc">统一缓存访问层，支持内存（Memory）、Redis 及分层（Tiered）三种后端，提供布隆过滤器、Pipeline 批量、命名缓存、命中率统计等能力。</p>
+</div>
+
+<h2>初始化</h2>
+
+<h3>内存缓存</h3>
+<pre><code><span class="ty">Vostok</span>.Cache.init(<span class="kw">new</span> <span class="ty">VKCacheConfig</span>()
+    .providerType(<span class="st">"MEMORY"</span>)
+    .maxEntries(<span class="nu">50000</span>)
+    .evictionPolicy(<span class="ty">VKEvictionPolicy</span>.LRU)
+    .defaultTtlMs(<span class="nu">3600_000</span>)   <span class="cm">// 1 小时</span>
+);</code></pre>
+
+<h3>Redis 缓存</h3>
+<pre><code><span class="ty">Vostok</span>.Cache.init(<span class="kw">new</span> <span class="ty">VKCacheConfig</span>()
+    .providerType(<span class="st">"REDIS"</span>)
+    .endpoints(<span class="st">"127.0.0.1:6379"</span>)
+    .password(<span class="st">"yourpass"</span>)
+    .database(<span class="nu">0</span>)
+    .maxActive(<span class="nu">20</span>)
+    .defaultTtlMs(<span class="nu">86400_000</span>)
+);</code></pre>
+
+<h3>分层缓存（L1 内存 + L2 Redis）</h3>
+<pre><code><span class="ty">Vostok</span>.Cache.init(<span class="kw">new</span> <span class="ty">VKCacheConfig</span>()
+    .providerType(<span class="st">"TIERED"</span>)
+    .l1Config(<span class="kw">new</span> <span class="ty">VKCacheConfig</span>()
+        .providerType(<span class="st">"MEMORY"</span>).maxEntries(<span class="nu">1000</span>).defaultTtlMs(<span class="nu">60_000</span>))
+    .l2Config(<span class="kw">new</span> <span class="ty">VKCacheConfig</span>()
+        .providerType(<span class="st">"REDIS"</span>).endpoints(<span class="st">"127.0.0.1:6379"</span>).defaultTtlMs(<span class="nu">3600_000</span>))
+);</code></pre>
+
+<div class="callout">
+  <div class="callout-title">说明</div>
+  Cache 模块不依赖 Config 模块，必须通过 <code>VKCacheConfig</code> 显式初始化，不支持懒加载。
+</div>
+
+<h2>基本操作</h2>
+
+<h3>写入 / 读取</h3>
+<pre><code><span class="cm">// 写入（使用默认 TTL）</span>
+<span class="ty">Vostok</span>.Cache.set(<span class="st">"user:1"</span>, user);
+
+<span class="cm">// 写入（自定义 TTL，单位 ms）</span>
+<span class="ty">Vostok</span>.Cache.set(<span class="st">"token:abc"</span>, session, <span class="nu">1800_000L</span>);
+
+<span class="cm">// 读取（返回 Object）</span>
+<span class="ty">Object</span> raw = <span class="ty">Vostok</span>.Cache.get(<span class="st">"user:1"</span>);
+
+<span class="cm">// 读取（指定类型）</span>
+<span class="ty">User</span> user = <span class="ty">Vostok</span>.Cache.get(<span class="st">"user:1"</span>, <span class="ty">User</span>.class);
+
+<span class="cm">// 懒加载：未命中时自动调用 loader 并缓存结果</span>
+<span class="ty">User</span> user = <span class="ty">Vostok</span>.Cache.getOrLoad(<span class="st">"user:1"</span>, <span class="ty">User</span>.class, <span class="nu">3600_000</span>, () -&gt; {
+    <span class="kw">return</span> <span class="ty">Vostok</span>.Data.findById(<span class="ty">User</span>.class, <span class="nu">1L</span>);
+});</code></pre>
+
+<h3>删除 / 检查 / 过期</h3>
+<pre><code><span class="ty">Vostok</span>.Cache.delete(<span class="st">"user:1"</span>, <span class="st">"user:2"</span>);
+<span class="kw">boolean</span> exists = <span class="ty">Vostok</span>.Cache.exists(<span class="st">"user:1"</span>);
+<span class="ty">Vostok</span>.Cache.expire(<span class="st">"user:1"</span>, <span class="nu">600_000L</span>);  <span class="cm">// 重置 TTL</span></code></pre>
+
+<h3>计数器</h3>
+<pre><code><span class="kw">long</span> v  = <span class="ty">Vostok</span>.Cache.incr(<span class="st">"pv:today"</span>);       <span class="cm">// 加 1</span>
+<span class="kw">long</span> v2 = <span class="ty">Vostok</span>.Cache.incrBy(<span class="st">"pv:today"</span>, <span class="nu">5</span>);  <span class="cm">// 加 N</span>
+<span class="ty">Vostok</span>.Cache.decr(<span class="st">"stock:100"</span>);
+<span class="ty">Vostok</span>.Cache.decrBy(<span class="st">"stock:100"</span>, <span class="nu">3</span>);</code></pre>
+
+<h2>Pipeline 批量操作</h2>
+<pre><code><span class="cm">// 批量写入，无需关心返回值</span>
+<span class="ty">Vostok</span>.Cache.pipeline(pipe -&gt; {
+    pipe.set(<span class="st">"k1"</span>, <span class="st">"v1"</span>);
+    pipe.set(<span class="st">"k2"</span>, <span class="st">"v2"</span>);
+    pipe.expire(<span class="st">"k1"</span>, <span class="nu">60_000</span>);
+});
+
+<span class="cm">// 批量操作并获取结果</span>
+<span class="ty">VKCachePipelineResult</span> result = <span class="ty">Vostok</span>.Cache.pipelineWithResult(pipe -&gt; {
+    pipe.get(<span class="st">"k1"</span>);
+    pipe.get(<span class="st">"k2"</span>);
+});
+<span class="ty">String</span> v1 = result.get(<span class="nu">0</span>, <span class="ty">String</span>.class);
+<span class="ty">String</span> v2 = result.get(<span class="nu">1</span>, <span class="ty">String</span>.class);</code></pre>
+
+<h2>命名缓存（多缓存实例）</h2>
+<pre><code><span class="cm">// 注册额外命名缓存</span>
+<span class="ty">Vostok</span>.Cache.registerCache(<span class="st">"session"</span>, <span class="kw">new</span> <span class="ty">VKCacheConfig</span>()
+    .providerType(<span class="st">"REDIS"</span>)
+    .endpoints(<span class="st">"session-redis:6379"</span>)
+    .defaultTtlMs(<span class="nu">1800_000</span>));
+
+<span class="cm">// 切换到命名缓存</span>
+<span class="ty">Vostok</span>.Cache.withCache(<span class="st">"session"</span>, () -&gt; {
+    <span class="ty">Vostok</span>.Cache.set(<span class="st">"sid:abc"</span>, sessionObj);
+});</code></pre>
+
+<h2>Key 级锁</h2>
+<pre><code><span class="cm">// 对同一 key 的并发操作串行化</span>
+<span class="ty">String</span> result = <span class="ty">Vostok</span>.Cache.withKeyLock(<span class="st">"lock:order:42"</span>, () -&gt; {
+    <span class="ty">Order</span> order = <span class="ty">Vostok</span>.Cache.get(<span class="st">"order:42"</span>, <span class="ty">Order</span>.class);
+    order.setStatus(<span class="st">"paid"</span>);
+    <span class="ty">Vostok</span>.Cache.set(<span class="st">"order:42"</span>, order);
+    <span class="kw">return</span> order.getId();
+});</code></pre>
+
+<h2>命中率统计</h2>
+<pre><code><span class="ty">VKCacheStats</span> stats = <span class="ty">Vostok</span>.Cache.stats();
+<span class="ty">System</span>.out.printf(<span class="st">"hits=%d, misses=%d, hitRate=%.2f%%%n"</span>,
+    stats.hits(), stats.misses(), stats.hitRate() * <span class="nu">100</span>);
+
+<span class="cm">// 命名缓存统计</span>
+<span class="ty">VKCacheStats</span> s2 = <span class="ty">Vostok</span>.Cache.stats(<span class="st">"session"</span>);
+<span class="ty">Vostok</span>.Cache.resetStats();</code></pre>
+
+<h2>事件监听</h2>
+<pre><code><span class="ty">VKCacheConfig</span> cfg = <span class="kw">new</span> <span class="ty">VKCacheConfig</span>()
+    .eventListener((event) -&gt; {
+        <span class="kw">if</span> (event.type() == <span class="ty">VKCacheEventType</span>.EVICTED) {
+            <span class="ty">System</span>.out.println(<span class="st">"evicted: "</span> + event.key());
+        }
+    });</code></pre>
+
+<h2>自定义编解码器</h2>
+<pre><code><span class="ty">Vostok</span>.Cache.registerCodec(<span class="kw">new</span> <span class="ty">VKCacheCodec</span>() {
+    <span class="kw">public</span> <span class="ty">byte</span>[] encode(<span class="ty">Object</span> value) { <span class="cm">/* … */</span> }
+    <span class="kw">public</span> <span class="ty">Object</span> decode(<span class="ty">byte</span>[] bytes, <span class="ty">Class</span>&lt;?&gt; type) { <span class="cm">/* … */</span> }
+});</code></pre>
+
+<h2>配置参数</h2>
+<table class="config-table">
+  <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td class="param-name">providerType</td><td>String</td><td>"MEMORY"</td><td>后端类型：MEMORY / REDIS / TIERED</td></tr>
+    <tr><td class="param-name">endpoints</td><td>String</td><td>—</td><td>Redis 地址，逗号分隔</td></tr>
+    <tr><td class="param-name">redisMode</td><td>String</td><td>"SINGLE"</td><td>SINGLE / SENTINEL / CLUSTER</td></tr>
+    <tr><td class="param-name">password</td><td>String</td><td>—</td><td>Redis 密码</td></tr>
+    <tr><td class="param-name">database</td><td>int</td><td>0</td><td>Redis 数据库编号</td></tr>
+    <tr><td class="param-name">ssl</td><td>boolean</td><td>false</td><td>启用 TLS 连接</td></tr>
+    <tr><td class="param-name">defaultTtlMs</td><td>long</td><td>-1</td><td>默认 TTL（-1 永不过期）</td></tr>
+    <tr><td class="param-name">keyPrefix</td><td>String</td><td>""</td><td>Key 前缀，统一隔离命名空间</td></tr>
+    <tr><td class="param-name">maxEntries</td><td>int</td><td>10000</td><td>内存最大条目数</td></tr>
+    <tr><td class="param-name">evictionPolicy</td><td>VKEvictionPolicy</td><td>LRU</td><td>淘汰策略：LRU / LFU / FIFO / NONE</td></tr>
+    <tr><td class="param-name">minIdle</td><td>int</td><td>2</td><td>Redis 连接池最小空闲</td></tr>
+    <tr><td class="param-name">maxActive</td><td>int</td><td>10</td><td>Redis 连接池最大活跃</td></tr>
+    <tr><td class="param-name">metricsEnabled</td><td>boolean</td><td>true</td><td>开启命中率统计</td></tr>
+    <tr><td class="param-name">nullCacheEnabled</td><td>boolean</td><td>false</td><td>缓存 null 值（防缓存穿透）</td></tr>
+    <tr><td class="param-name">rateLimitQps</td><td>int</td><td>0</td><td>Redis 访问 QPS 限制（0=关闭）</td></tr>
+    <tr><td class="param-name">l1Config</td><td>VKCacheConfig</td><td>—</td><td>TIERED 模式 L1 配置</td></tr>
+    <tr><td class="param-name">l2Config</td><td>VKCacheConfig</td><td>—</td><td>TIERED 模式 L2 配置</td></tr>
+  </tbody>
+</table>
+
+<h2>API 速查</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>set(key, value)</code></td><td>写入（默认 TTL）</td></tr>
+    <tr><td><code>set(key, value, ttlMs)</code></td><td>写入（自定义 TTL）</td></tr>
+    <tr><td><code>get(key)</code></td><td>读取</td></tr>
+    <tr><td><code>get(key, Class)</code></td><td>读取并转换类型</td></tr>
+    <tr><td><code>getOrLoad(key, Class, ttlMs, Supplier)</code></td><td>读取或懒加载</td></tr>
+    <tr><td><code>delete(keys...)</code></td><td>删除一或多个 key</td></tr>
+    <tr><td><code>exists(key)</code></td><td>判断 key 是否存在</td></tr>
+    <tr><td><code>expire(key, ttlMs)</code></td><td>重置过期时间</td></tr>
+    <tr><td><code>incr(key)</code></td><td>原子自增 1</td></tr>
+    <tr><td><code>incrBy(key, delta)</code></td><td>原子自增 N</td></tr>
+    <tr><td><code>decr(key)</code></td><td>原子自减 1</td></tr>
+    <tr><td><code>pipeline(Consumer)</code></td><td>Pipeline 批量（无结果）</td></tr>
+    <tr><td><code>pipelineWithResult(Consumer)</code></td><td>Pipeline 批量（含结果）</td></tr>
+    <tr><td><code>withKeyLock(key, Supplier)</code></td><td>Key 级别互斥锁</td></tr>
+    <tr><td><code>stats()</code></td><td>获取命中率统计</td></tr>
+    <tr><td><code>resetStats()</code></td><td>重置统计</td></tr>
+    <tr><td><code>registerCache(name, config)</code></td><td>注册命名缓存</td></tr>
+    <tr><td><code>withCache(name, action)</code></td><td>切换命名缓存执行</td></tr>
+    <tr><td><code>registerCodec(codec)</code></td><td>注册自定义编解码器</td></tr>
+    <tr><td><code>poolMetrics()</code></td><td>Redis 连接池指标</td></tr>
+  </tbody>
+</table>
+
+</div>
+</main>
+</body>
+</html>

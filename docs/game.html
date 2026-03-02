@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Game 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html" class="active"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">🎮 Vostok.Game</div>
+  <h1>Game 游戏引擎模块</h1>
+  <p class="desc">实时多人游戏服务端引擎，基于房间 Tick 驱动模型，提供分片线程池、热点房间迁移、帧同步、玩家生命周期、断线重连、匹配队列等核心能力。</p>
+</div>
+
+<h2>初始化</h2>
+<pre><code><span class="ty">Vostok</span>.Game.init(<span class="kw">new</span> <span class="ty">VKGameConfig</span>()
+    .tickRate(<span class="nu">20</span>)            <span class="cm">// 每秒 20 Tick（50ms/tick）</span>
+    .maxRooms(<span class="nu">1000</span>)
+    .maxPlayersPerRoom(<span class="nu">10</span>)
+    .tickWorkerThreads(<span class="nu">8</span>)
+    .antiCheatEnabled(<span class="kw">true</span>)
+    .matchmakingEnabled(<span class="kw">true</span>)
+);</code></pre>
+
+<h2>注册游戏逻辑</h2>
+<pre><code><span class="ty">Vostok</span>.Game.registerLogic(<span class="st">"chess"</span>, <span class="kw">new</span> <span class="ty">VKGameLogic</span>() {
+
+    <span class="kw">public void</span> <span class="fn">onTick</span>(<span class="ty">VKGameRoom</span> room, <span class="kw">long</span> tickSeq) {
+        <span class="cm">// 每 Tick 调用一次，tickSeq 单调递增</span>
+        <span class="ty">List</span>&lt;<span class="ty">VKGameCommand</span>&gt; cmds = room.pollCommands();
+        <span class="kw">for</span> (<span class="ty">VKGameCommand</span> cmd : cmds) {
+            applyMove(room, cmd);
+        }
+    }
+
+    <span class="kw">public void</span> <span class="fn">onPlayerJoin</span>(<span class="ty">VKGameRoom</span> room, <span class="ty">VKGamePlayerSession</span> player) {
+        <span class="ty">Vostok</span>.Log.info(<span class="st">"player {} joined room {}"</span>, player.playerId(), room.roomId());
+    }
+
+    <span class="kw">public void</span> <span class="fn">onPlayerLeave</span>(<span class="ty">VKGameRoom</span> room, <span class="ty">VKGamePlayerSession</span> player) {}
+
+    <span class="kw">public void</span> <span class="fn">onRoomStart</span>(<span class="ty">VKGameRoom</span> room) {}
+    <span class="kw">public void</span> <span class="fn">onRoomEnd</span>(<span class="ty">VKGameRoom</span> room) {}
+});</code></pre>
+
+<h2>房间管理</h2>
+<pre><code><span class="cm">// 创建房间（自动生成 roomId）</span>
+<span class="ty">VKGameRoom</span> room = <span class="ty">Vostok</span>.Game.createRoom(<span class="st">"chess"</span>);
+
+<span class="cm">// 创建指定 roomId 的房间</span>
+<span class="ty">VKGameRoom</span> room = <span class="ty">Vostok</span>.Game.createRoom(<span class="st">"room-42"</span>, <span class="st">"chess"</span>);
+
+<span class="cm">// 帧同步模式</span>
+<span class="ty">VKGameRoom</span> room = <span class="ty">Vostok</span>.Game.createRoom(<span class="st">"room-43"</span>, <span class="st">"fps"</span>, <span class="kw">true</span>);
+
+<span class="cm">// 查询</span>
+<span class="ty">VKGameRoom</span> r = <span class="ty">Vostok</span>.Game.room(<span class="st">"room-42"</span>);
+<span class="ty">Set</span>&lt;<span class="ty">String</span>&gt; ids = <span class="ty">Vostok</span>.Game.roomIds();
+
+<span class="cm">// 移除房间</span>
+<span class="ty">Vostok</span>.Game.removeRoom(<span class="st">"room-42"</span>);
+<span class="ty">Vostok</span>.Game.drainRoom(<span class="st">"room-42"</span>, <span class="st">"game over"</span>);  <span class="cm">// 优雅排空</span></code></pre>
+
+<h2>玩家管理</h2>
+<pre><code><span class="cm">// 玩家加入</span>
+<span class="ty">Vostok</span>.Game.join(<span class="st">"room-42"</span>, <span class="st">"player-1"</span>);
+
+<span class="cm">// 携带加入 Token（服务端签发的认证令牌）</span>
+<span class="ty">Vostok</span>.Game.joinWithToken(<span class="st">"room-42"</span>, <span class="st">"player-1"</span>, joinToken);
+
+<span class="cm">// 玩家离开</span>
+<span class="ty">Vostok</span>.Game.leave(<span class="st">"room-42"</span>, <span class="st">"player-1"</span>);
+
+<span class="cm">// 断线（保留 Session，可重连）</span>
+<span class="ty">Vostok</span>.Game.disconnect(<span class="st">"room-42"</span>, <span class="st">"player-1"</span>);
+
+<span class="cm">// 断线重连</span>
+<span class="ty">Vostok</span>.Game.reconnect(<span class="st">"room-42"</span>, <span class="st">"player-1"</span>, sessionToken);</code></pre>
+
+<h2>发送指令</h2>
+<pre><code><span class="ty">VKGameCommand</span> cmd = <span class="ty">VKGameCommand</span>.builder()
+    .type(<span class="st">"MOVE"</span>)
+    .data(<span class="ty">Map</span>.of(<span class="st">"from"</span>, <span class="st">"e2"</span>, <span class="st">"to"</span>, <span class="st">"e4"</span>))
+    .build();
+
+<span class="ty">Vostok</span>.Game.sendCommand(<span class="st">"room-42"</span>, <span class="st">"player-1"</span>, cmd);</code></pre>
+
+<h2>消息发布</h2>
+<pre><code><span class="cm">// 向指定作用域发布消息</span>
+<span class="ty">VKGameMessage</span> msg = <span class="ty">VKGameMessage</span>.of(<span class="st">"room-42"</span>, <span class="st">"player-1"</span>, <span class="st">"UPDATE"</span>, payload);
+<span class="ty">Vostok</span>.Game.sendMessage(msg);
+
+<span class="cm">// 广播给整个房间</span>
+<span class="ty">Vostok</span>.Game.publishMessage(<span class="st">"room-42"</span>, <span class="st">"{\"event\":\"gameStart\"}"</span>);</code></pre>
+
+<h2>匹配系统</h2>
+<pre><code><span class="ty">VKGameMatchResult</span> result = <span class="ty">Vostok</span>.Game.findMatches(
+    <span class="ty">VKGameMatchRequest</span>.builder()
+        .gameType(<span class="st">"chess"</span>)
+        .playerId(<span class="st">"player-1"</span>)
+        .ratingRange(<span class="nu">100</span>)
+        .maxWaitMs(<span class="nu">10000</span>)
+        .build()
+);
+
+<span class="kw">if</span> (result.matched()) {
+    <span class="ty">String</span> roomId = result.roomId();
+    <span class="ty">Vostok</span>.Game.join(roomId, <span class="st">"player-1"</span>);
+}</code></pre>
+
+<h2>手动 Tick（关闭自动调度时）</h2>
+<pre><code><span class="ty">Vostok</span>.Game.init(<span class="kw">new</span> <span class="ty">VKGameConfig</span>().autoStartTicker(<span class="kw">false</span>));
+
+<span class="cm">// 业务侧手动驱动</span>
+scheduledExecutor.scheduleAtFixedRate(() -&gt; {
+    <span class="ty">Vostok</span>.Game.tickOnce();
+}, <span class="nu">0</span>, <span class="nu">50</span>, <span class="ty">TimeUnit</span>.MILLISECONDS);</code></pre>
+
+<h2>监控指标</h2>
+<pre><code><span class="ty">VKGameMetrics</span> m = <span class="ty">Vostok</span>.Game.metrics();
+<span class="ty">System</span>.out.printf(<span class="st">"rooms=%d, players=%d, tickAvgMs=%.1f%n"</span>,
+    m.roomCount(), m.totalPlayers(), m.avgTickMs());
+
+<span class="cm">// 分片级指标</span>
+<span class="ty">List</span>&lt;<span class="ty">VKGameShardMetrics</span>&gt; shards = <span class="ty">Vostok</span>.Game.shardMetrics();</code></pre>
+
+<h2>配置参数</h2>
+<table class="config-table">
+  <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td class="param-name">tickRate</td><td>int</td><td>20</td><td>每秒 Tick 次数</td></tr>
+    <tr><td class="param-name">autoStartTicker</td><td>boolean</td><td>true</td><td>是否自动启动 Ticker</td></tr>
+    <tr><td class="param-name">tickWorkerThreads</td><td>int</td><td>CPU核数</td><td>Tick 工作线程数</td></tr>
+    <tr><td class="param-name">tickTimeoutMs</td><td>long</td><td>50</td><td>单次 Tick 超时（ms）</td></tr>
+    <tr><td class="param-name">maxRooms</td><td>int</td><td>1000</td><td>最大房间数</td></tr>
+    <tr><td class="param-name">maxPlayersPerRoom</td><td>int</td><td>100</td><td>单房间最大玩家数</td></tr>
+    <tr><td class="param-name">maxCommandsPerTick</td><td>int</td><td>100</td><td>单 Tick 最大处理指令数</td></tr>
+    <tr><td class="param-name">roomIdleTimeoutMs</td><td>long</td><td>60000</td><td>房间空闲超时（ms）</td></tr>
+    <tr><td class="param-name">reconnectGraceMs</td><td>long</td><td>30000</td><td>断线重连宽限时间（ms）</td></tr>
+    <tr><td class="param-name">antiCheatEnabled</td><td>boolean</td><td>false</td><td>反作弊（指令频率限制）</td></tr>
+    <tr><td class="param-name">maxCommandsPerSecondPerPlayer</td><td>int</td><td>30</td><td>每玩家每秒最大指令数（反作弊）</td></tr>
+    <tr><td class="param-name">matchmakingEnabled</td><td>boolean</td><td>false</td><td>启用匹配系统</td></tr>
+    <tr><td class="param-name">matchmakingRoomSize</td><td>int</td><td>2</td><td>匹配成功后的房间人数</td></tr>
+    <tr><td class="param-name">matchmakingMaxWaitMs</td><td>long</td><td>30000</td><td>匹配最大等待时间（ms）</td></tr>
+    <tr><td class="param-name">roomPersistenceEnabled</td><td>boolean</td><td>false</td><td>房间状态持久化</td></tr>
+    <tr><td class="param-name">frameSyncHistoryCapacity</td><td>int</td><td>300</td><td>帧同步历史帧缓冲容量</td></tr>
+  </tbody>
+</table>
+
+</div>
+</main>
+</body>
+</html>

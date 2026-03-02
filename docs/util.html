@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Util 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html" class="active"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">🛠️ Vostok.Util</div>
+  <h1>Util 工具集模块</h1>
+  <p class="desc">通用工具门面，提供 JSON 序列化（可切换 Provider）、字符串处理、分布式 ID 生成、时间格式化、集合工具等常用能力。无需 init，开箱即用。</p>
+</div>
+
+<h2>JSON</h2>
+
+<h3>序列化 / 反序列化</h3>
+<pre><code><span class="ty">User</span> user = <span class="kw">new</span> <span class="ty">User</span>(<span class="nu">1L</span>, <span class="st">"Alice"</span>);
+
+<span class="cm">// 对象 → JSON 字符串</span>
+<span class="ty">String</span> json = <span class="ty">Vostok</span>.Util.toJson(user);
+
+<span class="cm">// JSON 字符串 → 对象</span>
+<span class="ty">User</span> u = <span class="ty">Vostok</span>.Util.fromJson(json, <span class="ty">User</span>.class);
+
+<span class="cm">// 泛型（List）</span>
+<span class="ty">List</span>&lt;<span class="ty">User</span>&gt; list = <span class="ty">Vostok</span>.Util.fromJson(json, <span class="kw">new</span> <span class="ty">TypeReference</span>&lt;<span class="ty">List</span>&lt;<span class="ty">User</span>&gt;&gt;(){});</code></pre>
+
+<h3>切换 JSON Provider</h3>
+<pre><code><span class="cm">// 注册 Jackson Provider</span>
+<span class="ty">Vostok</span>.Util.registerJsonProvider(<span class="kw">new</span> <span class="ty">JacksonVKJsonProvider</span>());
+<span class="ty">Vostok</span>.Util.useJsonProvider(<span class="st">"jackson"</span>);
+
+<span class="cm">// 恢复内置 Provider</span>
+<span class="ty">Vostok</span>.Util.resetDefaultJsonProvider();
+
+<span class="cm">// 查询</span>
+<span class="ty">String</span> current = <span class="ty">Vostok</span>.Util.currentJsonProviderName();
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; all = <span class="ty">Vostok</span>.Util.jsonProviderNames();</code></pre>
+
+<h2>字符串工具（VKStrings）</h2>
+
+<h3>空值检查</h3>
+<pre><code><span class="ty">VKStrings</span>.isEmpty(<span class="kw">null</span>);          <span class="cm">// true</span>
+<span class="ty">VKStrings</span>.isBlank(<span class="st">"  "</span>);         <span class="cm">// true</span>
+<span class="ty">VKStrings</span>.trimToNull(<span class="st">"  "</span>);      <span class="cm">// null</span>
+<span class="ty">VKStrings</span>.trimToEmpty(<span class="kw">null</span>);      <span class="cm">// ""</span>
+<span class="ty">VKStrings</span>.defaultIfBlank(<span class="st">"  "</span>, <span class="st">"default"</span>);  <span class="cm">// "default"</span></code></pre>
+
+<h3>命名转换</h3>
+<pre><code><span class="ty">VKStrings</span>.camelToSnake(<span class="st">"userName"</span>);    <span class="cm">// "user_name"</span>
+<span class="ty">VKStrings</span>.snakeToCamel(<span class="st">"user_name"</span>);   <span class="cm">// "userName"</span>
+<span class="ty">VKStrings</span>.kebabToCamel(<span class="st">"user-name"</span>);   <span class="cm">// "userName"</span></code></pre>
+
+<h3>分割与拼接</h3>
+<pre><code><span class="ty">List</span>&lt;<span class="ty">String</span>&gt; parts = <span class="ty">VKStrings</span>.fastSplit(<span class="st">"a,b,c"</span>, <span class="st">','</span>);
+<span class="ty">String</span> joined = <span class="ty">VKStrings</span>.join(<span class="st">','</span>, <span class="st">"a"</span>, <span class="st">"b"</span>, <span class="st">"c"</span>);  <span class="cm">// "a,b,c"</span></code></pre>
+
+<h3>URL 编解码</h3>
+<pre><code><span class="ty">String</span> enc = <span class="ty">VKStrings</span>.urlEncodeUtf8(<span class="st">"hello world"</span>);  <span class="cm">// "hello+world"</span>
+<span class="ty">String</span> dec = <span class="ty">VKStrings</span>.urlDecodeUtf8(<span class="st">"hello+world"</span>);  <span class="cm">// "hello world"</span></code></pre>
+
+<h3>匹配与截断</h3>
+<pre><code><span class="ty">VKStrings</span>.wildcardMatch(<span class="st">"user.json"</span>, <span class="st">"*.json"</span>);   <span class="cm">// true（glob 匹配）</span>
+<span class="ty">VKStrings</span>.truncateByCodePoint(<span class="st">"Hello 世界"</span>, <span class="nu">8</span>);    <span class="cm">// 安全按字符截断</span>
+<span class="ty">VKStrings</span>.ellipsis(<span class="st">"很长的标题文字"</span>, <span class="nu">5</span>);           <span class="cm">// "很长的标题…"</span>
+<span class="ty">VKStrings</span>.safeSubstring(<span class="st">"Hello"</span>, <span class="nu">0</span>, <span class="nu">100</span>);          <span class="cm">// 不抛越界异常</span></code></pre>
+
+<h3>清理</h3>
+<pre><code><span class="ty">VKStrings</span>.removeWhitespace(<span class="st">"a b  c"</span>);      <span class="cm">// "abc"</span>
+<span class="ty">VKStrings</span>.collapseSpaces(<span class="st">"a  b   c"</span>);     <span class="cm">// "a b c"</span>
+<span class="ty">VKStrings</span>.stripControlChars(input);         <span class="cm">// 移除控制字符</span></code></pre>
+
+<h3>大小写无关比较</h3>
+<pre><code><span class="ty">VKStrings</span>.equalsIgnoreCaseAscii(<span class="st">"GET"</span>, <span class="st">"get"</span>);       <span class="cm">// true</span>
+<span class="ty">VKStrings</span>.containsIgnoreCaseAscii(<span class="st">"Hello World"</span>, <span class="st">"world"</span>); <span class="cm">// true</span></code></pre>
+
+<h2>ID 生成（VKIds）</h2>
+<pre><code><span class="cm">// UUID（带连字符）</span>
+<span class="ty">String</span> id = <span class="ty">VKIds</span>.uuid();          <span class="cm">// "550e8400-e29b-41d4-a716-446655440000"</span>
+
+<span class="cm">// UUID（无连字符）</span>
+<span class="ty">String</span> id = <span class="ty">VKIds</span>.uuid(<span class="kw">false</span>);    <span class="cm">// "550e8400e29b41d4a716446655440000"</span>
+
+<span class="cm">// Snowflake 分布式 ID（long，趋势递增）</span>
+<span class="kw">long</span> id = <span class="ty">VKIds</span>.snowflakeId();
+
+<span class="cm">// ObjectId（类 MongoDB，12字节十六进制）</span>
+<span class="ty">String</span> id = <span class="ty">VKIds</span>.objectId();</code></pre>
+
+<h2>时间工具（VKTimes）</h2>
+<pre><code><span class="cm">// 当前时间</span>
+<span class="ty">Instant</span> now = <span class="ty">VKTimes</span>.now();
+
+<span class="cm">// 格式化</span>
+<span class="ty">String</span> str = <span class="ty">VKTimes</span>.format(now, <span class="ty">ZoneId</span>.of(<span class="st">"Asia/Shanghai"</span>), <span class="st">"yyyy-MM-dd HH:mm:ss"</span>);
+
+<span class="cm">// 解析</span>
+<span class="ty">Instant</span> t = <span class="ty">VKTimes</span>.parse(<span class="st">"2024-01-01 12:00:00"</span>, <span class="st">"yyyy-MM-dd HH:mm:ss"</span>,
+                           <span class="ty">ZoneId</span>.of(<span class="st">"Asia/Shanghai"</span>));</code></pre>
+
+<h2>集合工具（VKCollections）</h2>
+<pre><code><span class="ty">List</span>&lt;<span class="ty">String</span>&gt; list = <span class="ty">VKCollections</span>.newList(<span class="st">"a"</span>, <span class="st">"b"</span>, <span class="st">"c"</span>);
+<span class="ty">Set</span>&lt;<span class="ty">String</span>&gt; set  = <span class="ty">VKCollections</span>.newSet(<span class="st">"a"</span>, <span class="st">"b"</span>);
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">Integer</span>&gt; map = <span class="ty">VKCollections</span>.newMap(<span class="st">"a"</span>, <span class="nu">1</span>, <span class="st">"b"</span>, <span class="nu">2</span>);
+
+<span class="kw">boolean</span> empty = <span class="ty">VKCollections</span>.isEmpty(list);
+<span class="ty">String</span>  first = <span class="ty">VKCollections</span>.first(list);   <span class="cm">// 安全，空时返回 null</span>
+<span class="ty">String</span>  last  = <span class="ty">VKCollections</span>.last(list);
+
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; unique = <span class="ty">VKCollections</span>.distinct(list);  <span class="cm">// 去重</span></code></pre>
+
+<h2>API 速查</h2>
+<table class="api-table">
+  <thead><tr><th>类</th><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td rowspan="3"><code>Vostok.Util</code></td><td><code>toJson(obj)</code></td><td>对象序列化为 JSON</td></tr>
+    <tr><td><code>fromJson(json, Class)</code></td><td>JSON 反序列化</td></tr>
+    <tr><td><code>useJsonProvider(name)</code></td><td>切换 JSON Provider</td></tr>
+    <tr><td rowspan="4"><code>VKStrings</code></td><td><code>isEmpty / isBlank</code></td><td>空/空白检查</td></tr>
+    <tr><td><code>camelToSnake / snakeToCamel</code></td><td>命名风格转换</td></tr>
+    <tr><td><code>wildcardMatch(val, pattern)</code></td><td>Glob 通配匹配</td></tr>
+    <tr><td><code>ellipsis(str, maxLen)</code></td><td>安全截断并加省略号</td></tr>
+    <tr><td rowspan="3"><code>VKIds</code></td><td><code>uuid()</code></td><td>UUID 生成</td></tr>
+    <tr><td><code>snowflakeId()</code></td><td>Snowflake 分布式 ID</td></tr>
+    <tr><td><code>objectId()</code></td><td>MongoDB 风格 ObjectId</td></tr>
+    <tr><td rowspan="2"><code>VKTimes</code></td><td><code>format(instant, zone, pattern)</code></td><td>时间格式化</td></tr>
+    <tr><td><code>parse(str, pattern, zone)</code></td><td>时间解析</td></tr>
+    <tr><td rowspan="2"><code>VKCollections</code></td><td><code>first(list) / last(list)</code></td><td>安全取首尾元素</td></tr>
+    <tr><td><code>distinct(list)</code></td><td>去重</td></tr>
+  </tbody>
+</table>
+
+</div>
+</main>
+</body>
+</html>

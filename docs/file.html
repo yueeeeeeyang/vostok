@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>File 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html" class="active"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">📁 Vostok.File</div>
+  <h1>File 文件存储模块</h1>
+  <p class="desc">统一文件访问抽象层，默认实现为本地文件系统，支持读写、目录管理、压缩解压、文件监听，可扩展为对象存储（S3/OSS）等后端。</p>
+</div>
+
+<h2>初始化</h2>
+<pre><code><span class="ty">Vostok</span>.File.init(<span class="kw">new</span> <span class="ty">VKFileConfig</span>()
+    .baseDir(<span class="st">"./data/files"</span>)
+    .charset(<span class="st">"UTF-8"</span>)
+);</code></pre>
+
+<h2>文件读写</h2>
+<pre><code><span class="cm">// 创建文件</span>
+<span class="ty">Vostok</span>.File.create(<span class="st">"config/app.conf"</span>, <span class="st">"key=value"</span>);
+
+<span class="cm">// 覆盖写入</span>
+<span class="ty">Vostok</span>.File.write(<span class="st">"data/report.txt"</span>, content);
+
+<span class="cm">// 追加写入</span>
+<span class="ty">Vostok</span>.File.append(<span class="st">"logs/access.log"</span>, <span class="st">"2024-01-01 GET /\n"</span>);
+
+<span class="cm">// 读取文本</span>
+<span class="ty">String</span> text = <span class="ty">Vostok</span>.File.read(<span class="st">"config/app.conf"</span>);
+
+<span class="cm">// 读取字节</span>
+<span class="kw">byte</span>[] raw = <span class="ty">Vostok</span>.File.readBytes(<span class="st">"assets/logo.png"</span>);</code></pre>
+
+<h2>目录操作</h2>
+<pre><code><span class="cm">// 创建目录</span>
+<span class="ty">Vostok</span>.File.createDir(<span class="st">"uploads/2024/01"</span>);
+
+<span class="cm">// 列出文件</span>
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; files = <span class="ty">Vostok</span>.File.list(<span class="st">"uploads"</span>);
+
+<span class="cm">// 递归列出</span>
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; all = <span class="ty">Vostok</span>.File.listRecursive(<span class="st">"uploads"</span>);
+
+<span class="cm">// 存在检查</span>
+<span class="kw">boolean</span> ok  = <span class="ty">Vostok</span>.File.exists(<span class="st">"config/app.conf"</span>);
+<span class="kw">boolean</span> dir = <span class="ty">Vostok</span>.File.isDirectory(<span class="st">"uploads"</span>);
+
+<span class="cm">// 移动 / 重命名</span>
+<span class="ty">Vostok</span>.File.move(<span class="st">"temp/draft.txt"</span>, <span class="st">"published/article.txt"</span>);
+
+<span class="cm">// 删除</span>
+<span class="ty">Vostok</span>.File.delete(<span class="st">"temp/draft.txt"</span>);
+<span class="ty">Vostok</span>.File.deleteDir(<span class="st">"temp"</span>);</code></pre>
+
+<h2>压缩与解压</h2>
+<pre><code><span class="cm">// GZIP 压缩</span>
+<span class="ty">Vostok</span>.File.gzip(<span class="st">"data/large.log"</span>, <span class="st">"data/large.log.gz"</span>);
+
+<span class="cm">// GZIP 解压</span>
+<span class="ty">Vostok</span>.File.ungzip(<span class="st">"data/large.log.gz"</span>, <span class="st">"data/large.log"</span>);
+
+<span class="cm">// ZIP 解压（含 Zip Slip 防护）</span>
+<span class="ty">Vostok</span>.File.unzip(<span class="st">"archives/data.zip"</span>, <span class="st">"output/"</span>);</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">安全</div>
+  ZIP 解压内置 Zip Slip 路径穿越防护和 Zip Bomb 炸弹检测，通过 <code>unzipMaxEntries</code> / <code>unzipMaxTotalUncompressedBytes</code> 限制解压规模。
+</div>
+
+<h2>文件监听</h2>
+<pre><code><span class="cm">// 监听目录变化（非递归）</span>
+<span class="ty">Vostok</span>.File.watch(<span class="st">"config/"</span>, event -&gt; {
+    <span class="ty">System</span>.out.println(<span class="st">"changed: "</span> + event.path() + <span class="st">" type="</span> + event.type());
+});
+
+<span class="cm">// 递归监听</span>
+<span class="ty">Vostok</span>.File.watch(<span class="st">"uploads/"</span>, event -&gt; { <span class="cm">/* … */</span> }, <span class="kw">true</span>);</code></pre>
+
+<h2>多存储后端</h2>
+<pre><code><span class="cm">// 注册自定义存储实现</span>
+<span class="ty">Vostok</span>.File.registerStore(<span class="st">"s3"</span>, <span class="kw">new</span> S3FileStore(s3Client, bucket));
+
+<span class="cm">// 切换默认后端</span>
+<span class="ty">Vostok</span>.File.setDefaultMode(<span class="st">"s3"</span>);
+
+<span class="cm">// 临时使用指定后端</span>
+<span class="ty">Vostok</span>.File.withMode(<span class="st">"s3"</span>, () -&gt; {
+    <span class="ty">Vostok</span>.File.write(<span class="st">"remote/file.txt"</span>, data);
+});</code></pre>
+
+<h2>只读模式</h2>
+<pre><code><span class="ty">Vostok</span>.File.setReadOnly(<span class="kw">true</span>);   <span class="cm">// 开启只读（写操作将抛出 FK-560）</span>
+<span class="ty">Vostok</span>.File.setReadOnly(<span class="kw">false</span>);  <span class="cm">// 恢复可写</span>
+<span class="kw">boolean</span> ro = <span class="ty">Vostok</span>.File.isReadOnly();</code></pre>
+
+<h2>配置参数</h2>
+<table class="config-table">
+  <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td class="param-name">mode</td><td>String</td><td>"local"</td><td>默认存储后端名称</td></tr>
+    <tr><td class="param-name">baseDir</td><td>String</td><td>user.dir/vkfiles</td><td>本地存储根目录</td></tr>
+    <tr><td class="param-name">charset</td><td>String</td><td>"UTF-8"</td><td>文本编码</td></tr>
+    <tr><td class="param-name">unzipMaxEntries</td><td>int</td><td>1000</td><td>ZIP 解压最大条目数</td></tr>
+    <tr><td class="param-name">unzipMaxTotalUncompressedBytes</td><td>long</td><td>500MB</td><td>ZIP 解压总字节上限</td></tr>
+    <tr><td class="param-name">unzipMaxEntryUncompressedBytes</td><td>long</td><td>200MB</td><td>单条目解压字节上限</td></tr>
+    <tr><td class="param-name">watchRecursiveDefault</td><td>boolean</td><td>false</td><td>watch 默认是否递归</td></tr>
+    <tr><td class="param-name">datePartitionPattern</td><td>String</td><td>—</td><td>日期分区目录格式（如 yyyy/MM/dd）</td></tr>
+  </tbody>
+</table>
+
+<h2>API 速查</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>create(path, content)</code></td><td>创建文件</td></tr>
+    <tr><td><code>write(path, content)</code></td><td>覆盖写入</td></tr>
+    <tr><td><code>append(path, content)</code></td><td>追加写入</td></tr>
+    <tr><td><code>read(path)</code></td><td>读取文本</td></tr>
+    <tr><td><code>readBytes(path)</code></td><td>读取字节</td></tr>
+    <tr><td><code>delete(path)</code></td><td>删除文件</td></tr>
+    <tr><td><code>deleteDir(path)</code></td><td>删除目录（递归）</td></tr>
+    <tr><td><code>exists(path)</code></td><td>文件/目录是否存在</td></tr>
+    <tr><td><code>isDirectory(path)</code></td><td>是否为目录</td></tr>
+    <tr><td><code>list(path)</code></td><td>列出直接子文件/目录</td></tr>
+    <tr><td><code>listRecursive(path)</code></td><td>递归列出所有文件</td></tr>
+    <tr><td><code>createDir(path)</code></td><td>创建目录（含父目录）</td></tr>
+    <tr><td><code>move(from, to)</code></td><td>移动/重命名</td></tr>
+    <tr><td><code>gzip(src, dest)</code></td><td>GZIP 压缩</td></tr>
+    <tr><td><code>ungzip(src, dest)</code></td><td>GZIP 解压</td></tr>
+    <tr><td><code>unzip(src, destDir)</code></td><td>ZIP 解压</td></tr>
+    <tr><td><code>watch(path, handler)</code></td><td>监听文件/目录变化</td></tr>
+    <tr><td><code>registerStore(mode, store)</code></td><td>注册自定义存储后端</td></tr>
+    <tr><td><code>withMode(mode, action)</code></td><td>临时切换存储后端</td></tr>
+    <tr><td><code>setReadOnly(flag)</code></td><td>设置只读模式</td></tr>
+  </tbody>
+</table>
+
+<h2>异常处理</h2>
+<pre><code><span class="kw">try</span> {
+    <span class="ty">Vostok</span>.File.read(<span class="st">"missing.txt"</span>);
+} <span class="kw">catch</span> (yueyang.vostok.file.exception.<span class="ty">VKFileException</span> e) {
+    <span class="ty">System</span>.out.println(e.getCode() + <span class="st">" "</span> + e.getMessage());
+    <span class="cm">// e.g. FK-404 路径不存在</span>
+}</code></pre>
+
+<p>完整错误码见 <a href="errors.html">错误码参考</a>。</p>
+
+</div>
+</main>
+</body>
+</html>

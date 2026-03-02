@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html" class="active"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">🗄️ Vostok.Data</div>
+  <h1>Data 数据访问模块</h1>
+  <p class="desc">基于 JDBC 的数据访问层，提供实体 CRUD、事务管理、查询构建器、聚合操作、多数据源切换和连接池。</p>
+</div>
+
+<h2>初始化</h2>
+<pre><code><span class="ty">Vostok</span>.Data.init(<span class="kw">new</span> <span class="ty">VKDataConfig</span>()
+    .url(<span class="st">"jdbc:mysql://127.0.0.1:3306/mydb"</span>)
+    .username(<span class="st">"root"</span>)
+    .password(<span class="st">"123456"</span>)
+    .driver(<span class="st">"com.mysql.cj.jdbc.Driver"</span>)
+    .maxActive(<span class="nu">20</span>)
+    .minIdle(<span class="nu">5</span>),
+    <span class="st">"com.example.entity"</span>   <span class="cm">// 实体扫描包，可传多个</span>
+);</code></pre>
+
+<div class="callout">
+  <div class="callout-title">说明</div>
+  支持 MySQL、PostgreSQL、Oracle、DB2、SQL Server，框架通过 <code>dialect</code> 自动适配分页等方言差异。
+</div>
+
+<h2>实体定义</h2>
+<pre><code><span class="an">@VKEntity</span>(table = <span class="st">"users"</span>)
+<span class="kw">public class</span> <span class="ty">User</span> {
+    <span class="kw">private</span> <span class="ty">Long</span> id;
+    <span class="kw">private</span> <span class="ty">String</span> name;
+    <span class="kw">private</span> <span class="ty">String</span> email;
+    <span class="cm">// getters / setters</span>
+}</code></pre>
+
+<h2>CRUD 操作</h2>
+
+<h3>新增</h3>
+<pre><code><span class="ty">User</span> user = <span class="kw">new</span> <span class="ty">User</span>();
+user.setName(<span class="st">"Alice"</span>);
+user.setEmail(<span class="st">"alice@example.com"</span>);
+<span class="ty">Vostok</span>.Data.insert(user);
+
+<span class="cm">// 批量新增</span>
+<span class="ty">List</span>&lt;<span class="ty">User</span>&gt; users = <span class="ty">List</span>.of(user1, user2, user3);
+<span class="ty">Vostok</span>.Data.batchInsert(users);</code></pre>
+
+<h3>查询</h3>
+<pre><code><span class="cm">// 按主键</span>
+<span class="ty">User</span> user = <span class="ty">Vostok</span>.Data.findById(<span class="ty">User</span>.class, <span class="nu">1L</span>);
+
+<span class="cm">// 查全部</span>
+<span class="ty">List</span>&lt;<span class="ty">User</span>&gt; all = <span class="ty">Vostok</span>.Data.findAll(<span class="ty">User</span>.class);
+
+<span class="cm">// 条件查询</span>
+<span class="ty">VKQuery</span> q = <span class="ty">VKQuery</span>.where(<span class="st">"email"</span>, <span class="st">"alice@example.com"</span>)
+                    .limit(<span class="nu">10</span>).offset(<span class="nu">0</span>);
+<span class="ty">List</span>&lt;<span class="ty">User</span>&gt; list = <span class="ty">Vostok</span>.Data.query(<span class="ty">User</span>.class, q);</code></pre>
+
+<h3>更新 / 删除</h3>
+<pre><code>user.setName(<span class="st">"Bob"</span>);
+<span class="ty">Vostok</span>.Data.update(user);
+
+<span class="ty">Vostok</span>.Data.delete(<span class="ty">User</span>.class, <span class="nu">1L</span>);
+
+<span class="cm">// 批量删除</span>
+<span class="ty">Vostok</span>.Data.batchDelete(<span class="ty">User</span>.class, <span class="ty">List</span>.of(<span class="nu">1L</span>, <span class="nu">2L</span>, <span class="nu">3L</span>));</code></pre>
+
+<h2>查询构建器 VKQuery</h2>
+<pre><code><span class="ty">VKQuery</span> q = <span class="ty">VKQuery</span>
+    .where(<span class="st">"status"</span>, <span class="st">"active"</span>)
+    .and(<span class="st">"age"</span>, <span class="st">"&gt;="</span>, <span class="nu">18</span>)
+    .or(<span class="st">"role"</span>, <span class="st">"admin"</span>)
+    .orderBy(<span class="st">"created_at"</span>, <span class="kw">false</span>)   <span class="cm">// false = DESC</span>
+    .limit(<span class="nu">20</span>).offset(<span class="nu">40</span>)
+    .groupBy(<span class="st">"department"</span>)
+    .having(<span class="st">"count(*) &gt; 5"</span>);
+
+<span class="ty">List</span>&lt;<span class="ty">User</span>&gt; result = <span class="ty">Vostok</span>.Data.query(<span class="ty">User</span>.class, q);</code></pre>
+
+<h3>指定返回列</h3>
+<pre><code><span class="ty">List</span>&lt;<span class="ty">User</span>&gt; partial = <span class="ty">Vostok</span>.Data.queryColumns(
+    <span class="ty">User</span>.class, q, <span class="st">"id"</span>, <span class="st">"name"</span>
+);</code></pre>
+
+<h2>聚合查询</h2>
+<pre><code><span class="ty">VKQuery</span> q = <span class="ty">VKQuery</span>.where(<span class="st">"status"</span>, <span class="st">"active"</span>);
+
+<span class="cm">// COUNT</span>
+<span class="kw">long</span> total = <span class="ty">Vostok</span>.Data.count(<span class="ty">User</span>.class, q);
+
+<span class="cm">// 多维聚合</span>
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">Object</span>&gt; stats = <span class="ty">Vostok</span>.Data.aggregate(
+    <span class="ty">User</span>.class, q,
+    <span class="ty">VKAggregate</span>.count(<span class="st">"id"</span>, <span class="st">"total"</span>),
+    <span class="ty">VKAggregate</span>.avg(<span class="st">"age"</span>, <span class="st">"avg_age"</span>),
+    <span class="ty">VKAggregate</span>.max(<span class="st">"score"</span>, <span class="st">"max_score"</span>)
+);</code></pre>
+
+<h2>事务</h2>
+<pre><code><span class="cm">// Runnable — 无返回值</span>
+<span class="ty">Vostok</span>.Data.tx(() -&gt; {
+    <span class="ty">Vostok</span>.Data.insert(order);
+    <span class="ty">Vostok</span>.Data.update(inventory);
+});
+
+<span class="cm">// Supplier — 有返回值</span>
+<span class="ty">Order</span> saved = <span class="ty">Vostok</span>.Data.tx(() -&gt; {
+    <span class="ty">Vostok</span>.Data.insert(order);
+    <span class="kw">return</span> <span class="ty">Vostok</span>.Data.findById(<span class="ty">Order</span>.class, order.getId());
+});</code></pre>
+
+<h2>多数据源</h2>
+<pre><code><span class="cm">// 注册额外数据源</span>
+<span class="ty">Vostok</span>.Data.registerDataSource(<span class="st">"analytics"</span>, <span class="kw">new</span> <span class="ty">VKDataConfig</span>()
+    .url(<span class="st">"jdbc:postgresql://analytics-db:5432/stats"</span>)
+    .username(<span class="st">"reader"</span>).password(<span class="st">"secret"</span>));
+
+<span class="cm">// 切换数据源执行</span>
+<span class="ty">Vostok</span>.Data.withDataSource(<span class="st">"analytics"</span>, () -&gt; {
+    <span class="kw">return</span> <span class="ty">Vostok</span>.Data.findAll(<span class="ty">Report</span>.class);
+});</code></pre>
+
+<h2>异步线程传播</h2>
+<pre><code><span class="cm">// 捕获当前上下文（数据源、事务等）</span>
+<span class="ty">VostokContext</span> ctx = <span class="ty">Vostok</span>.Data.captureContext();
+
+<span class="ty">CompletableFuture</span>.runAsync(ctx.wrap(() -&gt; {
+    <span class="ty">Vostok</span>.Data.findAll(<span class="ty">User</span>.class);
+}));</code></pre>
+
+<h2>SQL 拦截器</h2>
+<pre><code><span class="ty">Vostok</span>.Data.registerInterceptor((sql, params, next) -&gt; {
+    <span class="kw">long</span> start = <span class="ty">System</span>.currentTimeMillis();
+    <span class="ty">Object</span> result = next.execute();
+    <span class="kw">long</span> cost = <span class="ty">System</span>.currentTimeMillis() - start;
+    <span class="kw">if</span> (cost &gt; <span class="nu">200</span>) <span class="ty">Vostok</span>.Log.warn(<span class="st">"慢 SQL: {} ms, {}"</span>, cost, sql);
+    <span class="kw">return</span> result;
+});</code></pre>
+
+<h2>连接池监控</h2>
+<pre><code><span class="ty">VKPoolMetrics</span> m = <span class="ty">Vostok</span>.Data.poolMetrics();
+<span class="ty">System</span>.out.printf(<span class="st">"active=%d, idle=%d, waitQueue=%d%n"</span>,
+    m.activeCount(), m.idleCount(), m.waitQueueSize());</code></pre>
+
+<h2>配置参数</h2>
+<table class="config-table">
+  <thead>
+    <tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr><td class="param-name">url</td><td>String</td><td>—</td><td>JDBC 连接 URL</td></tr>
+    <tr><td class="param-name">username</td><td>String</td><td>—</td><td>数据库用户名</td></tr>
+    <tr><td class="param-name">password</td><td>String</td><td>—</td><td>数据库密码</td></tr>
+    <tr><td class="param-name">driver</td><td>String</td><td>自动推断</td><td>JDBC 驱动类名</td></tr>
+    <tr><td class="param-name">dialect</td><td>VKDialect</td><td>自动推断</td><td>SQL 方言（MYSQL / POSTGRESQL / ORACLE / DB2 / SQLSERVER）</td></tr>
+    <tr><td class="param-name">minIdle</td><td>int</td><td>2</td><td>连接池最小空闲连接数</td></tr>
+    <tr><td class="param-name">maxActive</td><td>int</td><td>10</td><td>连接池最大活跃连接数</td></tr>
+    <tr><td class="param-name">maxWaitMs</td><td>long</td><td>3000</td><td>获取连接最大等待时间（ms）</td></tr>
+    <tr><td class="param-name">idleTimeoutMs</td><td>long</td><td>600000</td><td>空闲连接超时时间（ms）</td></tr>
+    <tr><td class="param-name">leakDetectMs</td><td>long</td><td>0</td><td>连接泄漏检测阈值（0=关闭）</td></tr>
+    <tr><td class="param-name">testOnBorrow</td><td>boolean</td><td>true</td><td>借出连接时校验是否存活</td></tr>
+    <tr><td class="param-name">slowSqlMs</td><td>long</td><td>1000</td><td>慢 SQL 阈值（ms）</td></tr>
+    <tr><td class="param-name">batchSize</td><td>int</td><td>500</td><td>批量操作每批大小</td></tr>
+    <tr><td class="param-name">autoCreateTable</td><td>boolean</td><td>false</td><td>启动时自动建表</td></tr>
+    <tr><td class="param-name">retryEnabled</td><td>boolean</td><td>false</td><td>操作失败后是否自动重试</td></tr>
+  </tbody>
+</table>
+
+<h2>API 速查</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>insert(entity)</code></td><td>插入单条记录</td></tr>
+    <tr><td><code>batchInsert(list)</code></td><td>批量插入</td></tr>
+    <tr><td><code>update(entity)</code></td><td>按主键更新</td></tr>
+    <tr><td><code>batchUpdate(list)</code></td><td>批量更新</td></tr>
+    <tr><td><code>delete(Class, id)</code></td><td>按主键删除</td></tr>
+    <tr><td><code>batchDelete(Class, ids)</code></td><td>批量删除</td></tr>
+    <tr><td><code>findById(Class, id)</code></td><td>按主键查询</td></tr>
+    <tr><td><code>findAll(Class)</code></td><td>查询全部记录</td></tr>
+    <tr><td><code>query(Class, VKQuery)</code></td><td>条件查询</td></tr>
+    <tr><td><code>queryColumns(Class, VKQuery, fields...)</code></td><td>查询指定列</td></tr>
+    <tr><td><code>count(Class, VKQuery)</code></td><td>统计数量</td></tr>
+    <tr><td><code>aggregate(Class, VKQuery, VKAggregate...)</code></td><td>聚合查询</td></tr>
+    <tr><td><code>tx(Runnable)</code></td><td>事务（无返回值）</td></tr>
+    <tr><td><code>tx(Supplier)</code></td><td>事务（有返回值）</td></tr>
+    <tr><td><code>registerDataSource(name, config)</code></td><td>注册命名数据源</td></tr>
+    <tr><td><code>withDataSource(name, action)</code></td><td>切换数据源执行</td></tr>
+    <tr><td><code>captureContext()</code></td><td>捕获上下文用于异步传播</td></tr>
+    <tr><td><code>registerInterceptor(interceptor)</code></td><td>注册 SQL 拦截器</td></tr>
+    <tr><td><code>poolMetrics()</code></td><td>获取连接池指标</td></tr>
+  </tbody>
+</table>
+
+<h2>异常处理</h2>
+<pre><code><span class="kw">try</span> {
+    <span class="ty">Vostok</span>.Data.findAll(<span class="ty">User</span>.class);
+} <span class="kw">catch</span> (<span class="ty">VKSqlException</span> e) {
+    <span class="ty">System</span>.out.println(e.getCode() + <span class="st">" "</span> + e.getMessage());
+} <span class="kw">catch</span> (<span class="ty">VKPoolException</span> e) {
+    <span class="cm">// 连接池耗尽</span>
+} <span class="kw">catch</span> (<span class="ty">VKTxException</span> e) {
+    <span class="cm">// 事务错误</span>
+}</code></pre>
+
+<p>完整错误码见 <a href="errors.html">错误码参考</a>。</p>
+
+</div>
+</main>
+</body>
+</html>

@@ -18,6 +18,13 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 public final class VKSqlSecurityScanner {
+
+    /**
+     * Perf1 fix：预编译空白字符正则为 static final，避免 normalizeSql() 每次调用时
+     * 通过 String.replaceAll(String,String) 内部重新编译，该方法在高频扫描路径上开销可观。
+     */
+    private static final Pattern WHITESPACE = Pattern.compile("\\s+");
+
     private final VKSecurityConfig config;
     private final List<VKSecurityRule> rules;
     private final List<Pattern> whitelistPatterns;
@@ -183,7 +190,8 @@ public final class VKSqlSecurityScanner {
         if (sql == null) {
             return "";
         }
-        return sql.trim().replaceAll("\\s+", " ");
+        // Perf1 fix: 使用预编译的 WHITESPACE Pattern，避免 String.replaceAll 每次隐式编译正则
+        return WHITESPACE.matcher(sql.trim()).replaceAll(" ");
     }
 
     private static String maskSqlLiterals(String sql) {

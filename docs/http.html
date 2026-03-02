@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Http 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html" class="active"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">🔗 Vostok.Http</div>
+  <h1>Http 客户端模块</h1>
+  <p class="desc">统一 HTTP 客户端，支持命名 Client、重试与退避、连接池、JSON 自动解析、流式响应、SSE 事件流、请求拦截器和指标统计。</p>
+</div>
+
+<h2>初始化</h2>
+<pre><code><span class="ty">Vostok</span>.Http.init(<span class="kw">new</span> <span class="ty">VKHttpConfig</span>()
+    .connectTimeoutMs(<span class="nu">3000</span>)
+    .readTimeoutMs(<span class="nu">10000</span>)
+    .maxRetries(<span class="nu">3</span>)
+    .retryBackoffBaseMs(<span class="nu">200</span>)
+    .maxActive(<span class="nu">20</span>)
+);</code></pre>
+
+<h2>快速请求</h2>
+<pre><code><span class="cm">// GET</span>
+<span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users"</span>)
+    .header(<span class="st">"Accept"</span>, <span class="st">"application/json"</span>)
+    .execute();
+<span class="ty">System</span>.out.println(res.status() + <span class="st">" "</span> + res.body());
+
+<span class="cm">// GET 并自动解析 JSON</span>
+<span class="ty">User</span> user = <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users/1"</span>)
+    .executeJson(<span class="ty">User</span>.class);
+
+<span class="cm">// POST JSON</span>
+<span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"https://api.example.com/users"</span>)
+    .body(<span class="ty">Vostok</span>.Util.toJson(user))
+    .header(<span class="st">"Content-Type"</span>, <span class="st">"application/json"</span>)
+    .execute();
+
+<span class="cm">// 表单提交</span>
+<span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"https://example.com/form"</span>)
+    .formBody(<span class="ty">Map</span>.of(<span class="st">"username"</span>, <span class="st">"alice"</span>, <span class="st">"password"</span>, <span class="st">"secret"</span>))
+    .execute();</code></pre>
+
+<h2>请求构建器</h2>
+<pre><code><span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.request()
+    .method(<span class="st">"PATCH"</span>)
+    .url(<span class="st">"https://api.example.com/users/1"</span>)
+    .header(<span class="st">"Authorization"</span>, <span class="st">"Bearer "</span> + token)
+    .queryParam(<span class="st">"dryRun"</span>, <span class="st">"true"</span>)
+    .body(<span class="st">"{\"name\":\"Bob\"}"</span>)
+    .timeout(<span class="nu">5000</span>)
+    .retries(<span class="nu">2</span>)
+    .execute();</code></pre>
+
+<h2>命名 Client</h2>
+<pre><code><span class="cm">// 注册带 baseUrl 的命名 Client</span>
+<span class="ty">Vostok</span>.Http.registerClient(<span class="st">"payments"</span>, <span class="kw">new</span> <span class="ty">VKHttpClientConfig</span>()
+    .baseUrl(<span class="st">"https://payments.internal"</span>)
+    .connectTimeoutMs(<span class="nu">2000</span>)
+    .maxRetries(<span class="nu">5</span>)
+    .defaultHeader(<span class="st">"X-Api-Key"</span>, apiKey));
+
+<span class="cm">// 在命名 Client 上下文中使用相对路径</span>
+<span class="ty">Vostok</span>.Http.withClient(<span class="st">"payments"</span>, () -&gt; {
+    <span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"/charge"</span>)
+        .body(chargeJson)
+        .execute();
+});</code></pre>
+
+<h2>异步请求</h2>
+<pre><code><span class="cm">// 异步执行，返回 CompletableFuture</span>
+<span class="ty">CompletableFuture</span>&lt;<span class="ty">VKHttpResponse</span>&gt; future =
+    <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/data"</span>).executeAsync();
+
+future.thenAccept(res -&gt; <span class="ty">System</span>.out.println(res.body()));
+
+<span class="cm">// 异步 JSON 解析</span>
+<span class="ty">CompletableFuture</span>&lt;<span class="ty">User</span>&gt; futureUser =
+    <span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/users/1"</span>)
+        .executeJsonAsync(<span class="ty">User</span>.class);</code></pre>
+
+<h2>流式响应</h2>
+<pre><code><span class="cm">// 分块接收大文件</span>
+<span class="ty">Vostok</span>.Http.get(<span class="st">"https://files.example.com/large.zip"</span>)
+    .executeStream((chunk, done) -&gt; {
+        outputStream.write(chunk);
+        <span class="kw">if</span> (done) outputStream.close();
+    });</code></pre>
+
+<h2>SSE（Server-Sent Events）</h2>
+<pre><code><span class="cm">// 接收 SSE 事件流</span>
+<span class="ty">Vostok</span>.Http.get(<span class="st">"https://api.example.com/events"</span>)
+    .header(<span class="st">"Accept"</span>, <span class="st">"text/event-stream"</span>)
+    .executeSse(<span class="kw">new</span> <span class="ty">VKHttpSseListener</span>() {
+        <span class="kw">public void</span> <span class="fn">onEvent</span>(<span class="ty">String</span> event, <span class="ty">String</span> data, <span class="ty">String</span> id) {
+            <span class="ty">System</span>.out.println(<span class="st">"event="</span> + event + <span class="st">" data="</span> + data);
+        }
+        <span class="kw">public void</span> <span class="fn">onError</span>(<span class="ty">Throwable</span> ex) {}
+        <span class="kw">public void</span> <span class="fn">onComplete</span>() {}
+    });
+
+<span class="cm">// 保持长连接（返回 Session 对象，可手动关闭）</span>
+<span class="ty">VKHttpStreamSession</span> session = <span class="ty">Vostok</span>.Http.get(url)
+    .openSse(listener);
+<span class="cm">// 稍后关闭</span>
+session.close();</code></pre>
+
+<h2>拦截器</h2>
+<pre><code><span class="cm">// 全局拦截器（请求/响应日志）</span>
+<span class="ty">Vostok</span>.Http.addInterceptor((req, chain) -&gt; {
+    <span class="ty">Vostok</span>.Log.debug(<span class="st">"→ {} {}"</span>, req.method(), req.url());
+    <span class="ty">VKHttpResponse</span> res = chain.proceed(req);
+    <span class="ty">Vostok</span>.Log.debug(<span class="st">"← {}"</span>, res.status());
+    <span class="kw">return</span> res;
+});
+
+<span class="cm">// 针对命名 Client 的拦截器</span>
+<span class="ty">Vostok</span>.Http.addInterceptor(<span class="st">"payments"</span>, (req, chain) -&gt; {
+    <span class="kw">return</span> chain.proceed(req.withHeader(<span class="st">"X-Trace"</span>, <span class="ty">UUID</span>.randomUUID().toString()));
+});</code></pre>
+
+<h2>指标</h2>
+<pre><code><span class="ty">VKHttpMetrics</span> m = <span class="ty">Vostok</span>.Http.metrics();
+<span class="ty">System</span>.out.printf(<span class="st">"totalReq=%d, errors=%d, avgMs=%.1f%n"</span>,
+    m.totalRequests(), m.errorCount(), m.avgResponseMs());
+
+<span class="ty">Vostok</span>.Http.metrics(<span class="st">"payments"</span>);  <span class="cm">// 命名 Client 指标</span>
+<span class="ty">Vostok</span>.Http.resetMetrics();</code></pre>
+
+<h2>配置参数</h2>
+<table class="config-table">
+  <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td class="param-name">connectTimeoutMs</td><td>long</td><td>5000</td><td>TCP 连接超时（ms）</td></tr>
+    <tr><td class="param-name">readTimeoutMs</td><td>long</td><td>30000</td><td>读取超时（ms）</td></tr>
+    <tr><td class="param-name">maxRetries</td><td>int</td><td>0</td><td>失败最大重试次数</td></tr>
+    <tr><td class="param-name">retryBackoffBaseMs</td><td>long</td><td>100</td><td>重试基础退避时间（指数退避）</td></tr>
+    <tr><td class="param-name">failOnNon2xx</td><td>boolean</td><td>false</td><td>非 2xx 状态码时是否抛异常</td></tr>
+    <tr><td class="param-name">minIdle</td><td>int</td><td>2</td><td>连接池最小空闲连接</td></tr>
+    <tr><td class="param-name">maxActive</td><td>int</td><td>10</td><td>连接池最大活跃连接</td></tr>
+    <tr><td class="param-name">metricsEnabled</td><td>boolean</td><td>true</td><td>开启请求指标统计</td></tr>
+    <tr><td class="param-name">requestBodyCompression</td><td>boolean</td><td>false</td><td>自动 GZIP 压缩请求体</td></tr>
+  </tbody>
+</table>
+
+<h2>API 速查</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>get(url)</code> / <code>post(url)</code> / <code>put(url)</code> / <code>delete(url)</code></td><td>快捷构建请求</td></tr>
+    <tr><td><code>request()</code></td><td>通用请求构建器</td></tr>
+    <tr><td><code>.execute()</code></td><td>同步执行</td></tr>
+    <tr><td><code>.executeAsync()</code></td><td>异步执行（CompletableFuture）</td></tr>
+    <tr><td><code>.executeJson(Class)</code></td><td>同步执行并解析 JSON</td></tr>
+    <tr><td><code>.executeJsonAsync(Class)</code></td><td>异步执行并解析 JSON</td></tr>
+    <tr><td><code>.executeStream(listener)</code></td><td>流式响应</td></tr>
+    <tr><td><code>.executeSse(listener)</code></td><td>SSE 事件流（完成后关闭）</td></tr>
+    <tr><td><code>.openSse(listener)</code></td><td>SSE 持久连接（返回 Session）</td></tr>
+    <tr><td><code>registerClient(name, config)</code></td><td>注册命名 HTTP Client</td></tr>
+    <tr><td><code>withClient(name, action)</code></td><td>切换命名 Client 执行</td></tr>
+    <tr><td><code>addInterceptor(interceptor)</code></td><td>全局拦截器</td></tr>
+    <tr><td><code>addInterceptor(name, interceptor)</code></td><td>命名 Client 拦截器</td></tr>
+    <tr><td><code>metrics()</code></td><td>全局请求指标</td></tr>
+    <tr><td><code>urlEncode(value)</code></td><td>URL 编码工具</td></tr>
+  </tbody>
+</table>
+
+</div>
+</main>
+</body>
+</html>

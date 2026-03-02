@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>错误码参考 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html" class="active"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">⚠️ 参考</div>
+  <h1>错误码参考</h1>
+  <p class="desc">Vostok 各模块的错误码、对应枚举与异常类型，便于生产环境排障与监控告警。</p>
+</div>
+
+<h2>统一异常处理</h2>
+<pre><code><span class="kw">import</span> yueyang.vostok.data.exception.*;
+<span class="kw">import</span> yueyang.vostok.file.exception.*;
+<span class="kw">import</span> yueyang.vostok.config.exception.*;
+
+<span class="cm">// Data 模块</span>
+<span class="kw">try</span> {
+    <span class="ty">Vostok</span>.Data.findAll(<span class="ty">User</span>.class);
+} <span class="kw">catch</span> (<span class="ty">VKSqlException</span> e) {
+    <span class="cm">// SQL_ERROR / SQL_TIMEOUT / SQL_CONSTRAINT / SQL_SYNTAX / SQL_CONNECTION</span>
+    log.error(<span class="st">"SQL error: {} - {}"</span>, e.getCode(), e.getMessage());
+} <span class="kw">catch</span> (<span class="ty">VKPoolException</span> e) {
+    log.error(<span class="st">"Pool exhausted: {}"</span>, e.getMessage());
+} <span class="kw">catch</span> (<span class="ty">VKTxException</span> e) {
+    log.error(<span class="st">"Transaction error: {}"</span>, e.getMessage());
+} <span class="kw">catch</span> (<span class="ty">VKException</span> e) {
+    <span class="cm">// 所有其他 Vostok 异常基类</span>
+    log.error(<span class="st">"Vostok error: {} {}"</span>, e.getCode(), e.getMessage());
+}
+
+<span class="cm">// File 模块</span>
+<span class="kw">try</span> {
+    <span class="ty">Vostok</span>.File.read(<span class="st">"missing.txt"</span>);
+} <span class="kw">catch</span> (<span class="ty">VKFileException</span> e) {
+    log.error(<span class="st">"File error: {} {}"</span>, e.getCode(), e.getMessage());
+}</code></pre>
+
+<h2>Data 模块错误码（VKErrorCode）</h2>
+<table class="api-table">
+  <thead><tr><th>错误码</th><th>枚举</th><th>触发场景</th></tr></thead>
+  <tbody>
+    <tr><td><span class="error-code">DK-400</span></td><td><span class="enum-name">INVALID_ARGUMENT</span></td><td>传入参数非法（null 主键、空包名等）</td></tr>
+    <tr><td><span class="error-code">DK-401</span></td><td><span class="enum-name">NOT_INITIALIZED</span></td><td>模块未初始化时调用操作</td></tr>
+    <tr><td><span class="error-code">DK-402</span></td><td><span class="enum-name">CONFIG_ERROR</span></td><td>配置项缺失或错误（无 url/username 等）</td></tr>
+    <tr><td><span class="error-code">DK-410</span></td><td><span class="enum-name">META_ERROR</span></td><td>实体元数据解析失败（@VKEntity 配置错误）</td></tr>
+    <tr><td><span class="error-code">DK-500</span></td><td><span class="enum-name">SQL_ERROR</span></td><td>SQL 执行通用错误</td></tr>
+    <tr><td><span class="error-code">DK-501</span></td><td><span class="enum-name">SQL_TIMEOUT</span></td><td>SQL 执行超时</td></tr>
+    <tr><td><span class="error-code">DK-502</span></td><td><span class="enum-name">SQL_CONSTRAINT</span></td><td>唯一约束、外键约束等违反</td></tr>
+    <tr><td><span class="error-code">DK-503</span></td><td><span class="enum-name">SQL_SYNTAX</span></td><td>SQL 语法错误</td></tr>
+    <tr><td><span class="error-code">DK-504</span></td><td><span class="enum-name">SQL_CONNECTION</span></td><td>数据库连接失败</td></tr>
+    <tr><td><span class="error-code">DK-510</span></td><td><span class="enum-name">SCAN_ERROR</span></td><td>实体包扫描失败</td></tr>
+    <tr><td><span class="error-code">DK-520</span></td><td><span class="enum-name">POOL_ERROR</span></td><td>连接池错误（耗尽、泄漏检测等）</td></tr>
+    <tr><td><span class="error-code">DK-530</span></td><td><span class="enum-name">TX_ERROR</span></td><td>事务开启/提交/回滚失败</td></tr>
+    <tr><td><span class="error-code">DK-540</span></td><td><span class="enum-name">CACHE_ERROR</span></td><td>缓存操作错误</td></tr>
+  </tbody>
+</table>
+
+<h2>Data 模块异常类型</h2>
+<table class="api-table">
+  <thead><tr><th>异常类</th><th>包路径</th><th>对应错误码</th></tr></thead>
+  <tbody>
+    <tr><td><code>VKException</code></td><td>data.exception</td><td>所有运行时异常基类</td></tr>
+    <tr><td><code>VKArgumentException</code></td><td>data.exception</td><td>DK-400</td></tr>
+    <tr><td><code>VKStateException</code></td><td>data.exception</td><td>DK-401</td></tr>
+    <tr><td><code>VKConfigException</code></td><td>data.exception</td><td>DK-402</td></tr>
+    <tr><td><code>VKMetaException</code></td><td>data.exception</td><td>DK-410</td></tr>
+    <tr><td><code>VKSqlException</code></td><td>data.exception</td><td>DK-500 ~ DK-504</td></tr>
+    <tr><td><code>VKScanException</code></td><td>data.exception</td><td>DK-510</td></tr>
+    <tr><td><code>VKPoolException</code></td><td>data.exception</td><td>DK-520</td></tr>
+    <tr><td><code>VKTxException</code></td><td>data.exception</td><td>DK-530</td></tr>
+  </tbody>
+</table>
+
+<h2>File 模块错误码（VKFileErrorCode）</h2>
+<table class="api-table">
+  <thead><tr><th>错误码</th><th>枚举</th><th>触发场景</th></tr></thead>
+  <tbody>
+    <tr><td><span class="error-code">FK-400</span></td><td><span class="enum-name">INVALID_ARGUMENT</span></td><td>路径参数为 null 或空</td></tr>
+    <tr><td><span class="error-code">FK-401</span></td><td><span class="enum-name">NOT_INITIALIZED</span></td><td>File 模块未初始化</td></tr>
+    <tr><td><span class="error-code">FK-402</span></td><td><span class="enum-name">CONFIG_ERROR</span></td><td>baseDir 配置错误</td></tr>
+    <tr><td><span class="error-code">FK-403</span></td><td><span class="enum-name">STATE_ERROR</span></td><td>状态异常（如已关闭）</td></tr>
+    <tr><td><span class="error-code">FK-404</span></td><td><span class="enum-name">NOT_FOUND</span></td><td>文件或目录不存在</td></tr>
+    <tr><td><span class="error-code">FK-410</span></td><td><span class="enum-name">PATH_ERROR</span></td><td>路径越界（尝试访问 baseDir 之外）</td></tr>
+    <tr><td><span class="error-code">FK-500</span></td><td><span class="enum-name">IO_ERROR</span></td><td>文件读写 IO 错误</td></tr>
+    <tr><td><span class="error-code">FK-520</span></td><td><span class="enum-name">SECURITY_ERROR</span></td><td>安全错误（Zip Slip 路径穿越）</td></tr>
+    <tr><td><span class="error-code">FK-530</span></td><td><span class="enum-name">UNSUPPORTED</span></td><td>当前存储后端不支持该操作</td></tr>
+    <tr><td><span class="error-code">FK-540</span></td><td><span class="enum-name">ZIP_BOMB_RISK</span></td><td>ZIP 炸弹限制触发（解压比过高）</td></tr>
+    <tr><td><span class="error-code">FK-550</span></td><td><span class="enum-name">IMAGE_DECODE_ERROR</span></td><td>图片解码失败</td></tr>
+    <tr><td><span class="error-code">FK-551</span></td><td><span class="enum-name">IMAGE_ENCODE_ERROR</span></td><td>图片编码失败</td></tr>
+    <tr><td><span class="error-code">FK-552</span></td><td><span class="enum-name">IMAGE_LIMIT_EXCEEDED</span></td><td>图片尺寸/像素超出限制</td></tr>
+    <tr><td><span class="error-code">FK-553</span></td><td><span class="enum-name">UNSUPPORTED_IMAGE_FORMAT</span></td><td>不支持的图片格式</td></tr>
+    <tr><td><span class="error-code">FK-560</span></td><td><span class="enum-name">READ_ONLY_ERROR</span></td><td>存储处于只读模式，写操作被拒绝</td></tr>
+    <tr><td><span class="error-code">FK-561</span></td><td><span class="enum-name">ENCRYPT_ERROR</span></td><td>文件加密/解密失败</td></tr>
+    <tr><td><span class="error-code">FK-562</span></td><td><span class="enum-name">GZIP_ERROR</span></td><td>GZip 压缩/解压失败</td></tr>
+  </tbody>
+</table>
+
+<h2>File 模块异常类型</h2>
+<table class="api-table">
+  <thead><tr><th>异常类</th><th>包路径</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>VKFileException</code></td><td>file.exception</td><td>File 模块所有异常的基类，包含 <code>VKFileErrorCode</code></td></tr>
+  </tbody>
+</table>
+
+<h2>Config 模块错误码（VKConfigErrorCode）</h2>
+<table class="api-table">
+  <thead><tr><th>错误码</th><th>枚举</th><th>触发场景</th></tr></thead>
+  <tbody>
+    <tr><td><span class="error-code">CK-400</span></td><td><span class="enum-name">INVALID_ARGUMENT</span></td><td>传入参数非法</td></tr>
+    <tr><td><span class="error-code">CK-402</span></td><td><span class="enum-name">CONFIG_ERROR</span></td><td>配置自身错误</td></tr>
+    <tr><td><span class="error-code">CK-404</span></td><td><span class="enum-name">KEY_NOT_FOUND</span></td><td>必需配置项不存在</td></tr>
+    <tr><td><span class="error-code">CK-420</span></td><td><span class="enum-name">VALIDATION_ERROR</span></td><td>配置值未通过 Validator 校验</td></tr>
+    <tr><td><span class="error-code">CK-500</span></td><td><span class="enum-name">IO_ERROR</span></td><td>配置文件读取 IO 错误</td></tr>
+    <tr><td><span class="error-code">CK-510</span></td><td><span class="enum-name">PARSE_ERROR</span></td><td>配置文件解析失败（格式错误）</td></tr>
+  </tbody>
+</table>
+
+<h2>Config 模块异常类型</h2>
+<table class="api-table">
+  <thead><tr><th>异常类</th><th>包路径</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>VKConfigException</code></td><td>config.exception</td><td>Config 模块所有异常的基类，包含 <code>VKConfigErrorCode</code></td></tr>
+  </tbody>
+</table>
+
+<h2>获取错误码</h2>
+<pre><code><span class="cm">// VKException 及子类</span>
+<span class="kw">try</span> {
+    <span class="ty">Vostok</span>.Data.insert(entity);
+} <span class="kw">catch</span> (<span class="ty">VKException</span> e) {
+    <span class="ty">VKErrorCode</span> code = e.getCode();  <span class="cm">// 枚举值</span>
+    <span class="ty">String</span> msg = e.getMessage();
+    <span class="cm">// 例：code = SQL_CONSTRAINT, code.name() = "SQL_CONSTRAINT"</span>
+}
+
+<span class="cm">// VKFileException</span>
+<span class="kw">try</span> {
+    <span class="ty">Vostok</span>.File.read(<span class="st">"x.txt"</span>);
+} <span class="kw">catch</span> (<span class="ty">VKFileException</span> e) {
+    <span class="ty">VKFileErrorCode</span> code = e.getCode();
+    <span class="cm">// 例：code = NOT_FOUND</span>
+}
+
+<span class="cm">// VKConfigException</span>
+<span class="kw">try</span> {
+    <span class="ty">Vostok</span>.Config.getString(<span class="st">"required.key"</span>);
+} <span class="kw">catch</span> (<span class="ty">VKConfigException</span> e) {
+    <span class="ty">VKConfigErrorCode</span> code = e.getCode();
+}</code></pre>
+
+</div>
+</main>
+</body>
+</html>

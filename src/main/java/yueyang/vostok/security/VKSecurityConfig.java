@@ -14,6 +14,11 @@ public class VKSecurityConfig {
     private List<String> whitelistPatterns = new ArrayList<>();
     private List<String> blacklistPatterns = new ArrayList<>();
     private boolean failOnInvalidInput = true;
+    /**
+     * Ext7：是否开启安全扫描审计日志。
+     * true 时，每次扫描发现 unsafe 结果均通过 Vostok.Log.warn 输出，便于生产环境留存攻击记录。
+     */
+    private boolean auditLog = false;
 
     public boolean isEnabled() {
         return enabled;
@@ -115,6 +120,16 @@ public class VKSecurityConfig {
         return this;
     }
 
+    public boolean isAuditLog() {
+        return auditLog;
+    }
+
+    /** Ext7：开启/关闭安全扫描审计日志 */
+    public VKSecurityConfig auditLog(boolean auditLog) {
+        this.auditLog = auditLog;
+        return this;
+    }
+
     public VKSecurityConfig copy() {
         VKSecurityConfig c = new VKSecurityConfig();
         c.enabled = this.enabled;
@@ -127,6 +142,7 @@ public class VKSecurityConfig {
         c.whitelistPatterns = new ArrayList<>(this.whitelistPatterns);
         c.blacklistPatterns = new ArrayList<>(this.blacklistPatterns);
         c.failOnInvalidInput = this.failOnInvalidInput;
+        c.auditLog = this.auditLog;
         return c;
     }
 

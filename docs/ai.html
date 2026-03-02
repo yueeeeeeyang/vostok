@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.0.4 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="game.html"><span class="nav-icon">🎮</span>Game</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html" class="active"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">🤖 Vostok.AI</div>
+  <h1>AI 集成模块</h1>
+  <p class="desc">统一 AI 客户端，支持多模型注册与切换、会话管理（多轮对话）、JSON 结构化响应、流式输出、RAG 检索增强生成、向量检索、Tool Call 函数调用。</p>
+</div>
+
+<h2>初始化</h2>
+<pre><code><span class="ty">Vostok</span>.AI.init(<span class="kw">new</span> <span class="ty">VKAiConfig</span>());
+
+<span class="cm">// 注册模型</span>
+<span class="ty">Vostok</span>.AI.registerModel(<span class="st">"gpt4"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
+    .modelType(<span class="ty">VKAiModelType</span>.GPT4)
+    .apiKey(System.getenv(<span class="st">"OPENAI_KEY"</span>))
+    .baseUrl(<span class="st">"https://api.openai.com/v1"</span>)
+    .maxTokens(<span class="nu">4096</span>)
+    .temperature(<span class="nu">0.7</span>)
+);
+
+<span class="ty">Vostok</span>.AI.registerModel(<span class="st">"claude"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
+    .modelType(<span class="ty">VKAiModelType</span>.CLAUDE)
+    .apiKey(<span class="ty">System</span>.getenv(<span class="st">"ANTHROPIC_KEY"</span>))
+);</code></pre>
+
+<h2>单轮对话</h2>
+<pre><code><span class="cm">// 简单 Chat</span>
+<span class="ty">VKAiChatRequest</span> req = <span class="ty">VKAiChatRequest</span>.builder()
+    .model(<span class="st">"gpt4"</span>)
+    .userMessage(<span class="st">"用一句话解释量子纠缠"</span>)
+    .systemMessage(<span class="st">"你是一位物理学教授"</span>)
+    .build();
+
+<span class="ty">VKAiChatResponse</span> res = <span class="ty">Vostok</span>.AI.chat(req);
+<span class="ty">System</span>.out.println(res.content());
+
+<span class="cm">// 异步</span>
+<span class="ty">CompletableFuture</span>&lt;<span class="ty">VKAiChatResponse</span>&gt; future = <span class="ty">Vostok</span>.AI.chatAsync(req);</code></pre>
+
+<h2>JSON 结构化输出</h2>
+<pre><code><span class="kw">record</span> <span class="ty">Sentiment</span>(<span class="ty">String</span> label, <span class="kw">double</span> score) {}
+
+<span class="ty">Sentiment</span> result = <span class="ty">Vostok</span>.AI.chatJson(
+    <span class="ty">VKAiChatRequest</span>.builder()
+        .model(<span class="st">"gpt4"</span>)
+        .userMessage(<span class="st">"分析这段评论的情感：'这个产品太棒了！'"</span>)
+        .systemMessage(<span class="st">"返回 JSON: {\"label\": ..., \"score\": ...}"</span>)
+        .build(),
+    <span class="ty">Sentiment</span>.class
+);</code></pre>
+
+<h2>多轮会话</h2>
+<pre><code><span class="cm">// 创建会话（维护对话历史）</span>
+<span class="ty">VKAiSession</span> session = <span class="ty">Vostok</span>.AI.createSession(<span class="st">"gpt4"</span>);
+<span class="ty">String</span> sessionId = session.sessionId();
+
+<span class="cm">// 基于会话的对话（自动携带历史）</span>
+<span class="ty">String</span> reply1 = <span class="ty">Vostok</span>.AI.chatSession(sessionId, <span class="st">"Java 有哪些主要特性？"</span>);
+<span class="ty">String</span> reply2 = <span class="ty">Vostok</span>.AI.chatSession(sessionId, <span class="st">"它与 Go 有什么区别？"</span>);
+
+<span class="cm">// 查看历史消息</span>
+<span class="ty">List</span>&lt;<span class="ty">VKAiSessionMessage</span>&gt; history = <span class="ty">Vostok</span>.AI.sessionMessages(sessionId);
+
+<span class="cm">// 切换模型（保留历史）</span>
+<span class="ty">Vostok</span>.AI.switchSessionModel(sessionId, <span class="st">"claude"</span>);
+
+<span class="cm">// 删除会话</span>
+<span class="ty">Vostok</span>.AI.deleteSession(sessionId);</code></pre>
+
+<h2>生成 Embedding</h2>
+<pre><code><span class="ty">VKAiEmbedding</span> emb = <span class="ty">Vostok</span>.AI.embed(
+    <span class="ty">VKAiEmbeddingRequest</span>.builder()
+        .model(<span class="st">"text-embedding-ada-002"</span>)
+        .input(<span class="st">"Vostok 是一个 Java 框架"</span>)
+        .build()
+);
+<span class="ty">List</span>&lt;<span class="ty">Double</span>&gt; vector = emb.vector();</code></pre>
+
+<h2>向量存储与检索</h2>
+<pre><code><span class="cm">// 设置向量存储后端</span>
+<span class="ty">Vostok</span>.AI.setVectorStore(myPineconeStore);
+
+<span class="cm">// 存储文档</span>
+<span class="ty">Vostok</span>.AI.upsertVectorDocs(<span class="ty">List</span>.of(
+    <span class="ty">VKAiVectorDoc</span>.of(<span class="st">"doc-1"</span>, vector1, <span class="st">"Vostok 是..."</span>)
+));
+
+<span class="cm">// 向量相似度检索</span>
+<span class="ty">List</span>&lt;<span class="ty">VKAiVectorDoc</span>&gt; results = <span class="ty">Vostok</span>.AI.searchVector(queryVector, <span class="nu">5</span>);
+
+<span class="cm">// 关键词检索</span>
+<span class="ty">List</span>&lt;<span class="ty">VKAiVectorDoc</span>&gt; results = <span class="ty">Vostok</span>.AI.searchKeywords(<span class="st">"Java 框架"</span>, <span class="nu">5</span>);</code></pre>
+
+<h2>RAG（检索增强生成）</h2>
+<pre><code><span class="cm">// 1. 写入文档到 RAG 知识库</span>
+<span class="ty">Vostok</span>.AI.ingestRagDocument(
+    <span class="ty">VKAiRagIngestRequest</span>.builder()
+        .embeddingModel(<span class="st">"text-embedding-ada-002"</span>)
+        .docId(<span class="st">"vostok-readme"</span>)
+        .content(readmeText)
+        .chunkSize(<span class="nu">512</span>)
+        .build()
+);
+
+<span class="cm">// 2. RAG 查询</span>
+<span class="ty">VKAiRagResponse</span> ragRes = <span class="ty">Vostok</span>.AI.rag(
+    <span class="ty">VKAiRagRequest</span>.builder()
+        .model(<span class="st">"gpt4"</span>)
+        .embeddingModel(<span class="st">"text-embedding-ada-002"</span>)
+        .query(<span class="st">"Vostok 支持哪些缓存后端？"</span>)
+        .topK(<span class="nu">3</span>)
+        .build()
+);
+<span class="ty">System</span>.out.println(ragRes.answer());
+<span class="ty">System</span>.out.println(ragRes.sources());</code></pre>
+
+<h2>重排序（Rerank）</h2>
+<pre><code><span class="ty">VKAiRerankResponse</span> reranked = <span class="ty">Vostok</span>.AI.rerank(
+    <span class="ty">VKAiRerankRequest</span>.builder()
+        .model(<span class="st">"rerank-multilingual-v2.0"</span>)
+        .query(<span class="st">"Java 框架"</span>)
+        .documents(candidateDocs)
+        .topN(<span class="nu">5</span>)
+        .build()
+);</code></pre>
+
+<h2>Tool Call（函数调用）</h2>
+<pre><code><span class="cm">// 注册工具函数</span>
+<span class="ty">Vostok</span>.AI.registerTool(<span class="ty">VKAiTool</span>.builder()
+    .name(<span class="st">"get_weather"</span>)
+    .description(<span class="st">"获取指定城市的实时天气"</span>)
+    .parameter(<span class="st">"city"</span>, <span class="st">"string"</span>, <span class="st">"城市名称"</span>, <span class="kw">true</span>)
+    .handler(args -&gt; fetchWeather(args.get(<span class="st">"city"</span>)))
+    .build());
+
+<span class="cm">// 发起支持工具调用的对话</span>
+<span class="ty">VKAiChatResponse</span> res = <span class="ty">Vostok</span>.AI.chat(
+    <span class="ty">VKAiChatRequest</span>.builder()
+        .model(<span class="st">"gpt4"</span>)
+        .userMessage(<span class="st">"北京今天天气怎么样？"</span>)
+        .enableTools(<span class="kw">true</span>)
+        .build()
+);</code></pre>
+
+<h2>API 速查</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>registerModel(name, config)</code></td><td>注册命名 AI 模型</td></tr>
+    <tr><td><code>chat(request)</code></td><td>同步单轮对话</td></tr>
+    <tr><td><code>chatAsync(request)</code></td><td>异步单轮对话</td></tr>
+    <tr><td><code>chatJson(request, Class)</code></td><td>对话并解析 JSON 结构</td></tr>
+    <tr><td><code>chatJsonAsync(request, Class)</code></td><td>异步对话解析 JSON</td></tr>
+    <tr><td><code>createSession(model)</code></td><td>创建多轮对话 Session</td></tr>
+    <tr><td><code>chatSession(sessionId, text)</code></td><td>基于 Session 的对话</td></tr>
+    <tr><td><code>sessionMessages(sessionId)</code></td><td>获取会话历史消息</td></tr>
+    <tr><td><code>switchSessionModel(sessionId, model)</code></td><td>切换会话使用的模型</td></tr>
+    <tr><td><code>deleteSession(sessionId)</code></td><td>删除会话</td></tr>
+    <tr><td><code>embed(request)</code></td><td>生成文本 Embedding 向量</td></tr>
+    <tr><td><code>rerank(request)</code></td><td>文档重排序</td></tr>
+    <tr><td><code>setVectorStore(store)</code></td><td>设置向量数据库后端</td></tr>
+    <tr><td><code>upsertVectorDocs(docs)</code></td><td>写入向量文档</td></tr>
+    <tr><td><code>searchVector(vector, topK)</code></td><td>向量相似度检索</td></tr>
+    <tr><td><code>searchKeywords(query, topK)</code></td><td>关键词检索</td></tr>
+    <tr><td><code>ingestRagDocument(request)</code></td><td>向 RAG 知识库写入文档</td></tr>
+    <tr><td><code>rag(request)</code></td><td>RAG 检索增强对话</td></tr>
+    <tr><td><code>registerTool(tool)</code></td><td>注册 Tool Call 函数</td></tr>
+    <tr><td><code>clearTools()</code></td><td>清除所有注册工具</td></tr>
+    <tr><td><code>setMemoryStore(store)</code></td><td>自定义 Session 持久化存储</td></tr>
+  </tbody>
+</table>
+
+</div>
+</main>
+</body>
+</html>
