@@ -47,10 +47,16 @@
   <p class="desc">统一文件访问抽象层，默认实现为本地文件系统，支持文本/字节读写、流式传输、目录管理、压缩解压、图片缩略图、文件加密、目录监听、目录迁移，可扩展为对象存储（S3/OSS）等后端。</p>
 </div>
 
-<h2>初始化</h2>
-<p>通过 <code>VKFileConfig</code> 链式配置后调用 <code>Vostok.File.init()</code>。未调用 init 时，首次使用会懒加载，以 JAR 所在目录下的 <code>vkfiles/</code> 作为根目录。</p>
-<pre><code><span class="cm">// 显式初始化（推荐）</span>
-<span class="ty">Vostok</span>.init(cfg -&gt; cfg
+<h2>初始化（可选）</h2>
+
+<h3>零配置启动（默认行为）</h3>
+<pre><code><span class="cm">// 无需任何初始化——直接使用即可。
+// 首次操作时自动以本地文件系统启动，根目录为 JAR 所在目录下的 vkfiles/。</span>
+<span class="ty">Vostok</span>.File.write(<span class="st">"config/app.conf"</span>, <span class="st">"key=value"</span>);
+<span class="ty">String</span> text = <span class="ty">Vostok</span>.File.read(<span class="st">"config/app.conf"</span>);</code></pre>
+
+<h3>显式初始化</h3>
+<pre><code><span class="ty">Vostok</span>.init(cfg -&gt; cfg
     .fileConfig(<span class="kw">new</span> <span class="ty">VKFileConfig</span>()
         .baseDir(<span class="st">"./data/files"</span>)
         .charset(<span class="ty">StandardCharsets</span>.UTF_8)
@@ -60,9 +66,13 @@
     )
 );</code></pre>
 
-<div class="callout info">
-  <div class="callout-title">懒加载</div>
-  未调用 <code>init()</code> 时，首次调用任意 File API 会自动以默认配置初始化。初始化是线程安全且幂等的，重复调用 <code>init()</code> 会关闭并重建默认后端。
+<div class="callout tip">
+  <div class="callout-title">零配置启动</div>
+  File 模块无需显式初始化。首次调用任意文件操作时，若尚未初始化，将自动以本地文件系统后端启动：
+  根目录为 JAR 所在目录下的 <code>vkfiles/</code>（IDE/解压部署时为 class 目录下的 <code>vkfiles/</code>），
+  编码 <code>UTF-8</code>，其余参数取默认值。
+  如需自定义根目录、编码或其他参数，在首次调用前调用 <code>init(VKFileConfig)</code> 即可。
+  初始化是线程安全且幂等的，重复调用 <code>init()</code> 会关闭并重建默认后端。
 </div>
 
 <h2>文本读写</h2>

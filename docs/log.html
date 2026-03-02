@@ -44,11 +44,18 @@
 <div class="page-header">
   <div class="module-tag">📋 Vostok.Log</div>
   <h1>Log 异步日志模块</h1>
-  <p class="desc">高性能异步日志，支持文件滚动（按大小/时间）、压缩归档、MDC 上下文、命名 Logger、ANSI 彩色控制台输出，写入前经队列缓冲，不阻塞业务线程。</p>
+  <p class="desc">高性能异步日志，支持文件滚动（按大小/时间）、GZIP 压缩归档、MDC 上下文、命名 Logger（每个 Logger 独立文件）、ANSI 彩色控制台、可插拔格式化器、ERROR 告警回调、运行时级别热切换。写入前经队列缓冲，不阻塞业务线程。</p>
 </div>
 
-<h2>初始化</h2>
-<pre><code><span class="cm">// 使用默认配置（INFO 级别，输出到 ./logs）</span>
+<h2>初始化（可选）</h2>
+
+<h3>零配置启动（默认行为）</h3>
+<pre><code><span class="cm">// 无需任何初始化——直接使用即可。
+// 首次写日志时自动启动，日志输出到 JAR 所在目录下的 vklogs/，INFO 级别。</span>
+<span class="ty">Vostok</span>.Log.info(<span class="st">"server started"</span>);</code></pre>
+
+<h3>显式初始化</h3>
+<pre><code><span class="cm">// 使用内置默认配置</span>
 <span class="ty">Vostok</span>.Log.init();
 
 <span class="cm">// 自定义配置</span>
@@ -56,100 +63,411 @@
     .level(<span class="ty">VKLogLevel</span>.DEBUG)
     .outputDir(<span class="st">"logs"</span>)
     .filePrefix(<span class="st">"app"</span>)
-    .consoleEnabled(<span class="kw">true</span>)
-    .consoleColor(<span class="kw">true</span>)
-    .maxFileSizeBytes(<span class="nu">100</span> * <span class="nu">1024</span> * <span class="nu">1024</span>)  <span class="cm">// 100 MB 滚动</span>
-    .maxBackups(<span class="nu">10</span>)
+    .maxFileSizeMb(<span class="num">64</span>)             <span class="cm">// 64 MB 按大小滚动</span>
+    .maxBackups(<span class="num">20</span>)
+    .maxBackupDays(<span class="num">30</span>)
     .rollInterval(<span class="ty">VKLogRollInterval</span>.DAILY)
     .compressRolledFiles(<span class="kw">true</span>)
-    .queueCapacity(<span class="nu">65536</span>)
+    .consoleEnabled(<span class="kw">true</span>)
+    .consoleColor(<span class="kw">true</span>)
+    .queueCapacity(<span class="num">32768</span>)
+    .queueFullPolicy(<span class="ty">VKLogQueueFullPolicy</span>.DROP)
+    .flushIntervalMs(<span class="num">1000</span>)
 );</code></pre>
 
 <div class="callout tip">
-  <div class="callout-title">懒加载</div>
-  未显式调用 <code>init()</code> 时，首次写日志会自动以默认配置初始化，无需提前调用。
+  <div class="callout-title">零配置启动</div>
+  Log 模块无需显式初始化。首次写日志时，若尚未初始化，将自动以默认配置启动：
+  日志目录为 JAR 所在目录下的 <code>vklogs/</code>（IDE 运行时为 class 目录下的 <code>vklogs/</code>），
+  INFO 级别，开启控制台输出，自动 GZIP 压缩，所有命名 Logger 共用单文件（<code>autoCreateLoggerSink=false</code>）。
+  如需独立配置，在首次写日志前调用 <code>init(VKLogConfig)</code> 即可。
+  JVM 退出时会自动 flush 并关闭所有日志队列。
 </div>
 
 <h2>写日志</h2>
 
-<h3>静态 API（自动推断调用者名称）</h3>
+<h3>静态 API（自动以调用方类名作为 logger 名）</h3>
 <pre><code><span class="ty">Vostok</span>.Log.trace(<span class="st">"entering method"</span>);
 <span class="ty">Vostok</span>.Log.debug(<span class="st">"config loaded: {}"</span>, configPath);
 <span class="ty">Vostok</span>.Log.info(<span class="st">"server started on port {}"</span>, port);
 <span class="ty">Vostok</span>.Log.warn(<span class="st">"slow query: {} ms"</span>, elapsed);
-<span class="ty">Vostok</span>.Log.error(<span class="st">"failed to connect"</span>, exception);</code></pre>
+<span class="ty">Vostok</span>.Log.error(<span class="st">"failed to connect"</span>);
+<span class="ty">Vostok</span>.Log.error(<span class="st">"connect failed: {}"</span>, host, exception);  <span class="cm">// 最后一个 Throwable 参数自动识别</span>
+<span class="ty">Vostok</span>.Log.error(<span class="st">"payment failed"</span>, exception);             <span class="cm">// 单独传 Throwable</span></code></pre>
+
+<p>占位符为 SLF4J 风格 <code>{}</code>，多余参数追加在末尾（<code>[value]</code>），不足时占位符保留原样。</p>
+
+<h3>级别检查（高频路径防护）</h3>
+<pre><code><span class="cm">// 避免在级别未启用时执行昂贵的参数计算</span>
+<span class="kw">if</span> (<span class="ty">Vostok</span>.Log.isDebugEnabled()) {
+    <span class="ty">Vostok</span>.Log.debug(<span class="st">"state: {}"</span>, computeExpensiveState());
+}</code></pre>
 
 <h3>命名 Logger</h3>
-<pre><code><span class="cm">// 获取命名 Logger</span>
+<p>命名 Logger 将日志路由到独立文件（当 <code>autoCreateLoggerSink=true</code> 时）。同名 Logger 返回相同实例（缓存复用）。</p>
+<pre><code><span class="cm">// 获取命名 Logger（两种写法等价）</span>
 <span class="ty">VKLogger</span> log = <span class="ty">Vostok</span>.Log.logger(<span class="st">"payment"</span>);
+<span class="ty">VKLogger</span> log = <span class="ty">Vostok</span>.Log.getLogger(<span class="st">"payment"</span>);
 
 log.info(<span class="st">"processing order {}"</span>, orderId);
 log.warn(<span class="st">"retry #{}"</span>, retryCount);
-log.error(<span class="st">"payment failed"</span>, ex);</code></pre>
+log.error(<span class="st">"payment failed"</span>, ex);
+
+<span class="cm">// 高频路径防护</span>
+<span class="kw">if</span> (log.isDebugEnabled()) {
+    log.debug(<span class="st">"detail: {}"</span>, detail());
+}</code></pre>
+
+<p><code>VKLogger</code> 提供与静态 API 完全相同的方法集：</p>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>name()</code></td><td>返回此 Logger 的名称</td></tr>
+    <tr><td><code>isTraceEnabled()</code> / <code>isDebugEnabled()</code> / …</td><td>级别检查</td></tr>
+    <tr><td><code>trace/debug/info/warn/error(msg)</code></td><td>纯消息日志</td></tr>
+    <tr><td><code>trace/debug/info/warn/error(template, args...)</code></td><td>模板日志（<code>{}</code> 占位符）</td></tr>
+    <tr><td><code>error(msg, Throwable)</code></td><td>附带异常栈的 ERROR 日志</td></tr>
+  </tbody>
+</table>
 
 <h2>MDC（映射诊断上下文）</h2>
-<pre><code><span class="cm">// 设置 MDC，后续日志自动携带这些字段</span>
-<span class="ty">Vostok</span>.Log.mdc(<span class="st">"requestId"</span>, requestId);
-<span class="ty">Vostok</span>.Log.mdc(<span class="st">"userId"</span>, userId);
+<p>MDC 通过 <code>VKLogMDC</code> 类直接操作，写入的键值对会自动注入到当前线程后续所有日志中。</p>
+<pre><code><span class="cm">// 设置当前线程 MDC 键值</span>
+<span class="ty">VKLogMDC</span>.put(<span class="st">"requestId"</span>, requestId);
+<span class="ty">VKLogMDC</span>.put(<span class="st">"userId"</span>, userId);
 
-<span class="ty">Vostok</span>.Log.info(<span class="st">"handling request"</span>);  <span class="cm">// 自动包含 requestId / userId</span>
+<span class="ty">Vostok</span>.Log.info(<span class="st">"handling request"</span>);  <span class="cm">// 日志自动包含 requestId / userId</span>
 
-<span class="cm">// 作用域 MDC（自动清理）</span>
-<span class="ty">Vostok</span>.Log.mdc(<span class="ty">Map</span>.of(<span class="st">"traceId"</span>, traceId), () -&gt; {
-    <span class="ty">Vostok</span>.Log.info(<span class="st">"inside scope"</span>);
-});
+<span class="cm">// 移除单个键</span>
+<span class="ty">VKLogMDC</span>.remove(<span class="st">"userId"</span>);
 
-<span class="cm">// 手动清理</span>
-<span class="ty">Vostok</span>.Log.mdcClear();</code></pre>
+<span class="cm">// 读取当前线程 MDC 值</span>
+<span class="ty">String</span> rid = <span class="ty">VKLogMDC</span>.get(<span class="st">"requestId"</span>);
 
-<h2>动态调整日志级别</h2>
-<pre><code><span class="ty">Vostok</span>.Log.setLevel(<span class="ty">VKLogLevel</span>.DEBUG);  <span class="cm">// 热切换，无需重启</span></code></pre>
+<span class="cm">// 获取全部 MDC 快照（只读视图）</span>
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; snapshot = <span class="ty">VKLogMDC</span>.getAll();
 
-<h2>刷盘</h2>
-<pre><code><span class="ty">Vostok</span>.Log.flush();     <span class="cm">// 刷新当前默认 Logger 队列</span>
-<span class="ty">Vostok</span>.Log.flushAll();  <span class="cm">// 刷新所有 Logger 队列</span></code></pre>
+<span class="cm">// 批量设置（常用于跨线程传播）</span>
+<span class="ty">VKLogMDC</span>.putAll(snapshot);
+
+<span class="cm">// 清除当前线程全部 MDC（请求结束时务必调用，防止线程复用时上下文泄漏）</span>
+<span class="ty">VKLogMDC</span>.clear();</code></pre>
+
+<h3>Web 请求中的典型用法</h3>
+<pre><code><span class="cm">// 在拦截器 / 过滤器中</span>
+<span class="ty">VKLogMDC</span>.put(<span class="st">"requestId"</span>, ctx.requestId());
+<span class="ty">VKLogMDC</span>.put(<span class="st">"userId"</span>, <span class="ty">String</span>.valueOf(ctx.userId()));
+<span class="kw">try</span> {
+    handle(ctx);
+} <span class="kw">finally</span> {
+    <span class="ty">VKLogMDC</span>.clear();  <span class="cm">// 必须清除，防止泄漏到下一个请求</span>
+}</code></pre>
+
+<h3>跨线程传播 MDC</h3>
+<pre><code><span class="cm">// 在提交任务前捕获快照</span>
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; snapshot = <span class="ty">VKLogMDC</span>.getAll();
+executor.submit(() -&gt; {
+    <span class="ty">VKLogMDC</span>.putAll(snapshot);  <span class="cm">// 在子线程中恢复 MDC</span>
+    <span class="kw">try</span> {
+        doWork();
+    } <span class="kw">finally</span> {
+        <span class="ty">VKLogMDC</span>.clear();
+    }
+});</code></pre>
+
+<h2>命名 Logger 路由</h2>
+<p>每个命名 Logger 的日志路由策略由 <code>autoCreateLoggerSink</code> 控制：</p>
+<table class="api-table">
+  <thead><tr><th>autoCreateLoggerSink</th><th>throwOnUnknownLogger</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>true</code>（默认）</td><td>—</td><td>未注册的 logger 自动创建独立文件 sink（文件名为 <code>&lt;filePrefix&gt;-&lt;loggerName&gt;.log</code>）</td></tr>
+    <tr><td><code>false</code></td><td><code>false</code>（默认）</td><td>未注册的 logger 路由到默认 sink（单文件模式）</td></tr>
+    <tr><td><code>false</code></td><td><code>true</code></td><td>未注册的 logger 抛 <code>IllegalArgumentException</code>（严格注册模式）</td></tr>
+  </tbody>
+</table>
+
+<h3>预注册 Logger 并指定独立配置</h3>
+<pre><code><span class="ty">Vostok</span>.Log.init(<span class="kw">new</span> <span class="ty">VKLogConfig</span>()
+    .outputDir(<span class="st">"logs"</span>)
+    .level(<span class="ty">VKLogLevel</span>.INFO)
+    .autoCreateLoggerSink(<span class="kw">false</span>)   <span class="cm">// 关闭自动创建，使用严格注册模式</span>
+    .throwOnUnknownLogger(<span class="kw">true</span>)    <span class="cm">// 调用未注册 logger 时抛异常</span>
+
+    <span class="cm">// 仅预注册名称，使用全局配置</span>
+    .registerLogger(<span class="st">"payment"</span>)
+    .registerLoggers(<span class="st">"order"</span>, <span class="st">"inventory"</span>)
+
+    <span class="cm">// 预注册并指定独立的 sink 配置</span>
+    .registerLogger(<span class="st">"audit"</span>, <span class="kw">new</span> <span class="ty">VKLogSinkConfig</span>()
+        .outputDir(<span class="st">"logs/audit"</span>)
+        .filePrefix(<span class="st">"audit"</span>)
+        .level(<span class="ty">VKLogLevel</span>.DEBUG)
+        .rollInterval(<span class="ty">VKLogRollInterval</span>.HOURLY)
+        .compressRolledFiles(<span class="kw">true</span>)
+    )
+);</code></pre>
+
+<h2>动态配置（运行时热切换）</h2>
+<p>以下方法无需重启，实时生效，会推送到所有现有 sink：</p>
+<pre><code><span class="cm">// 修改全局日志级别</span>
+<span class="ty">Vostok</span>.Log.setLevel(<span class="ty">VKLogLevel</span>.DEBUG);
+
+<span class="cm">// 修改指定命名 Logger 的级别（不影响其他 Logger）</span>
+<span class="ty">Vostok</span>.Log.setLevel(<span class="st">"payment"</span>, <span class="ty">VKLogLevel</span>.TRACE);
+
+<span class="cm">// 查询当前全局级别</span>
+<span class="ty">VKLogLevel</span> lv = <span class="ty">Vostok</span>.Log.level();
+
+<span class="cm">// 其他运行时修改（不常用，但支持）</span>
+<span class="ty">Vostok</span>.Log.setConsoleEnabled(<span class="kw">true</span>);
+<span class="ty">Vostok</span>.Log.setConsoleColor(<span class="kw">true</span>);
+<span class="ty">Vostok</span>.Log.setMaxFileSizeMb(<span class="num">128</span>);
+<span class="ty">Vostok</span>.Log.setMaxBackups(<span class="num">30</span>);
+<span class="ty">Vostok</span>.Log.setMaxBackupDays(<span class="num">7</span>);
+<span class="ty">Vostok</span>.Log.setRollInterval(<span class="ty">VKLogRollInterval</span>.HOURLY);
+<span class="ty">Vostok</span>.Log.setCompressRolledFiles(<span class="kw">true</span>);
+<span class="ty">Vostok</span>.Log.setQueueFullPolicy(<span class="ty">VKLogQueueFullPolicy</span>.BLOCK);
+<span class="ty">Vostok</span>.Log.setFlushIntervalMs(<span class="num">500</span>);
+<span class="ty">Vostok</span>.Log.setFormatter(myFormatter);
+<span class="ty">Vostok</span>.Log.setErrorListener(myListener);</code></pre>
+
+<h2>自定义格式化器</h2>
+<p><code>VKLogFormatter</code> 是函数式接口，可完全自定义输出格式。默认格式为：<code>yyyy-MM-dd HH:mm:ss.SSS [LEVEL] [loggerName] {mdc} message</code>。</p>
+<pre><code><span class="cm">// JSON 格式示例</span>
+<span class="ty">VKLogFormatter</span> jsonFmt = (level, loggerName, msg, t, ts, mdc) -&gt; {
+    <span class="ty">StringBuilder</span> sb = <span class="kw">new</span> <span class="ty">StringBuilder</span>();
+    sb.append(<span class="st">"{\"ts\":"</span>).append(ts)
+      .append(<span class="st">",\"level\":\""</span>).append(level).append(<span class="st">"\""</span>)
+      .append(<span class="st">",\"logger\":\""</span>).append(loggerName).append(<span class="st">"\""</span>)
+      .append(<span class="st">",\"msg\":\""</span>).append(msg).append(<span class="st">"\""</span>);
+    <span class="kw">if</span> (!mdc.isEmpty()) {
+        sb.append(<span class="st">",\"mdc\":"</span>).append(mdc);
+    }
+    sb.append(<span class="st">"}\n"</span>);
+    <span class="kw">return</span> sb.toString();
+};
+
+<span class="ty">Vostok</span>.Log.init(<span class="kw">new</span> <span class="ty">VKLogConfig</span>()
+    .outputDir(<span class="st">"logs"</span>)
+    .formatter(jsonFmt)           <span class="cm">// 全局格式化器</span>
+);
+
+<span class="cm">// 或运行时动态修改</span>
+<span class="ty">Vostok</span>.Log.setFormatter(jsonFmt);
+<span class="ty">Vostok</span>.Log.setFormatter(<span class="kw">null</span>);  <span class="cm">// 传 null 恢复默认格式</span></code></pre>
+
+<p><code>VKLogFormatter.format()</code> 参数说明：</p>
+<table class="api-table">
+  <thead><tr><th>参数</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>level</code></td><td>VKLogLevel</td><td>日志级别</td></tr>
+    <tr><td><code>loggerName</code></td><td>String</td><td>Logger 名称（命名 Logger 名 或 调用方类名）</td></tr>
+    <tr><td><code>msg</code></td><td>String</td><td>已完成 <code>{}</code> 替换的消息</td></tr>
+    <tr><td><code>t</code></td><td>Throwable</td><td>关联异常，可为 null</td></tr>
+    <tr><td><code>ts</code></td><td>long</td><td>事件时间戳（epoch millis）</td></tr>
+    <tr><td><code>mdc</code></td><td>Map&lt;String,String&gt;</td><td>MDC 上下文快照（不可修改），无上下文时为空 Map</td></tr>
+  </tbody>
+</table>
+
+<h2>ERROR 告警回调</h2>
+<p>每次写入 ERROR 日志后，在 worker 线程上调用 <code>VKLogErrorListener</code>。实现必须非阻塞、低延迟，不可执行 IO 或网络请求。</p>
+<pre><code><span class="ty">Vostok</span>.Log.init(<span class="kw">new</span> <span class="ty">VKLogConfig</span>()
+    .outputDir(<span class="st">"logs"</span>)
+    .errorListener((loggerName, message, error, timestamp) -&gt; {
+        <span class="cm">// 投递到独立告警队列，避免阻塞 worker 线程</span>
+        alertQueue.offer(<span class="kw">new</span> AlertEvent(loggerName, message, timestamp));
+    })
+);</code></pre>
+
+<h2>刷盘与关闭</h2>
+<pre><code><span class="cm">// 刷新所有 logger 队列（等待异步写入完成）</span>
+<span class="ty">Vostok</span>.Log.flush();
+
+<span class="cm">// 关闭日志系统，等待队列清空（JVM 退出时自动调用）</span>
+<span class="ty">Vostok</span>.Log.close();
+<span class="ty">Vostok</span>.Log.shutdown();  <span class="cm">// close() 的别名</span>
+
+<span class="cm">// 重新初始化（替换配置，重建所有 sink）</span>
+<span class="ty">Vostok</span>.Log.reinit(<span class="kw">new</span> <span class="ty">VKLogConfig</span>().level(<span class="ty">VKLogLevel</span>.WARN));
+
+<span class="cm">// 重置为默认配置</span>
+<span class="ty">Vostok</span>.Log.resetDefaults();</code></pre>
+
+<h2>监控指标</h2>
+<pre><code><span class="cm">// 因队列满而丢弃的日志条数（DROP 策略时）</span>
+<span class="kw">long</span> dropped = <span class="ty">Vostok</span>.Log.droppedLogs();
+
+<span class="cm">// 队列满时同步写入的次数（SYNC_FALLBACK 策略时）</span>
+<span class="kw">long</span> fallback = <span class="ty">Vostok</span>.Log.fallbackWrites();
+
+<span class="cm">// 文件写入错误次数（磁盘满等 IO 异常）</span>
+<span class="kw">long</span> writeErrors = <span class="ty">Vostok</span>.Log.fileWriteErrors();
+
+<span class="cm">// 当前排队等待异步 GZIP 压缩的文件数（等于 0 表示压缩全部完成）</span>
+<span class="kw">int</span> pending = <span class="ty">Vostok</span>.Log.pendingCompressions();</code></pre>
 
 <h2>配置参数</h2>
 <table class="config-table">
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">基础</td></tr>
     <tr><td class="param-name">level</td><td>VKLogLevel</td><td>INFO</td><td>全局日志级别（TRACE/DEBUG/INFO/WARN/ERROR）</td></tr>
-    <tr><td class="param-name">outputDir</td><td>String</td><td>"logs"</td><td>日志文件输出目录</td></tr>
-    <tr><td class="param-name">filePrefix</td><td>String</td><td>"vostok"</td><td>日志文件名前缀</td></tr>
-    <tr><td class="param-name">maxFileSizeBytes</td><td>long</td><td>100MB</td><td>单文件最大大小，超出后滚动</td></tr>
-    <tr><td class="param-name">maxBackups</td><td>int</td><td>10</td><td>保留历史文件数量</td></tr>
+    <tr><td class="param-name">outputDir</td><td>String</td><td>"logs"</td><td>日志文件输出目录（懒加载默认为 JAR 所在目录/vklogs）</td></tr>
+    <tr><td class="param-name">filePrefix</td><td>String</td><td>"vostok"</td><td>日志文件名前缀，命名 Logger 文件名为 <code>&lt;prefix&gt;-&lt;name&gt;.log</code></td></tr>
+    <tr><td class="param-name">defaultLoggerName</td><td>String</td><td>"app"</td><td>静态 API 使用的默认 Logger 名</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">滚动与归档</td></tr>
+    <tr><td class="param-name">maxFileSizeBytes</td><td>long</td><td>64 MB</td><td>单文件最大大小，超出后滚动（也可用 <code>maxFileSizeMb()</code> 设置）</td></tr>
+    <tr><td class="param-name">rollInterval</td><td>VKLogRollInterval</td><td>DAILY</td><td>按时间滚动：NONE / HOURLY / DAILY / WEEKLY，与大小滚动同时生效</td></tr>
+    <tr><td class="param-name">maxBackups</td><td>int</td><td>20</td><td>保留历史文件数量</td></tr>
     <tr><td class="param-name">maxBackupDays</td><td>int</td><td>30</td><td>历史文件保留天数</td></tr>
-    <tr><td class="param-name">maxTotalSizeBytes</td><td>long</td><td>1GB</td><td>历史文件总大小上限</td></tr>
-    <tr><td class="param-name">rollInterval</td><td>VKLogRollInterval</td><td>DAILY</td><td>按时间滚动：HOURLY / DAILY / WEEKLY</td></tr>
-    <tr><td class="param-name">compressRolledFiles</td><td>boolean</td><td>false</td><td>归档文件异步 GZIP 压缩</td></tr>
-    <tr><td class="param-name">consoleEnabled</td><td>boolean</td><td>false</td><td>同时输出到控制台</td></tr>
-    <tr><td class="param-name">consoleColor</td><td>boolean</td><td>false</td><td>控制台 ANSI 彩色输出</td></tr>
-    <tr><td class="param-name">queueCapacity</td><td>int</td><td>32768</td><td>异步队列容量</td></tr>
+    <tr><td class="param-name">maxTotalSizeBytes</td><td>long</td><td>1 GB</td><td>历史文件总大小上限（也可用 <code>maxTotalSizeMb()</code> 设置）</td></tr>
+    <tr><td class="param-name">compressRolledFiles</td><td>boolean</td><td>false</td><td>归档文件异步 GZIP 压缩（懒加载默认 true）</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">控制台</td></tr>
+    <tr><td class="param-name">consoleEnabled</td><td>boolean</td><td>true</td><td>同时输出到控制台（System.out）</td></tr>
+    <tr><td class="param-name">consoleColor</td><td>boolean</td><td>false</td><td>控制台 ANSI 彩色（TRACE=灰/DEBUG=青/INFO=绿/WARN=黄/ERROR=红）</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">异步队列</td></tr>
+    <tr><td class="param-name">queueCapacity</td><td>int</td><td>32768</td><td>异步队列容量（每个 sink 独立）</td></tr>
     <tr><td class="param-name">queueFullPolicy</td><td>VKLogQueueFullPolicy</td><td>DROP</td><td>队列满时策略：DROP / BLOCK / SYNC_FALLBACK</td></tr>
-    <tr><td class="param-name">flushIntervalMs</td><td>long</td><td>500</td><td>自动刷盘间隔（ms）</td></tr>
+    <tr><td class="param-name">flushIntervalMs</td><td>long</td><td>1000</td><td>自动刷盘间隔（ms）</td></tr>
+    <tr><td class="param-name">flushBatchSize</td><td>int</td><td>256</td><td>每次 flush 最多消费的日志条数</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">可靠性</td></tr>
     <tr><td class="param-name">fsyncPolicy</td><td>VKLogFsyncPolicy</td><td>NEVER</td><td>fsync 策略：NEVER / EVERY_FLUSH / EVERY_WRITE</td></tr>
-    <tr><td class="param-name">formatter</td><td>VKLogFormatter</td><td>默认格式</td><td>自定义日志格式化器</td></tr>
-    <tr><td class="param-name">errorListener</td><td>VKLogErrorListener</td><td>—</td><td>ERROR 级别事件回调</td></tr>
+    <tr><td class="param-name">shutdownTimeoutMs</td><td>long</td><td>5000</td><td>关闭时等待队列清空的超时时间（ms）</td></tr>
+    <tr><td class="param-name">fileRetryIntervalMs</td><td>long</td><td>3000</td><td>文件写入失败后的重试间隔（ms）</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">命名 Logger 路由</td></tr>
+    <tr><td class="param-name">autoCreateLoggerSink</td><td>boolean</td><td>true</td><td>是否为未注册的命名 Logger 自动创建独立文件 sink</td></tr>
+    <tr><td class="param-name">throwOnUnknownLogger</td><td>boolean</td><td>false</td><td>autoCreateLoggerSink=false 时，未注册的 logger 是否抛异常</td></tr>
+    <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">扩展</td></tr>
+    <tr><td class="param-name">formatter</td><td>VKLogFormatter</td><td>null（内置格式）</td><td>自定义日志格式化器（函数式接口），null 表示使用默认格式</td></tr>
+    <tr><td class="param-name">errorListener</td><td>VKLogErrorListener</td><td>null（禁用）</td><td>ERROR 级别事件回调（函数式接口），在 worker 线程调用，必须非阻塞</td></tr>
+  </tbody>
+</table>
+
+<h2>枚举说明</h2>
+
+<h3>VKLogQueueFullPolicy</h3>
+<table class="api-table">
+  <thead><tr><th>枚举值</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>DROP</code></td><td>队列满时丢弃当前日志（默认，不阻塞业务线程）</td></tr>
+    <tr><td><code>BLOCK</code></td><td>队列满时阻塞业务线程直到有空位</td></tr>
+    <tr><td><code>SYNC_FALLBACK</code></td><td>队列满时在业务线程上同步写入文件</td></tr>
+  </tbody>
+</table>
+
+<h3>VKLogFsyncPolicy</h3>
+<table class="api-table">
+  <thead><tr><th>枚举值</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>NEVER</code></td><td>不调用 fsync，依赖 OS 刷盘（默认，性能最高）</td></tr>
+    <tr><td><code>EVERY_FLUSH</code></td><td>每次批量 flush 后调用一次 fsync</td></tr>
+    <tr><td><code>EVERY_WRITE</code></td><td>每条日志写入后立即 fsync（最安全，性能最低）</td></tr>
+  </tbody>
+</table>
+
+<h3>VKLogRollInterval</h3>
+<table class="api-table">
+  <thead><tr><th>枚举值</th><th>行为</th></tr></thead>
+  <tbody>
+    <tr><td><code>NONE</code></td><td>不按时间滚动，仅按文件大小滚动</td></tr>
+    <tr><td><code>HOURLY</code></td><td>按小时滚动，整点触发</td></tr>
+    <tr><td><code>DAILY</code></td><td>按天滚动（默认），每日零点触发</td></tr>
+    <tr><td><code>WEEKLY</code></td><td>按周滚动，每周一零点触发（ISO 周）</td></tr>
   </tbody>
 </table>
 
 <h2>API 速查</h2>
+
+<h3>初始化与生命周期</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>init()</code></td><td>void</td><td>以内置默认配置显式初始化</td></tr>
+    <tr><td><code>init(VKLogConfig)</code></td><td>void</td><td>显式初始化（已初始化时幂等，不重复初始化）</td></tr>
+    <tr><td><code>reinit(VKLogConfig)</code></td><td>void</td><td>重新初始化（替换配置，重建所有 sink）</td></tr>
+    <tr><td><code>resetDefaults()</code></td><td>void</td><td>重置为默认配置并重新初始化</td></tr>
+    <tr><td><code>initialized()</code></td><td>boolean</td><td>是否已初始化</td></tr>
+    <tr><td><code>flush()</code></td><td>void</td><td>刷新所有 logger 队列</td></tr>
+    <tr><td><code>close()</code></td><td>void</td><td>关闭日志系统，等待队列清空（JVM 退出时自动调用）</td></tr>
+    <tr><td><code>shutdown()</code></td><td>void</td><td><code>close()</code> 的别名</td></tr>
+  </tbody>
+</table>
+
+<h3>静态日志 API</h3>
 <table class="api-table">
   <thead><tr><th>方法</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>trace(msg, args...)</code></td><td>TRACE 级别日志</td></tr>
-    <tr><td><code>debug(msg, args...)</code></td><td>DEBUG 级别日志</td></tr>
-    <tr><td><code>info(msg, args...)</code></td><td>INFO 级别日志</td></tr>
-    <tr><td><code>warn(msg, args...)</code></td><td>WARN 级别日志</td></tr>
+    <tr><td><code>trace(msg)</code> / <code>trace(template, args...)</code></td><td>TRACE 级别日志</td></tr>
+    <tr><td><code>debug(msg)</code> / <code>debug(template, args...)</code></td><td>DEBUG 级别日志</td></tr>
+    <tr><td><code>info(msg)</code> / <code>info(template, args...)</code></td><td>INFO 级别日志</td></tr>
+    <tr><td><code>warn(msg)</code> / <code>warn(template, args...)</code></td><td>WARN 级别日志</td></tr>
+    <tr><td><code>error(msg)</code> / <code>error(template, args...)</code></td><td>ERROR 级别日志</td></tr>
     <tr><td><code>error(msg, Throwable)</code></td><td>ERROR 级别日志（含异常栈）</td></tr>
-    <tr><td><code>logger(name)</code></td><td>获取命名 Logger 实例</td></tr>
-    <tr><td><code>mdc(key, value)</code></td><td>设置 MDC 键值</td></tr>
-    <tr><td><code>mdc(map, Runnable)</code></td><td>作用域 MDC</td></tr>
-    <tr><td><code>mdcClear()</code></td><td>清理当前线程 MDC</td></tr>
-    <tr><td><code>setLevel(VKLogLevel)</code></td><td>动态修改全局日志级别</td></tr>
-    <tr><td><code>flush()</code></td><td>刷新默认 Logger 队列</td></tr>
-    <tr><td><code>flushAll()</code></td><td>刷新所有 Logger 队列</td></tr>
-    <tr><td><code>close()</code></td><td>关闭日志系统，等待队列清空</td></tr>
+    <tr><td><code>isTraceEnabled()</code> … <code>isErrorEnabled()</code></td><td>全局级别检查</td></tr>
+    <tr><td><code>level()</code></td><td>获取当前全局日志级别</td></tr>
+  </tbody>
+</table>
+
+<h3>命名 Logger</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>logger(name)</code></td><td>VKLogger</td><td>获取命名 Logger 实例（缓存复用）</td></tr>
+    <tr><td><code>getLogger(name)</code></td><td>VKLogger</td><td><code>logger(name)</code> 的别名</td></tr>
+  </tbody>
+</table>
+
+<h3>动态配置</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>setLevel(VKLogLevel)</code></td><td>修改全局日志级别（热切换）</td></tr>
+    <tr><td><code>setLevel(loggerName, VKLogLevel)</code></td><td>修改指定命名 Logger 的级别</td></tr>
+    <tr><td><code>setOutputDir(dir)</code></td><td>修改日志输出目录</td></tr>
+    <tr><td><code>setFilePrefix(prefix)</code></td><td>修改文件名前缀</td></tr>
+    <tr><td><code>setMaxFileSizeMb(mb)</code></td><td>修改单文件最大大小（MB）</td></tr>
+    <tr><td><code>setMaxFileSizeBytes(bytes)</code></td><td>修改单文件最大大小（字节）</td></tr>
+    <tr><td><code>setMaxBackups(n)</code></td><td>修改保留备份数</td></tr>
+    <tr><td><code>setMaxBackupDays(days)</code></td><td>修改备份保留天数</td></tr>
+    <tr><td><code>setMaxTotalSizeMb(mb)</code></td><td>修改历史文件总大小上限（MB）</td></tr>
+    <tr><td><code>setConsoleEnabled(bool)</code></td><td>开启/关闭控制台输出</td></tr>
+    <tr><td><code>setConsoleColor(bool)</code></td><td>开启/关闭控制台 ANSI 彩色</td></tr>
+    <tr><td><code>setRollInterval(interval)</code></td><td>修改时间滚动策略</td></tr>
+    <tr><td><code>setCompressRolledFiles(bool)</code></td><td>开启/关闭归档压缩</td></tr>
+    <tr><td><code>setQueueFullPolicy(policy)</code></td><td>修改队列满策略</td></tr>
+    <tr><td><code>setQueueCapacity(n)</code></td><td>修改队列容量</td></tr>
+    <tr><td><code>setFlushIntervalMs(ms)</code></td><td>修改自动刷盘间隔</td></tr>
+    <tr><td><code>setFlushBatchSize(n)</code></td><td>修改每次 flush 批量大小</td></tr>
+    <tr><td><code>setShutdownTimeoutMs(ms)</code></td><td>修改关闭等待超时</td></tr>
+    <tr><td><code>setFsyncPolicy(policy)</code></td><td>修改 fsync 策略</td></tr>
+    <tr><td><code>setFileRetryIntervalMs(ms)</code></td><td>修改文件写入重试间隔</td></tr>
+    <tr><td><code>setFormatter(VKLogFormatter)</code></td><td>修改格式化器（null 恢复默认格式）</td></tr>
+    <tr><td><code>setErrorListener(VKLogErrorListener)</code></td><td>修改 ERROR 告警回调（null 禁用）</td></tr>
+    <tr><td><code>setThrowOnUnknownLogger(bool)</code></td><td>修改未注册 Logger 是否抛异常</td></tr>
+  </tbody>
+</table>
+
+<h3>MDC（VKLogMDC 类）</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>VKLogMDC.put(key, value)</code></td><td>void</td><td>设置当前线程 MDC 键值</td></tr>
+    <tr><td><code>VKLogMDC.putAll(map)</code></td><td>void</td><td>批量设置（跨线程传播时使用）</td></tr>
+    <tr><td><code>VKLogMDC.get(key)</code></td><td>String</td><td>读取指定键的值，不存在时返回 null</td></tr>
+    <tr><td><code>VKLogMDC.getAll()</code></td><td>Map&lt;String,String&gt;</td><td>获取全部 MDC 只读快照</td></tr>
+    <tr><td><code>VKLogMDC.remove(key)</code></td><td>void</td><td>移除指定键</td></tr>
+    <tr><td><code>VKLogMDC.clear()</code></td><td>void</td><td>清除当前线程全部 MDC（请求结束时务必调用）</td></tr>
+  </tbody>
+</table>
+
+<h3>监控指标</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>droppedLogs()</code></td><td>long</td><td>因队列满丢弃的日志条数（DROP 策略）</td></tr>
+    <tr><td><code>fallbackWrites()</code></td><td>long</td><td>队列满时同步写入的次数（SYNC_FALLBACK 策略）</td></tr>
+    <tr><td><code>fileWriteErrors()</code></td><td>long</td><td>文件写入错误次数</td></tr>
+    <tr><td><code>pendingCompressions()</code></td><td>int</td><td>等待异步 GZIP 压缩的文件数，为 0 表示全部完成</td></tr>
   </tbody>
 </table>
 
