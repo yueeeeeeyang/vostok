@@ -17,6 +17,24 @@ public class VKAiChatRequest {
     private Integer historyMaxMessages;
     private Integer historyMaxChars;
 
+    /**
+     * Ext 4：结构化输出格式。
+     * 可选值："json_object"（通用 JSON 模式）或 "json_schema"（需配合 responseJsonSchema）。
+     * 为 null 时不向 provider 传递 response_format。
+     */
+    private String responseFormat;
+
+    /**
+     * Ext 4：当 responseFormat 为 "json_schema" 时使用的 JSON Schema 字符串（完整 JSON）。
+     */
+    private String responseJsonSchema;
+
+    /**
+     * Ext 7：本次请求的 token 预算（completion + prompt 合计上限）。
+     * 为 null 时使用全局配置 tokenBudgetPerRequest；为 0 时禁用预算检查。
+     */
+    private Integer tokenBudgetTokens;
+
     public String getSystemPrompt() {
         return systemPrompt;
     }
@@ -123,6 +141,51 @@ public class VKAiChatRequest {
 
     public VKAiChatRequest historyMaxChars(Integer historyMaxChars) {
         this.historyMaxChars = historyMaxChars;
+        return this;
+    }
+
+    // Ext 4：结构化输出
+
+    public String getResponseFormat() {
+        return responseFormat;
+    }
+
+    /**
+     * 设置 response_format.type。
+     * "json_object" = 通用 JSON 输出（无 schema 校验）。
+     * "json_schema" = 按 responseJsonSchema 约束输出（需调用 responseJsonSchema() 配合）。
+     */
+    public VKAiChatRequest responseFormat(String responseFormat) {
+        this.responseFormat = responseFormat;
+        return this;
+    }
+
+    public String getResponseJsonSchema() {
+        return responseJsonSchema;
+    }
+
+    /**
+     * 设置 JSON Schema（JSON 字符串），与 responseFormat("json_schema") 配合使用（Ext 4）。
+     * 示例：{"name":"my_schema","strict":true,"schema":{...}}
+     */
+    public VKAiChatRequest responseJsonSchema(String responseJsonSchema) {
+        this.responseJsonSchema = responseJsonSchema;
+        return this;
+    }
+
+    // Ext 7：token 预算
+
+    public Integer getTokenBudgetTokens() {
+        return tokenBudgetTokens;
+    }
+
+    /**
+     * 设置本请求的 token 预算上限（Ext 7）。
+     * 若实际消耗 totalTokens 超过此值，将抛出 TOKEN_BUDGET_EXCEEDED 异常。
+     * 设为 0 表示不限制（覆盖全局配置）。
+     */
+    public VKAiChatRequest tokenBudgetTokens(Integer tokenBudgetTokens) {
+        this.tokenBudgetTokens = tokenBudgetTokens;
         return this;
     }
 }

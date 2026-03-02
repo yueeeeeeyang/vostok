@@ -1,5 +1,8 @@
 package yueyang.vostok.ai.rag;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
+
 public class VKAiRagRequest {
     private String chatModel;
     private String embeddingModel;
@@ -18,6 +21,13 @@ public class VKAiRagRequest {
     private int contextMaxCharsPerChunk = 280;
     private int contextMaxChars = 1800;
     private String systemPrompt;
+
+    /**
+     * Ext 5：元数据过滤条件（AND 语义）。
+     * 向量检索和关键词检索均只返回 metadata 匹配所有条目的文档。
+     * 为 null 或空时不过滤。
+     */
+    private Map<String, String> metadataFilter;
 
     public String getChatModel() {
         return chatModel;
@@ -169,6 +179,27 @@ public class VKAiRagRequest {
 
     public VKAiRagRequest systemPrompt(String systemPrompt) {
         this.systemPrompt = systemPrompt;
+        return this;
+    }
+
+    // Ext 5：元数据过滤
+
+    public Map<String, String> getMetadataFilter() {
+        return metadataFilter == null ? null : Map.copyOf(metadataFilter);
+    }
+
+    public VKAiRagRequest metadataFilter(Map<String, String> filter) {
+        this.metadataFilter = filter == null ? null : new LinkedHashMap<>(filter);
+        return this;
+    }
+
+    public VKAiRagRequest metadataFilter(String key, String value) {
+        if (this.metadataFilter == null) {
+            this.metadataFilter = new LinkedHashMap<>();
+        }
+        if (key != null && value != null) {
+            this.metadataFilter.put(key, value);
+        }
         return this;
     }
 }

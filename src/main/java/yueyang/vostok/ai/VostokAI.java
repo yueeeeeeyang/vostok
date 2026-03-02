@@ -1,6 +1,7 @@
 package yueyang.vostok.ai;
 
 import yueyang.vostok.ai.core.VKAiRuntime;
+import yueyang.vostok.ai.prompt.VKAiPromptTemplate;
 import yueyang.vostok.ai.provider.VKAiModelConfig;
 import yueyang.vostok.ai.rag.VKAiEmbedding;
 import yueyang.vostok.ai.rag.VKAiEmbeddingRequest;
@@ -17,6 +18,9 @@ import yueyang.vostok.ai.tool.VKAiTool;
 import yueyang.vostok.ai.tool.VKAiToolCall;
 import yueyang.vostok.ai.tool.VKAiToolCallResult;
 
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
 public class VostokAI {
@@ -24,6 +28,10 @@ public class VostokAI {
 
     protected VostokAI() {
     }
+
+    // -------------------------------------------------------------------------
+    // 生命周期
+    // -------------------------------------------------------------------------
 
     public static void init() {
         RUNTIME.init(new VKAiConfig());
@@ -49,9 +57,17 @@ public class VostokAI {
         RUNTIME.close();
     }
 
+    // -------------------------------------------------------------------------
+    // 模型注册
+    // -------------------------------------------------------------------------
+
     public static void registerModel(String name, VKAiModelConfig config) {
         RUNTIME.registerModel(name, config);
     }
+
+    // -------------------------------------------------------------------------
+    // 会话管理
+    // -------------------------------------------------------------------------
 
     public static void setMemoryStore(VKAiMemoryStore store) {
         RUNTIME.setMemoryStore(store);
@@ -69,7 +85,7 @@ public class VostokAI {
         return RUNTIME.switchSessionModel(sessionId, model);
     }
 
-    public static java.util.List<VKAiSessionMessage> sessionMessages(String sessionId) {
+    public static List<VKAiSessionMessage> sessionMessages(String sessionId) {
         return RUNTIME.sessionMessages(sessionId);
     }
 
@@ -80,6 +96,18 @@ public class VostokAI {
     public static void deleteSession(String sessionId) {
         RUNTIME.deleteSession(sessionId);
     }
+
+    /**
+     * 更新会话 metadata（Ext 6）。
+     * 返回更新后的 VKAiSession 对象。
+     */
+    public static VKAiSession updateSessionMetadata(String sessionId, Map<String, String> metadata) {
+        return RUNTIME.updateSessionMetadata(sessionId, metadata);
+    }
+
+    // -------------------------------------------------------------------------
+    // Chat
+    // -------------------------------------------------------------------------
 
     public static VKAiChatResponse chat(VKAiChatRequest request) {
         return RUNTIME.chat(request);
@@ -97,7 +125,11 @@ public class VostokAI {
         return RUNTIME.chatJsonAsync(request, type);
     }
 
-    public static java.util.List<VKAiEmbedding> embed(VKAiEmbeddingRequest request) {
+    // -------------------------------------------------------------------------
+    // Embedding & Rerank
+    // -------------------------------------------------------------------------
+
+    public static List<VKAiEmbedding> embed(VKAiEmbeddingRequest request) {
         return RUNTIME.embed(request);
     }
 
@@ -105,25 +137,33 @@ public class VostokAI {
         return RUNTIME.rerank(request);
     }
 
+    // -------------------------------------------------------------------------
+    // Vector Store
+    // -------------------------------------------------------------------------
+
     public static void setVectorStore(VKAiVectorStore store) {
         RUNTIME.setVectorStore(store);
     }
 
-    public static void upsertVectorDocs(java.util.List<VKAiVectorDoc> docs) {
+    public static void upsertVectorDocs(List<VKAiVectorDoc> docs) {
         RUNTIME.upsertVectorDocs(docs);
     }
 
-    public static java.util.List<VKAiVectorHit> searchVector(java.util.List<Double> queryVector, int topK) {
+    public static List<VKAiVectorHit> searchVector(List<Double> queryVector, int topK) {
         return RUNTIME.searchVector(queryVector, topK);
     }
 
-    public static java.util.List<VKAiVectorHit> searchKeywords(String query, int topK) {
+    public static List<VKAiVectorHit> searchKeywords(String query, int topK) {
         return RUNTIME.searchKeywords(query, topK);
     }
 
     public static void clearVectorStore() {
         RUNTIME.clearVectorStore();
     }
+
+    // -------------------------------------------------------------------------
+    // RAG
+    // -------------------------------------------------------------------------
 
     public static VKAiRagIngestResult ingestRagDocument(VKAiRagIngestRequest request) {
         return RUNTIME.ingestRagDocument(request);
@@ -141,6 +181,10 @@ public class VostokAI {
         RUNTIME.healthCheckRag(embeddingModel, rerankModel, includeRerank);
     }
 
+    // -------------------------------------------------------------------------
+    // Tool Calling
+    // -------------------------------------------------------------------------
+
     public static void registerTool(VKAiTool tool) {
         RUNTIME.registerTool(tool);
     }
@@ -149,7 +193,7 @@ public class VostokAI {
         RUNTIME.clearTools();
     }
 
-    public static java.util.Set<String> toolNames() {
+    public static Set<String> toolNames() {
         return RUNTIME.toolNames();
     }
 
@@ -157,7 +201,37 @@ public class VostokAI {
         return RUNTIME.callTool(call, null, null);
     }
 
-    public static java.util.List<VKAiAuditRecord> audits(int limit) {
+    // -------------------------------------------------------------------------
+    // Ext 3：Prompt 模板注册中心
+    // -------------------------------------------------------------------------
+
+    /**
+     * 注册 Prompt 模板（Ext 3）。
+     */
+    public static void registerPrompt(VKAiPromptTemplate template) {
+        RUNTIME.registerPrompt(template);
+    }
+
+    /**
+     * 渲染已注册的 Prompt 模板（Ext 3）。
+     * 返回 {"system": "...", "user": "..."} 映射，可直接用于构建 VKAiChatRequest。
+     */
+    public static Map<String, String> renderPrompt(String name, Map<String, ?> vars) {
+        return RUNTIME.renderPrompt(name, vars);
+    }
+
+    /**
+     * 返回所有已注册的 Prompt 模板名称（Ext 3）。
+     */
+    public static Set<String> promptNames() {
+        return RUNTIME.promptNames();
+    }
+
+    // -------------------------------------------------------------------------
+    // Audit & Metrics
+    // -------------------------------------------------------------------------
+
+    public static List<VKAiAuditRecord> audits(int limit) {
         return RUNTIME.audits(limit);
     }
 

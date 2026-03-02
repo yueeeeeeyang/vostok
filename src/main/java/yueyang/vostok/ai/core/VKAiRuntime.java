@@ -42,9 +42,13 @@ import yueyang.vostok.http.exception.VKHttpErrorCode;
 import yueyang.vostok.http.exception.VKHttpException;
 import yueyang.vostok.util.json.VKJson;
 
+import yueyang.vostok.ai.prompt.VKAiPromptRegistry;
+import yueyang.vostok.ai.prompt.VKAiPromptTemplate;
+
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -52,6 +56,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
@@ -61,7 +67,16 @@ public final class VKAiRuntime {
     private static final Object LOCK = new Object();
     private static final VKAiRuntime INSTANCE = new VKAiRuntime();
 
+    // Bug 8 修复：专用 IO 线程池，避免异步调用阻塞 ForkJoinPool.commonPool
+    private static final ExecutorService AI_IO_EXECUTOR = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "vk-ai-io");
+        t.setDaemon(true);
+        return t;
+    });
+
     private final ConcurrentHashMap<String, VKAiModelConfig> models = new ConcurrentHashMap<>();
+    // Perf 6：按 ModelType 维护反向索引，resolveModel 无需全量遍历
+    private final ConcurrentHashMap<VKAiModelType, Set<String>> modelNamesByType = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> providerHttpClients = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, VKAiTool> tools = new ConcurrentHashMap<>();
     private final ArrayDeque<VKAiAuditRecord> auditRecords = new ArrayDeque<>();
@@ -71,6 +86,12 @@ public final class VKAiRuntime {
     private final ConcurrentHashMap<String, String> latestVersionByDoc = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, String> chunkFingerprintById = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, AtomicLong> fingerprintRefCounts = new ConcurrentHashMap<>();
+    // Bug 3 修复：fingerprint → 归一化向量缓存，dedup 时复用已有 embedding 而非丢弃
+    private final ConcurrentHashMap<String, List<Double>> fingerprintToVector = new ConcurrentHashMap<>();
+    // Bug 4 修复：per-session 锁，防止并发 chatSession 产生相同 seq
+    private final ConcurrentHashMap<String, Object> chatSessionLocks = new ConcurrentHashMap<>();
+    // Ext 3：Prompt 模板注册中心
+    private final VKAiPromptRegistry promptRegistry = new VKAiPromptRegistry();
 
     private final AtomicLong totalCalls = new AtomicLong();
     private final AtomicLong successCalls = new AtomicLong();
@@ -110,6 +131,10 @@ public final class VKAiRuntime {
             config = cfg == null ? new VKAiConfig() : cfg.copy();
             initialized = true;
             providerHttpClients.clear();
+            models.clear();
+            modelNamesByType.clear();
+            // Bug 6 修复：reinit 重置向量库，与 RAG 索引元数据保持一致
+            vectorStore = new VKAiInMemoryVectorStore();
             resetMetrics();
             clearAudits();
             clearRagIndexes();
@@ -127,15 +152,20 @@ public final class VKAiRuntime {
     public void close() {
         synchronized (LOCK) {
             models.clear();
+            modelNamesByType.clear();
             providerHttpClients.clear();
             tools.clear();
             clearAudits();
             clearRagIndexes();
+            // Bug 6 修复：close 同步重置向量库，防止旧数据泄漏到下次 init
+            vectorStore = new VKAiInMemoryVectorStore();
             try {
                 memoryStore.close();
             } catch (Throwable ignore) {
             }
             memoryStore = new VKAiInMemoryMemoryStore();
+            promptRegistry.clear();
+            chatSessionLocks.clear();
             resetMetrics();
             config = new VKAiConfig();
             initialized = false;
@@ -170,7 +200,18 @@ public final class VKAiRuntime {
             }
             cfg = cfg.copy().path(defaultPath);
         }
-        models.put(name.trim(), cfg.copy());
+        String trimmedName = name.trim();
+        // 若覆盖旧 model，先从旧 type 的索引中移除
+        VKAiModelConfig old = models.get(trimmedName);
+        if (old != null && old.getType() != null) {
+            Set<String> oldSet = modelNamesByType.get(old.getType());
+            if (oldSet != null) {
+                oldSet.remove(trimmedName);
+            }
+        }
+        models.put(trimmedName, cfg.copy());
+        // Perf 6：维护反向索引
+        modelNamesByType.computeIfAbsent(cfg.getType(), k -> ConcurrentHashMap.newKeySet()).add(trimmedName);
         providerHttpClients.clear();
     }
 
@@ -205,12 +246,46 @@ public final class VKAiRuntime {
 
     public VKAiChatResponse chatSession(String sessionId, String userText) {
         ensureInit();
-        return VKAiSessionOps.chatSession(memoryStore, sessionId, userText, this::chat);
+        // Bug 4 修复：per-session 锁防止并发 chatSession 计算出相同 seq
+        Object lock = chatSessionLocks.computeIfAbsent(
+                sessionId != null ? sessionId : "", k -> new Object());
+        synchronized (lock) {
+            return VKAiSessionOps.chatSession(memoryStore, sessionId, userText, this::chat);
+        }
     }
 
     public void deleteSession(String sessionId) {
         ensureInit();
         VKAiSessionOps.deleteSession(memoryStore, sessionId);
+        // 删除会话后清理对应的 per-session 锁，避免 map 无限增长
+        if (sessionId != null && !sessionId.isBlank()) {
+            chatSessionLocks.remove(sessionId);
+        }
+    }
+
+    // Ext 6：更新会话 metadata
+    public VKAiSession updateSessionMetadata(String sessionId, java.util.Map<String, String> metadata) {
+        ensureInit();
+        return VKAiSessionOps.updateSessionMetadata(memoryStore, sessionId, metadata);
+    }
+
+    // Ext 3：Prompt 模板注册中心
+
+    public void registerPrompt(VKAiPromptTemplate template) {
+        ensureInit();
+        if (template == null) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Prompt template is null");
+        }
+        promptRegistry.register(template);
+    }
+
+    public java.util.Map<String, String> renderPrompt(String name, java.util.Map<String, ?> vars) {
+        ensureInit();
+        return promptRegistry.render(name, vars);
+    }
+
+    public Set<String> promptNames() {
+        return promptRegistry.names();
     }
 
     public void registerTool(VKAiTool tool) {
@@ -230,6 +305,8 @@ public final class VKAiRuntime {
     }
 
     public void setVectorStore(VKAiVectorStore store) {
+        // Bug 7 修复：与 setMemoryStore 保持一致，必须先初始化才能设置向量库
+        ensureInit();
         if (store == null) {
             throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "VKAiVectorStore is null");
         }
@@ -275,31 +352,75 @@ public final class VKAiRuntime {
             return new VKAiRagIngestResult(docId, version, 0, 0, 0, List.of());
         }
 
-        List<VKAiEmbedding> embeddings = embed(new VKAiEmbeddingRequest()
-                .model(request.getModel())
-                .inputs(chunks));
-        if (embeddings.size() != chunks.size()) {
+        // Bug 3 修复：分两步处理 dedup，先计算 fingerprint 并找出哪些块需要重新 embed
+        // batchSeenForEmbed：记录本批次已安排 embed 的 fingerprint，防止批次内同指纹重复调用 API
+        String[] fingerprints = new String[chunks.size()];
+        List<Integer> toEmbedIndices = new ArrayList<>(chunks.size());
+        List<String> toEmbedTexts = new ArrayList<>(chunks.size());
+        Set<String> batchSeenForEmbed = new HashSet<>();
+        for (int i = 0; i < chunks.size(); i++) {
+            String fp = VKAiRagOps.sha256Hex(VKAiRagOps.normalizeForDedup(chunks.get(i)));
+            fingerprints[i] = fp;
+            // 若 dedup 开启且已有跨调用缓存向量或批次内已安排 embed，则跳过 embed API 调用
+            if (!request.isDeduplicate() || (!fingerprintToVector.containsKey(fp) && batchSeenForEmbed.add(fp))) {
+                toEmbedIndices.add(i);
+                toEmbedTexts.add(chunks.get(i));
+                batchSeenForEmbed.add(fp);
+            }
+        }
+
+        // 仅对无缓存的块调用 embed API
+        List<VKAiEmbedding> embeddings = toEmbedTexts.isEmpty() ? List.of()
+                : embed(new VKAiEmbeddingRequest().model(request.getModel()).inputs(toEmbedTexts));
+        if (embeddings.size() != toEmbedTexts.size()) {
             throw new VKAiException(VKAiErrorCode.SERIALIZATION_ERROR, "Embedding result size mismatch for RAG ingest");
+        }
+
+        // 建立 chunkIndex → vector 的映射（仅新 embed 的块）
+        Map<Integer, List<Double>> embeddingByChunkIdx = new HashMap<>(toEmbedIndices.size() * 2);
+        for (int j = 0; j < toEmbedIndices.size(); j++) {
+            embeddingByChunkIdx.put(toEmbedIndices.get(j), embeddings.get(j).getVector());
         }
 
         List<VKAiVectorDoc> docs = new ArrayList<>(chunks.size());
         List<String> insertedChunkIds = new ArrayList<>(chunks.size());
         int skipped = 0;
+        // batchInsertedFingerprints：记录本批次已插入 vectorStore 的 fingerprint，dedup 时跳过重复插入
+        Set<String> batchInsertedFingerprints = new HashSet<>();
         for (int i = 0; i < chunks.size(); i++) {
             String chunk = chunks.get(i);
-            String fingerprint = VKAiRagOps.sha256Hex(VKAiRagOps.normalizeForDedup(chunk));
-            if (request.isDeduplicate() && fingerprintRefCounts.containsKey(fingerprint)) {
+            String fingerprint = fingerprints[i];
+            String chunkId = docId + ":" + version + ":" + i;
+
+            // dedup 开启时，批次内重复 fingerprint 跳过插入（不同文档/版本的相同 fingerprint 不受此限制）
+            if (request.isDeduplicate() && !batchInsertedFingerprints.add(fingerprint)) {
                 skipped++;
                 continue;
             }
 
-            String chunkId = docId + ":" + version + ":" + i;
+            List<Double> vector;
+            if (embeddingByChunkIdx.containsKey(i)) {
+                // 新 embed：缓存到 fingerprintToVector 供后续跨调用 dedup 复用
+                vector = embeddingByChunkIdx.get(i);
+                fingerprintToVector.putIfAbsent(fingerprint, vector);
+            } else {
+                // 跨调用 dedup 命中：复用已有向量，避免重复 API 调用
+                vector = fingerprintToVector.get(fingerprint);
+                if (vector == null) {
+                    // 极端情况：缓存被并发清除，降级为重新 embed
+                    List<VKAiEmbedding> fallback = embed(new VKAiEmbeddingRequest()
+                            .model(request.getModel()).input(chunk));
+                    vector = fallback.isEmpty() ? List.of() : fallback.get(0).getVector();
+                    fingerprintToVector.putIfAbsent(fingerprint, vector);
+                }
+            }
+
             Map<String, String> metadata = new LinkedHashMap<>(request.getMetadata());
             metadata.put("vk_doc_id", docId);
             metadata.put("vk_doc_version", version);
             metadata.put("vk_chunk_index", String.valueOf(i));
             metadata.put("vk_chunk_size", String.valueOf(chunk.length()));
-            docs.add(new VKAiVectorDoc(chunkId, chunk, embeddings.get(i).getVector(), metadata));
+            docs.add(new VKAiVectorDoc(chunkId, chunk, vector, metadata));
             insertedChunkIds.add(chunkId);
 
             chunkFingerprintById.put(chunkId, fingerprint);
@@ -372,14 +493,21 @@ public final class VKAiRuntime {
         }
     }
 
+    /**
+     * 返回最近 limit 条 audit 记录。
+     * Bug 10 修复：limit <= 0 表示返回全部记录（不再因 limit=0 而静默返回空列表）。
+     */
     public List<VKAiAuditRecord> audits(int limit) {
-        int size = Math.max(0, limit);
         synchronized (auditRecords) {
-            if (size == 0 || auditRecords.isEmpty()) {
+            if (auditRecords.isEmpty()) {
                 return List.of();
             }
-            List<VKAiAuditRecord> out = new ArrayList<>(Math.min(size, auditRecords.size()));
-            int skip = Math.max(0, auditRecords.size() - size);
+            // limit <= 0 返回全部
+            if (limit <= 0) {
+                return List.copyOf(auditRecords);
+            }
+            List<VKAiAuditRecord> out = new ArrayList<>(Math.min(limit, auditRecords.size()));
+            int skip = Math.max(0, auditRecords.size() - limit);
             int i = 0;
             for (VKAiAuditRecord it : auditRecords) {
                 if (i++ < skip) {
@@ -442,93 +570,246 @@ public final class VKAiRuntime {
     }
 
     public CompletableFuture<VKAiChatResponse> chatAsync(VKAiChatRequest request) {
-        return CompletableFuture.supplyAsync(() -> chat(request));
+        // Bug 8 修复：使用专用 IO 线程池，避免阻塞 ForkJoinPool.commonPool
+        return CompletableFuture.supplyAsync(() -> chat(request), AI_IO_EXECUTOR);
     }
 
     public <T> CompletableFuture<T> chatJsonAsync(VKAiChatRequest request, Class<T> type) {
-        return CompletableFuture.supplyAsync(() -> chatJson(request, type));
+        // Bug 8 修复：同上
+        return CompletableFuture.supplyAsync(() -> chatJson(request, type), AI_IO_EXECUTOR);
     }
 
     private VKAiChatResponse chatNonStream(Resolved resolved, long start) {
-        int maxRetries = resolved.maxRetries;
-        for (int attempt = 0; ; attempt++) {
-            if (attempt > 0) {
-                retriedCalls.incrementAndGet();
-            }
-            try {
-                VKAiTransportOps.HttpResult response = VKAiTransportOps.executeHttpJson(
-                        providerHttpClients,
-                        resolved.clientName,
-                        resolved.url,
-                        resolved.headers,
-                        resolved.requestBody,
-                        resolved.connectTimeoutMs,
-                        resolved.readTimeoutMs,
-                        false,
-                        false
-                );
-                int status = response.statusCode();
-                statusCounts.computeIfAbsent(status, k -> new AtomicLong()).incrementAndGet();
+        // Ext 2：Agentic 工具循环所需的可追加消息列表（从原始 requestBody 解析出的 messages）
+        List<Map<String, Object>> agentMessages = null;
+        VKAiChatResponse lastResponse = null;
+        int agentLoops = 0;
+        int maxAgentLoops = (config.isAgentLoopEnabled() && config.isToolCallingEnabled())
+                ? config.getMaxAgentLoops() : 0;
 
-                if (shouldRetryByStatus(status, attempt, maxRetries)) {
-                    sleepBackoff(attempt);
-                    continue;
-                }
+        Resolved currentResolved = resolved;
 
-                if (resolved.failOnNon2xx && (status < 200 || status >= 300)) {
-                    recordFail(start, false, false);
-                    throw new VKAiException(VKAiErrorCode.HTTP_STATUS,
-                            "AI chat failed with status=" + status + ", body="
-                                    + VKAiRuntimeSupportOps.abbreviate(response.body(), 256), status);
+        outer:
+        while (true) {
+            int maxRetries = currentResolved.maxRetries;
+            for (int attempt = 0; ; attempt++) {
+                if (attempt > 0) {
+                    retriedCalls.incrementAndGet();
                 }
+                try {
+                    VKAiTransportOps.HttpResult response = VKAiTransportOps.executeHttpJson(
+                            providerHttpClients,
+                            currentResolved.clientName,
+                            currentResolved.url,
+                            currentResolved.headers,
+                            currentResolved.requestBody,
+                            currentResolved.connectTimeoutMs,
+                            currentResolved.readTimeoutMs,
+                            false,
+                            false
+                    );
+                    int status = response.statusCode();
+                    statusCounts.computeIfAbsent(status, k -> new AtomicLong()).incrementAndGet();
 
-                VKAiJsonOps.ParsedProviderResponse parsed = VKAiJsonOps.parseProviderResponse(response.body());
-                List<VKAiToolCallResult> toolResults = executeToolCalls(parsed.toolCalls(), resolved);
-
-                VKAiChatResponse chatResponse = new VKAiChatResponse(
-                        parsed.text(),
-                        parsed.finishReason(),
-                        parsed.usage(),
-                        System.currentTimeMillis() - start,
-                        parsed.providerRequestId(),
-                        status,
-                        toolResults
-                );
-
-                if (config.isMetricsEnabled()) {
-                    successCalls.incrementAndGet();
-                    totalCostMs.addAndGet(chatResponse.getLatencyMs());
-                    totalPromptTokens.addAndGet(chatResponse.getUsage().getPromptTokens());
-                    totalCompletionTokens.addAndGet(chatResponse.getUsage().getCompletionTokens());
-                    totalTokens.addAndGet(chatResponse.getUsage().getTotalTokens());
-                }
-                if (config.isLogEnabled()) {
-                    logCall(resolved, status, chatResponse.getLatencyMs(), attempt);
-                }
-                audit("CHAT_RESPONSE", resolved.clientName,
-                        "status=" + status + ", finishReason=" + chatResponse.getFinishReason() + ", toolCalls=" + toolResults.size());
-                return chatResponse;
-            } catch (VKAiException e) {
-                if (e.getCode() == VKAiErrorCode.HTTP_STATUS && shouldRetryByStatus(e.getStatusCode(), attempt, maxRetries)) {
-                    sleepBackoff(attempt);
-                    continue;
-                }
-                if (e.getCode() == VKAiErrorCode.TIMEOUT) {
-                    if (shouldRetryByTimeout(attempt, maxRetries)) {
+                    if (shouldRetryByStatus(status, attempt, maxRetries)) {
                         sleepBackoff(attempt);
                         continue;
                     }
-                    recordFail(start, true, false);
-                }
-                if (e.getCode() == VKAiErrorCode.NETWORK_ERROR) {
-                    if (shouldRetryByNetwork(attempt, maxRetries)) {
-                        sleepBackoff(attempt);
-                        continue;
+
+                    if (currentResolved.failOnNon2xx && (status < 200 || status >= 300)) {
+                        recordFail(start, false, false);
+                        throw new VKAiException(VKAiErrorCode.HTTP_STATUS,
+                                "AI chat failed with status=" + status + ", body="
+                                        + VKAiRuntimeSupportOps.abbreviate(response.body(), 256), status);
                     }
-                    recordFail(start, false, true);
+
+                    VKAiJsonOps.ParsedProviderResponse parsed = VKAiJsonOps.parseProviderResponse(response.body());
+
+                    // Ext 7：token 预算检查
+                    checkTokenBudget(resolved.tokenBudgetTokens, parsed.usage(), currentResolved.clientName);
+
+                    List<VKAiToolCallResult> toolResults = executeToolCalls(parsed.toolCalls(), currentResolved);
+
+                    VKAiChatResponse chatResponse = new VKAiChatResponse(
+                            parsed.text(),
+                            parsed.finishReason(),
+                            parsed.usage(),
+                            System.currentTimeMillis() - start,
+                            parsed.providerRequestId(),
+                            status,
+                            toolResults
+                    );
+
+                    if (config.isMetricsEnabled()) {
+                        successCalls.incrementAndGet();
+                        totalCostMs.addAndGet(chatResponse.getLatencyMs());
+                        totalPromptTokens.addAndGet(chatResponse.getUsage().getPromptTokens());
+                        totalCompletionTokens.addAndGet(chatResponse.getUsage().getCompletionTokens());
+                        totalTokens.addAndGet(chatResponse.getUsage().getTotalTokens());
+                    }
+                    if (config.isLogEnabled()) {
+                        logCall(currentResolved, status, chatResponse.getLatencyMs(), attempt);
+                    }
+                    audit("CHAT_RESPONSE", currentResolved.clientName,
+                            "status=" + status + ", finishReason=" + chatResponse.getFinishReason()
+                                    + ", toolCalls=" + toolResults.size()
+                                    + ", agentLoop=" + agentLoops);
+
+                    lastResponse = chatResponse;
+
+                    // Ext 2：Agentic 循环 — 若 finish_reason=tool_calls 且未超限则继续
+                    if ("tool_calls".equals(parsed.finishReason())
+                            && !parsed.toolCalls().isEmpty()
+                            && agentLoops < maxAgentLoops) {
+                        agentLoops++;
+                        // 延迟初始化 agentMessages
+                        if (agentMessages == null) {
+                            agentMessages = extractMessagesFromPayload(currentResolved.requestBody);
+                        }
+                        // 追加 assistant 消息（含 tool_calls）
+                        agentMessages.add(buildAssistantToolCallsMessage(parsed));
+                        // 追加每个 tool 结果消息
+                        for (VKAiToolCallResult tr : toolResults) {
+                            agentMessages.add(buildToolResultMessage(tr));
+                        }
+                        // 重建 payload 并继续循环
+                        currentResolved = rebuildResolved(currentResolved, agentMessages);
+                        continue outer;
+                    }
+                    break outer;
+
+                } catch (VKAiException e) {
+                    // Bug 2 修复：HTTP_STATUS 重试耗尽后必须 recordFail，不能静默 throw
+                    if (e.getCode() == VKAiErrorCode.HTTP_STATUS) {
+                        if (shouldRetryByStatus(e.getStatusCode(), attempt, maxRetries)) {
+                            sleepBackoff(attempt);
+                            continue;
+                        }
+                        recordFail(start, false, false);
+                    }
+                    if (e.getCode() == VKAiErrorCode.TIMEOUT) {
+                        if (shouldRetryByTimeout(attempt, maxRetries)) {
+                            sleepBackoff(attempt);
+                            continue;
+                        }
+                        recordFail(start, true, false);
+                    }
+                    if (e.getCode() == VKAiErrorCode.NETWORK_ERROR) {
+                        if (shouldRetryByNetwork(attempt, maxRetries)) {
+                            sleepBackoff(attempt);
+                            continue;
+                        }
+                        recordFail(start, false, true);
+                    }
+                    throw e;
                 }
-                throw e;
             }
+        }
+        return lastResponse;
+    }
+
+    // -------------------------------------------------------------------------
+    // Ext 2：Agentic 循环辅助方法
+    // -------------------------------------------------------------------------
+
+    /** 从已序列化的 requestBody JSON 中解析 messages 列表（用于 agent loop 追加消息）。 */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extractMessagesFromPayload(String requestBody) {
+        try {
+            Map<?, ?> root = VKJson.fromJson(requestBody, Map.class);
+            Object msgs = root.get("messages");
+            if (msgs instanceof List<?> list) {
+                List<Map<String, Object>> out = new ArrayList<>(list.size() + 4);
+                for (Object item : list) {
+                    if (item instanceof Map<?, ?> m) {
+                        Map<String, Object> copy = new LinkedHashMap<>();
+                        for (Map.Entry<?, ?> e : m.entrySet()) {
+                            if (e.getKey() != null) {
+                                copy.put(String.valueOf(e.getKey()), e.getValue());
+                            }
+                        }
+                        out.add(copy);
+                    }
+                }
+                return out;
+            }
+        } catch (Exception ignore) {
+        }
+        return new ArrayList<>();
+    }
+
+    /** 构造 OpenAI 格式的 assistant 消息（含 tool_calls 字段）。 */
+    private Map<String, Object> buildAssistantToolCallsMessage(VKAiJsonOps.ParsedProviderResponse parsed) {
+        List<Map<String, Object>> toolCallsList = new ArrayList<>();
+        for (yueyang.vostok.ai.tool.VKAiToolCall tc : parsed.toolCalls()) {
+            Map<String, Object> fn = new LinkedHashMap<>();
+            fn.put("name", tc.getName());
+            fn.put("arguments", tc.getArgumentsJson() == null ? "{}" : tc.getArgumentsJson());
+            Map<String, Object> tcMap = new LinkedHashMap<>();
+            tcMap.put("id", tc.getId() == null ? "" : tc.getId());
+            tcMap.put("type", "function");
+            tcMap.put("function", fn);
+            toolCallsList.add(tcMap);
+        }
+        Map<String, Object> msg = new LinkedHashMap<>();
+        msg.put("role", "assistant");
+        msg.put("content", parsed.text() == null ? "" : parsed.text());
+        msg.put("tool_calls", toolCallsList);
+        return msg;
+    }
+
+    /** 构造 OpenAI 格式的 tool result 消息。 */
+    private Map<String, Object> buildToolResultMessage(VKAiToolCallResult result) {
+        Map<String, Object> msg = new LinkedHashMap<>();
+        msg.put("role", "tool");
+        msg.put("tool_call_id", result.getCallId() == null ? "" : result.getCallId());
+        msg.put("content", result.getOutputJson() == null ? "{}" : result.getOutputJson());
+        return msg;
+    }
+
+    /** 用新消息列表重建 Resolved（保持其他字段不变，仅替换 requestBody）。 */
+    private Resolved rebuildResolved(Resolved base, List<Map<String, Object>> newMessages) {
+        try {
+            Map<?, ?> original = VKJson.fromJson(base.requestBody, Map.class);
+            Map<String, Object> newPayload = new LinkedHashMap<>();
+            for (Map.Entry<?, ?> e : original.entrySet()) {
+                if (e.getKey() != null && !"messages".equals(String.valueOf(e.getKey()))) {
+                    newPayload.put(String.valueOf(e.getKey()), e.getValue());
+                }
+            }
+            newPayload.put("messages", newMessages);
+            return new Resolved(
+                    base.clientName, base.model, base.url,
+                    base.systemPrompt, base.messages,
+                    VKJson.toJson(newPayload),
+                    base.headers, base.connectTimeoutMs, base.readTimeoutMs,
+                    base.maxRetries, base.failOnNon2xx, base.allowedTools,
+                    base.tokenBudgetTokens
+            );
+        } catch (Exception e) {
+            return base;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Ext 7：Token 预算检查
+    // -------------------------------------------------------------------------
+
+    private void checkTokenBudget(Integer requestBudget, VKAiUsage usage, String clientName) {
+        if (usage == null) {
+            return;
+        }
+        // 请求级预算优先；0 = 不限制
+        int budget = requestBudget != null ? requestBudget : config.getTokenBudgetPerRequest();
+        if (budget <= 0) {
+            return;
+        }
+        int total = usage.getTotalTokens();
+        if (total > budget) {
+            audit("TOKEN_BUDGET_EXCEEDED", clientName,
+                    "budget=" + budget + ", actual=" + total);
+            throw new VKAiException(VKAiErrorCode.TOKEN_BUDGET_EXCEEDED,
+                    "Token budget exceeded: budget=" + budget + ", actual=" + total);
         }
     }
 
@@ -604,12 +885,24 @@ public final class VKAiRuntime {
                 statusCounts.computeIfAbsent(status, k -> new AtomicLong()).incrementAndGet();
 
                 long latency = System.currentTimeMillis() - start;
+                // Bug 1 修复：不在此处计 successCalls，改由 stream 的 terminateCallback 在流真正结束时触发
                 if (config.isMetricsEnabled()) {
-                    successCalls.incrementAndGet();
-                    totalCostMs.addAndGet(latency);
-                }
-                if (config.isLogEnabled()) {
-                    logCall(resolved, status, latency, attempt);
+                    final long streamStart = start;
+                    final Resolved resolvedRef = resolved;
+                    final int statusFinal = status;
+                    final int attemptFinal = attempt;
+                    stream.onTerminate(success -> {
+                        long streamLatency = System.currentTimeMillis() - streamStart;
+                        if (success) {
+                            successCalls.incrementAndGet();
+                        } else {
+                            recordFail(streamStart, false, false);
+                        }
+                        totalCostMs.addAndGet(streamLatency);
+                        if (config.isLogEnabled()) {
+                            logCall(resolvedRef, statusFinal, streamLatency, attemptFinal);
+                        }
+                    });
                 }
                 audit("CHAT_STREAM_RESPONSE", resolved.clientName, "status=" + status);
                 return new VKAiChatResponse(
@@ -699,6 +992,13 @@ public final class VKAiRuntime {
             if (finish != null) {
                 stream.setFinishReason(String.valueOf(finish));
             }
+            // Ext 1：累积流式 tool_calls delta（OpenAI streaming tool call 格式）
+            List<?> toolCallDeltas = VKAiJsonOps.asList(delta.get("tool_calls"));
+            for (Object tcRaw : toolCallDeltas) {
+                Map<?, ?> tcMap = VKAiJsonOps.asMap(tcRaw);
+                int tcIndex = VKAiJsonOps.asInt(tcMap.get("index"));
+                stream.accumulateToolCallDelta(tcIndex, tcMap);
+            }
         }
         Map<?, ?> usage = VKAiJsonOps.asMap(root.get("usage"));
         if (!usage.isEmpty()) {
@@ -751,7 +1051,8 @@ public final class VKAiRuntime {
             if (config.isRagCacheEnabled() && config.getEmbeddingCacheTtlMs() > 0) {
                 cacheSetString(cacheKey, responseBody, config.getEmbeddingCacheTtlMs());
             }
-            audit("EMBED_RESPONSE", modelResolved.modelName, "status=" + response.statusCode());
+            // Bug 5 修复：重命名为 EMBED_HTTP_RESPONSE，避免与后续 EMBED_RESPONSE 重复
+            audit("EMBED_HTTP_RESPONSE", modelResolved.modelName, "status=" + response.statusCode());
         }
 
         Map<?, ?> root;
@@ -768,6 +1069,7 @@ public final class VKAiRuntime {
             List<Double> vec = VKAiJsonOps.toDoubleList(VKAiJsonOps.asList(m.get("embedding")));
             out.add(new VKAiEmbedding(index, vec));
         }
+        // Bug 5 修复：保留一条含向量数量的最终 audit
         audit("EMBED_RESPONSE", modelResolved.modelName, "vectors=" + out.size());
         return out;
     }
@@ -877,8 +1179,12 @@ public final class VKAiRuntime {
             throw new VKAiException(VKAiErrorCode.SERIALIZATION_ERROR, "Embedding response is empty");
         }
 
-        List<VKAiVectorHit> vectorHits = searchVector(queryEmbeddings.get(0).getVector(), vectorTopK);
-        List<VKAiVectorHit> keywordHits = searchKeywords(retrievalQuery, keywordTopK);
+        // Ext 5：将 metadataFilter 透传给向量检索和关键词检索
+        java.util.Map<String, String> metaFilter = request.getMetadataFilter();
+        List<VKAiVectorHit> vectorHits = vectorStore.search(
+                queryEmbeddings.get(0).getVector(), vectorTopK, metaFilter);
+        List<VKAiVectorHit> keywordHits = vectorStore.searchByKeywords(
+                retrievalQuery, keywordTopK, metaFilter);
         List<VKAiVectorHit> merged = VKAiRagOps.mergeHybridHits(vectorHits, keywordHits, request);
         if (request.isMergeSimilarChunksEnabled()) {
             merged = VKAiRagOps.mergeSimilarChunks(merged);
@@ -1041,6 +1347,18 @@ public final class VKAiRuntime {
         if (request.isStream()) {
             payload.put("stream", true);
         }
+        // Ext 4：结构化输出 / response_format
+        if (request.getResponseFormat() != null && !request.getResponseFormat().isBlank()) {
+            String fmt = request.getResponseFormat().trim();
+            if ("json_schema".equals(fmt) && request.getResponseJsonSchema() != null
+                    && !request.getResponseJsonSchema().isBlank()) {
+                payload.put("response_format", Map.of(
+                        "type", "json_schema",
+                        "json_schema", VKAiJsonOps.parseJsonOrEmptyObject(request.getResponseJsonSchema())));
+            } else {
+                payload.put("response_format", Map.of("type", fmt));
+            }
+        }
 
         Set<String> allowedTools = VKAiChatRequestOps.normalizeToolAllowlist(request.getAllowedTools());
         if (!allowedTools.isEmpty()) {
@@ -1081,7 +1399,8 @@ public final class VKAiRuntime {
                 readTimeoutMs,
                 maxRetries,
                 failOnNon2xx,
-                allowedTools
+                allowedTools,
+                request.getTokenBudgetTokens()
         );
     }
 
@@ -1096,12 +1415,9 @@ public final class VKAiRuntime {
             return new ModelResolved(name, model.copy());
         }
 
-        List<String> candidates = new ArrayList<>();
-        for (Map.Entry<String, VKAiModelConfig> it : models.entrySet()) {
-            if (it.getValue() != null && it.getValue().getType() == expected) {
-                candidates.add(it.getKey());
-            }
-        }
+        // Perf 6：O(1) 反向索引查找，替代全量遍历
+        Set<String> typeSet = modelNamesByType.get(expected);
+        List<String> candidates = typeSet == null ? List.of() : new ArrayList<>(typeSet);
         if (candidates.isEmpty()) {
             throw new VKAiException(VKAiErrorCode.CONFIG_ERROR, "No model registered for stage: " + stage);
         }
@@ -1199,9 +1515,14 @@ public final class VKAiRuntime {
                 }
                 return response;
             } catch (VKAiException e) {
-                if (e.getCode() == VKAiErrorCode.HTTP_STATUS && shouldRetryByStatus(e.getStatusCode(), attempt, maxRetries)) {
-                    sleepBackoff(attempt);
-                    continue;
+                // Bug 2 修复：HTTP_STATUS 重试耗尽后需要 recordFail
+                if (e.getCode() == VKAiErrorCode.HTTP_STATUS) {
+                    if (shouldRetryByStatus(e.getStatusCode(), attempt, maxRetries)) {
+                        sleepBackoff(attempt);
+                        continue;
+                    }
+                    recordFail(start, false, false);
+                    throw e;
                 }
                 if (e.getCode() == VKAiErrorCode.TIMEOUT) {
                     if (shouldRetryByTimeout(attempt, maxRetries)) {
@@ -1302,6 +1623,8 @@ public final class VKAiRuntime {
         latestVersionByDoc.clear();
         chunkFingerprintById.clear();
         fingerprintRefCounts.clear();
+        // Bug 3 修复：同步清理 fingerprint 向量缓存
+        fingerprintToVector.clear();
     }
 
     private void removeOldVersions(String documentId, String keepVersion) {
@@ -1327,6 +1650,8 @@ public final class VKAiRuntime {
             long left = ref.decrementAndGet();
             if (left <= 0) {
                 fingerprintRefCounts.remove(fingerprint);
+                // Bug 3 修复：引用计数归零时同步清除向量缓存，防止内存泄漏
+                fingerprintToVector.remove(fingerprint);
             }
         }
     }
@@ -1352,7 +1677,8 @@ public final class VKAiRuntime {
         long timeoutMs = config.getRagRerankTimeoutMs();
         if (timeoutMs > 0) {
             try {
-                rerank = CompletableFuture.supplyAsync(() -> rerank(rerankRequest))
+                // Bug 8 修复：使用专用 IO 线程池，不阻塞 ForkJoinPool.commonPool
+                rerank = CompletableFuture.supplyAsync(() -> rerank(rerankRequest), AI_IO_EXECUTOR)
                         .get(timeoutMs, TimeUnit.MILLISECONDS);
             } catch (TimeoutException e) {
                 audit("RAG_DEGRADE", rerankModelName, "reason=rerank_timeout, timeoutMs=" + timeoutMs);
@@ -1431,7 +1757,9 @@ public final class VKAiRuntime {
             long readTimeoutMs,
             int maxRetries,
             boolean failOnNon2xx,
-            Set<String> allowedTools
+            Set<String> allowedTools,
+            // Ext 7：请求级 token 预算（null 表示使用全局配置）
+            Integer tokenBudgetTokens
     ) {
     }
 

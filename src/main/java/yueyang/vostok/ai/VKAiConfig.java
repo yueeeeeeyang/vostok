@@ -27,6 +27,21 @@ public class VKAiConfig {
     private long ragAnswerCacheTtlMs = 10 * 60 * 1000L;
     private long ragRerankTimeoutMs = 1500;
 
+    /**
+     * Ext 2：是否启用 Agentic 多轮 tool call 循环。
+     * 启用后，当 LLM 返回 finish_reason=tool_calls 时自动执行工具并将结果追加消息后再次调用 LLM。
+     */
+    private boolean agentLoopEnabled = true;
+
+    /** Ext 2：Agentic 循环最大轮次（防止无限循环）。默认 5。 */
+    private int maxAgentLoops = 5;
+
+    /**
+     * Ext 7：全局 token 预算（totalTokens 上限）。0 = 不限制。
+     * 可被 VKAiChatRequest.tokenBudgetTokens 在请求级别覆盖。
+     */
+    private int tokenBudgetPerRequest = 0;
+
     public VKAiConfig copy() {
         VKAiConfig c = new VKAiConfig();
         c.connectTimeoutMs = this.connectTimeoutMs;
@@ -51,6 +66,9 @@ public class VKAiConfig {
         c.rerankCacheTtlMs = this.rerankCacheTtlMs;
         c.ragAnswerCacheTtlMs = this.ragAnswerCacheTtlMs;
         c.ragRerankTimeoutMs = this.ragRerankTimeoutMs;
+        c.agentLoopEnabled = this.agentLoopEnabled;
+        c.maxAgentLoops = this.maxAgentLoops;
+        c.tokenBudgetPerRequest = this.tokenBudgetPerRequest;
         return c;
     }
 
@@ -262,6 +280,37 @@ public class VKAiConfig {
 
     public VKAiConfig ragRerankTimeoutMs(long ragRerankTimeoutMs) {
         this.ragRerankTimeoutMs = Math.max(0, ragRerankTimeoutMs);
+        return this;
+    }
+
+    // Ext 2：Agentic 工具循环
+
+    public boolean isAgentLoopEnabled() {
+        return agentLoopEnabled;
+    }
+
+    public VKAiConfig agentLoopEnabled(boolean agentLoopEnabled) {
+        this.agentLoopEnabled = agentLoopEnabled;
+        return this;
+    }
+
+    public int getMaxAgentLoops() {
+        return maxAgentLoops;
+    }
+
+    public VKAiConfig maxAgentLoops(int maxAgentLoops) {
+        this.maxAgentLoops = Math.max(1, maxAgentLoops);
+        return this;
+    }
+
+    // Ext 7：Token 预算
+
+    public int getTokenBudgetPerRequest() {
+        return tokenBudgetPerRequest;
+    }
+
+    public VKAiConfig tokenBudgetPerRequest(int tokenBudgetPerRequest) {
+        this.tokenBudgetPerRequest = Math.max(0, tokenBudgetPerRequest);
         return this;
     }
 }

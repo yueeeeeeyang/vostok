@@ -13,6 +13,7 @@ import yueyang.vostok.util.json.VKJson;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public class VKAiDataMemoryStore implements VKAiMemoryStore {
     @Override
@@ -75,10 +76,13 @@ public class VKAiDataMemoryStore implements VKAiMemoryStore {
         ensureDataStarted();
         VKQuery query = VKQuery.create().where(VKCondition.of("sessionId", VKOperator.EQ, sessionId));
         List<VKAiDataSessionMessageEntity> rows = Vostok.Data.query(VKAiDataSessionMessageEntity.class, query);
-        for (VKAiDataSessionMessageEntity row : rows) {
-            if (row.getId() != null) {
-                Vostok.Data.delete(VKAiDataSessionMessageEntity.class, row.getId());
-            }
+        // Bug 9 修复：使用 batchDelete 替换 N+1 单条 delete
+        List<Long> ids = rows.stream()
+                .filter(r -> r.getId() != null)
+                .map(VKAiDataSessionMessageEntity::getId)
+                .collect(Collectors.toList());
+        if (!ids.isEmpty()) {
+            Vostok.Data.batchDelete(VKAiDataSessionMessageEntity.class, ids);
         }
         Vostok.Data.delete(VKAiDataSessionEntity.class, sessionId);
     }

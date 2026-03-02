@@ -6,6 +6,7 @@ import yueyang.vostok.ai.rag.VKAiVectorHit;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -180,22 +181,28 @@ final class VKAiRagOps {
         return text.toLowerCase().replaceAll("\\s+", " ").trim();
     }
 
-    static String sha256Hex(String value) {
+    // ThreadLocal 复用 MessageDigest，避免每次调用都走 JCA 查找（Perf 2）
+    private static final ThreadLocal<MessageDigest> SHA256_TL = ThreadLocal.withInitial(() -> {
         try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] bytes = md.digest(value.getBytes(StandardCharsets.UTF_8));
-            StringBuilder sb = new StringBuilder(bytes.length * 2);
-            for (byte b : bytes) {
-                String x = Integer.toHexString(b & 0xff);
-                if (x.length() == 1) {
-                    sb.append('0');
-                }
-                sb.append(x);
-            }
-            return sb.toString();
+            return MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException("SHA-256 unavailable", e);
         }
+    });
+
+    static String sha256Hex(String value) {
+        MessageDigest md = SHA256_TL.get();
+        md.reset();
+        byte[] bytes = md.digest((value == null ? "" : value).getBytes(StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            String x = Integer.toHexString(b & 0xff);
+            if (x.length() == 1) {
+                sb.append('0');
+            }
+            sb.append(x);
+        }
+        return sb.toString();
     }
 
     private static void combineHits(Map<String, Double> combined,

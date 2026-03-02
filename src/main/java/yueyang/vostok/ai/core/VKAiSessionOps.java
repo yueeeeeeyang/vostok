@@ -9,6 +9,7 @@ import yueyang.vostok.ai.exception.VKAiErrorCode;
 import yueyang.vostok.ai.exception.VKAiException;
 
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 final class VKAiSessionOps {
@@ -97,6 +98,19 @@ final class VKAiSessionOps {
 
     static void deleteSession(VKAiMemoryStore store, String sessionId) {
         store.deleteSession(sessionId);
+    }
+
+    /**
+     * Ext 6：更新会话 metadata。
+     * 调用 store.updateSessionMetadata 以支持各实现自定义原子性保证。
+     */
+    static VKAiSession updateSessionMetadata(VKAiMemoryStore store, String sessionId, Map<String, String> metadata) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new VKAiException(VKAiErrorCode.INVALID_ARGUMENT, "Session id is blank");
+        }
+        requireSession(store, sessionId);
+        store.updateSessionMetadata(sessionId, metadata);
+        return requireSession(store, sessionId);
     }
 
     @FunctionalInterface
