@@ -7,7 +7,6 @@ import yueyang.vostok.cache.pipeline.VKCachePipeline;
 import yueyang.vostok.cache.pipeline.VKCachePipelineResult;
 import yueyang.vostok.cache.stats.VKCacheStats;
 
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -39,14 +38,6 @@ public class VostokCache {
             throw new IllegalArgumentException("VKCacheConfigLoader is null");
         }
         RUNTIME.init(loader.load());
-    }
-
-    public static void initFromEnv(String prefix) {
-        init(() -> VKCacheConfigFactory.fromEnv(prefix));
-    }
-
-    public static void initFromProperties(Path path, String prefix) {
-        init(() -> VKCacheConfigFactory.fromProperties(path, prefix));
     }
 
     public static void reinit(VKCacheConfig config) {

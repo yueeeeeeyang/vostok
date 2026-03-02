@@ -44,12 +44,18 @@
 <div class="page-header">
   <div class="module-tag">⚡ Vostok.Cache</div>
   <h1>Cache 缓存模块</h1>
-  <p class="desc">统一缓存访问层，支持内存（Memory）、Redis（单机/哨兵/集群）及分层（Tiered L1+L2）三种后端，提供丰富数据结构、Pipeline 批量、命名缓存分区、命中率统计、事件监听、布隆过滤器防穿透、单飞（Single-Flight）、限流降级等企业级能力。</p>
+  <p class="desc">统一缓存访问层，开箱即用——无需任何配置，首次操作自动以内存缓存（LRU, 100000条目, 1h TTL）启动。支持内存（Memory）、Redis（单机/哨兵/集群）及分层（Tiered L1+L2）三种后端，提供丰富数据结构、Pipeline 批量、命名缓存分区、命中率统计、事件监听、布隆过滤器防穿透、单飞（Single-Flight）、限流降级等企业级能力。</p>
 </div>
 
-<h2>初始化</h2>
+<h2>初始化（可选）</h2>
 
-<h3>内存缓存</h3>
+<h3>零配置启动（默认行为）</h3>
+<pre><code><span class="cm">// 无需任何初始化——直接使用即可。
+// 首次操作时自动以内存缓存（LRU, maxEntries=100000, TTL=1h）启动。</span>
+<span class="ty">Vostok</span>.Cache.set(<span class="st">"key"</span>, <span class="st">"value"</span>);
+<span class="ty">String</span> val = <span class="ty">Vostok</span>.Cache.get(<span class="st">"key"</span>);</code></pre>
+
+<h3>显式配置内存缓存</h3>
 <pre><code><span class="ty">Vostok</span>.Cache.init(<span class="kw">new</span> <span class="ty">VKCacheConfig</span>()
     .providerType(<span class="ty">VKCacheProviderType</span>.MEMORY)
     .maxEntries(<span class="nu">50000</span>)
@@ -100,19 +106,12 @@
         .defaultTtlMs(<span class="nu">3600_000L</span>))        <span class="cm">// L2 权威数据源</span>
 );</code></pre>
 
-<h3>从环境变量 / Properties 文件初始化</h3>
-<pre><code><span class="cm">// 从环境变量读取（变量名格式：{PREFIX}_PROVIDER_TYPE 等）</span>
-<span class="ty">Vostok</span>.Cache.initFromEnv(<span class="st">"CACHE"</span>);
-
-<span class="cm">// 从 Properties 文件读取</span>
-<span class="ty">Vostok</span>.Cache.initFromProperties(<span class="ty">Path</span>.of(<span class="st">"cache.properties"</span>), <span class="st">"cache"</span>);
-
-<span class="cm">// 使用自定义 ConfigLoader</span>
-<span class="ty">Vostok</span>.Cache.init(() -&gt; <span class="ty">VKCacheConfigFactory</span>.fromMap(myMap, <span class="st">"cache"</span>));</code></pre>
-
-<div class="callout">
-  <div class="callout-title">说明</div>
-  Cache 模块必须通过 <code>VKCacheConfig</code> 显式初始化。<code>providerType</code> 字段类型为 <code>VKCacheProviderType</code> 枚举，不是字符串。
+<div class="callout tip">
+  <div class="callout-title">零配置启动</div>
+  Cache 模块无需显式初始化。首次调用任意缓存操作时，若尚未初始化，将自动以内存缓存启动：
+  <code>maxEntries=100000</code>、<code>evictionPolicy=LRU</code>、<code>defaultTtlMs=3600000（1小时）</code>。
+  如需使用 Redis 或自定义参数，在首次调用前调用 <code>init(VKCacheConfig)</code> 即可。
+  <code>providerType</code> 字段类型为 <code>VKCacheProviderType</code> 枚举，不是字符串。
 </div>
 
 <h2>基本操作</h2>
@@ -468,10 +467,8 @@ bloom.put(<span class="st">"user:999"</span>);                             <span
 <table class="api-table">
   <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>init(VKCacheConfig)</code></td><td><code>void</code></td><td>显式初始化</td></tr>
-    <tr><td><code>init(VKCacheConfigLoader)</code></td><td><code>void</code></td><td>通过 ConfigLoader 初始化</td></tr>
-    <tr><td><code>initFromEnv(prefix)</code></td><td><code>void</code></td><td>从环境变量读取配置初始化</td></tr>
-    <tr><td><code>initFromProperties(path, prefix)</code></td><td><code>void</code></td><td>从 Properties 文件读取配置初始化</td></tr>
+    <tr><td><code>init(VKCacheConfig)</code></td><td><code>void</code></td><td>显式初始化（可选；不调用则首次操作自动以默认内存配置初始化）</td></tr>
+    <tr><td><code>init(VKCacheConfigLoader)</code></td><td><code>void</code></td><td>通过自定义 ConfigLoader 初始化</td></tr>
     <tr><td><code>reinit(VKCacheConfig)</code></td><td><code>void</code></td><td>重新初始化（替换配置，重建连接池）</td></tr>
     <tr><td><code>started()</code></td><td><code>boolean</code></td><td>是否已初始化</td></tr>
     <tr><td><code>config()</code></td><td><code>VKCacheConfig</code></td><td>获取当前配置</td></tr>

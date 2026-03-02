@@ -44,10 +44,24 @@
 <div class="page-header">
   <div class="module-tag">🗄️ Vostok.Data</div>
   <h1>Data 数据访问模块</h1>
-  <p class="desc">基于 JDBC 的数据访问层，提供实体 CRUD、事务管理、查询构建器、聚合操作、多数据源切换、连接池、字段加密与 SQL 拦截器。</p>
+  <p class="desc">基于 JDBC 的数据访问层，提供实体 CRUD、事务管理、查询构建器、聚合操作、多数据源切换、连接池、字段加密与 SQL 拦截器。开箱即用——无需任何配置即可直接调用，自动以 H2 内存数据库启动。</p>
 </div>
 
-<h2>初始化</h2>
+<h2>初始化（可选）</h2>
+
+<h3>零配置启动（默认行为）</h3>
+<pre><code><span class="cm">// 无需任何初始化——直接使用即可。
+// 首次操作时自动以 H2 内存数据库启动，并自动建表（autoCreateTable=true）。
+// 同时会打印 WARN 日志提示当前为默认模式，生产环境应显式初始化。</span>
+<span class="ty">Vostok</span>.Data.insert(user);
+<span class="ty">List</span>&lt;<span class="ty">User</span>&gt; users = <span class="ty">Vostok</span>.Data.findAll(<span class="ty">User</span>.class);</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">注意</div>
+  默认自动初始化使用 H2 内存数据库（<code>jdbc:h2:mem:vostok_default;MODE=MySQL</code>），数据在进程退出后丢失，仅适用于快速原型和测试场景。<strong>生产环境请务必显式调用 <code>init()</code> 配置目标数据源。</strong>
+</div>
+
+<h3>显式初始化（生产环境推荐）</h3>
 <pre><code><span class="ty">Vostok</span>.Data.init(
     <span class="kw">new</span> <span class="ty">VKDataConfig</span>()
         .url(<span class="st">"jdbc:mysql://127.0.0.1:3306/mydb"</span>)

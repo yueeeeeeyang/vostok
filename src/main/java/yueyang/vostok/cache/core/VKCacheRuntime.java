@@ -5,6 +5,8 @@ import yueyang.vostok.cache.VKCacheCommandType;
 import yueyang.vostok.cache.VKCacheConfig;
 import yueyang.vostok.cache.VKCacheDegradePolicy;
 import yueyang.vostok.cache.VKCachePoolMetrics;
+import yueyang.vostok.cache.VKCacheProviderType;
+import yueyang.vostok.cache.VKEvictionPolicy;
 import yueyang.vostok.cache.codec.VKCacheCodec;
 import yueyang.vostok.cache.codec.VKCacheCodecs;
 import yueyang.vostok.cache.event.VKCacheEvent;
@@ -814,10 +816,31 @@ public final class VKCacheRuntime {
         }
     }
 
+    /**
+     * 默认内存缓存配置：100,000 条目上限，LRU 回收策略，默认 TTL 1 小时。
+     * 未显式调用 {@link #init} 时自动使用该配置懒初始化。
+     */
+    private static VKCacheConfig defaultConfig() {
+        return new VKCacheConfig()
+                .providerType(VKCacheProviderType.MEMORY)
+                .maxEntries(100_000)
+                .evictionPolicy(VKEvictionPolicy.LRU)
+                .defaultTtlMs(3_600_000L);
+    }
+
+    /**
+     * 确保运行时已初始化。若尚未初始化，则自动使用默认内存缓存配置（MEMORY, 100000 条目, LRU, TTL=1h）懒初始化，
+     * 无需显式调用 {@link #init}。
+     */
     private void ensureInit() {
         if (!initialized) {
-            throw new VKCacheException(VKCacheErrorCode.STATE_ERROR,
-                    "Vostok.Cache is not initialized. Call init() first.");
+            synchronized (LOCK) {
+                if (!initialized) {
+                    // 自动懒初始化：使用默认内存缓存，maxEntries=100000，LRU，TTL=1小时
+                    holders.put(defaultName, createHolder(defaultConfig()));
+                    initialized = true;
+                }
+            }
         }
     }
 
