@@ -1,5 +1,7 @@
 package yueyang.vostok.cache;
 
+import yueyang.vostok.cache.event.VKCacheEventListener;
+
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -52,6 +54,24 @@ public class VKCacheConfig {
     private VKCacheDegradePolicy degradePolicy = VKCacheDegradePolicy.FAIL_FAST;
 
     private transient VKBloomFilter bloomFilter = VKBloomFilter.noOp();
+
+    // ---------- Feature2：容量 + 淘汰策略 ----------
+    /** 内存 Provider 最大条目数，0 表示不限。 */
+    private int maxEntries = 0;
+    /** 淘汰策略，默认 NONE（不主动淘汰）。 */
+    private VKEvictionPolicy evictionPolicy = VKEvictionPolicy.NONE;
+    /** 后台驱逐线程扫描周期（毫秒），默认 5000ms。 */
+    private long memoryEvictionIntervalMs = 5000;
+
+    // ---------- Feature1：两级缓存 ----------
+    /** TIERED 模式的 L1（内存）配置，null 时使用默认内存配置。 */
+    private VKCacheConfig l1Config = null;
+    /** TIERED 模式的 L2（下层，如 Redis）配置。 */
+    private VKCacheConfig l2Config = null;
+
+    // ---------- Feature5：事件监听器 ----------
+    /** 缓存事件监听器，null 表示不启用。 */
+    private transient VKCacheEventListener eventListener = null;
 
     private Map<String, String> options = new LinkedHashMap<>();
 
@@ -406,6 +426,60 @@ public class VKCacheConfig {
         return this;
     }
 
+    public int getMaxEntries() {
+        return maxEntries;
+    }
+
+    public VKCacheConfig maxEntries(int maxEntries) {
+        this.maxEntries = Math.max(0, maxEntries);
+        return this;
+    }
+
+    public VKEvictionPolicy getEvictionPolicy() {
+        return evictionPolicy;
+    }
+
+    public VKCacheConfig evictionPolicy(VKEvictionPolicy evictionPolicy) {
+        this.evictionPolicy = evictionPolicy == null ? VKEvictionPolicy.NONE : evictionPolicy;
+        return this;
+    }
+
+    public long getMemoryEvictionIntervalMs() {
+        return memoryEvictionIntervalMs;
+    }
+
+    public VKCacheConfig memoryEvictionIntervalMs(long memoryEvictionIntervalMs) {
+        this.memoryEvictionIntervalMs = memoryEvictionIntervalMs <= 0 ? 5000 : memoryEvictionIntervalMs;
+        return this;
+    }
+
+    public VKCacheConfig getL1Config() {
+        return l1Config;
+    }
+
+    public VKCacheConfig l1Config(VKCacheConfig l1Config) {
+        this.l1Config = l1Config;
+        return this;
+    }
+
+    public VKCacheConfig getL2Config() {
+        return l2Config;
+    }
+
+    public VKCacheConfig l2Config(VKCacheConfig l2Config) {
+        this.l2Config = l2Config;
+        return this;
+    }
+
+    public VKCacheEventListener getEventListener() {
+        return eventListener;
+    }
+
+    public VKCacheConfig eventListener(VKCacheEventListener eventListener) {
+        this.eventListener = eventListener;
+        return this;
+    }
+
     public Map<String, String> getOptions() {
         return new LinkedHashMap<>(options);
     }
@@ -467,6 +541,12 @@ public class VKCacheConfig {
                 .rateLimitQps(rateLimitQps)
                 .degradePolicy(degradePolicy)
                 .bloomFilter(bloomFilter)
+                .maxEntries(maxEntries)
+                .evictionPolicy(evictionPolicy)
+                .memoryEvictionIntervalMs(memoryEvictionIntervalMs)
+                .l1Config(l1Config)
+                .l2Config(l2Config)
+                .eventListener(eventListener)
                 .options(options);
     }
 

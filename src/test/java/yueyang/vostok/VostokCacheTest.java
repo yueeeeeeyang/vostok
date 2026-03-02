@@ -8,14 +8,23 @@ import yueyang.vostok.cache.VKCacheConfigFactory;
 import yueyang.vostok.cache.VKCacheDegradePolicy;
 import yueyang.vostok.cache.VKCachePoolMetrics;
 import yueyang.vostok.cache.VKCacheProviderType;
+import yueyang.vostok.cache.VKEvictionPolicy;
+import yueyang.vostok.cache.VKDefaultBloomFilter;
+import yueyang.vostok.cache.event.VKCacheEventType;
+import yueyang.vostok.cache.pipeline.VKCachePipelineResult;
+import yueyang.vostok.cache.stats.VKCacheStats;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -261,5 +270,227 @@ public class VostokCacheTest {
     private static final class User {
         public String name;
         public int age;
+    }
+
+    // ---- 新增测试：Feature6 内置布隆过滤器 ----
+
+    @Test
+    void testBuiltinBloomFilter() {
+        VKBloomFilter bf = VKBloomFilter.create(1_000, 0.01);
+        // 插入 1000 个 key
+        for (int i = 0; i < 1000; i++) {
+            bf.put("key-" + i);
+        }
+        // 已插入的 key 必须全部命中（无漏判）
+        for (int i = 0; i < 1000; i++) {
+            assertTrue(bf.mightContain("key-" + i), "should contain key-" + i);
+        }
+        // 未插入的 key 误判率应远低于 5%（理论 1%，放宽一些）
+        int falsePositives = 0;
+        for (int i = 1000; i < 2000; i++) {
+            if (bf.mightContain("key-" + i)) {
+                falsePositives++;
+            }
+        }
+        assertTrue(falsePositives < 50, "false positive rate too high: " + falsePositives + "/1000");
+    }
+
+    // ---- 新增测试：Feature2 内存容量限制 + LRU 淘汰 ----
+
+    @Test
+    void testMemoryCapacityLRU() throws Exception {
+        Vostok.Cache.init(new VKCacheConfig()
+                .providerType(VKCacheProviderType.MEMORY)
+                .codec("string")
+                .maxEntries(5)
+                .evictionPolicy(VKEvictionPolicy.LRU)
+                .memoryEvictionIntervalMs(200));
+
+        // 依次写入 10 个 key（前 5 个更早写入，后 5 个更新），等待驱逐
+        for (int i = 0; i < 10; i++) {
+            Vostok.Cache.set("k" + i, "v" + i);
+        }
+        // 等待后台驱逐线程执行（间隔 200ms）
+        Thread.sleep(500);
+
+        // 总 key 数量应 <= maxEntries（可能小于，因为 10% 淘汰策略）
+        List<String> keys = Vostok.Cache.scan("k*", 100);
+        assertTrue(keys.size() <= 5, "expected <= 5 keys but got " + keys.size());
+    }
+
+    // ---- 新增测试：Perf2 后台过期清理 ----
+
+    @Test
+    void testMemoryEvictionBackground() throws Exception {
+        Vostok.Cache.init(new VKCacheConfig()
+                .providerType(VKCacheProviderType.MEMORY)
+                .codec("string")
+                .memoryEvictionIntervalMs(100));
+
+        // 写入 50 个短 TTL 的 key
+        for (int i = 0; i < 50; i++) {
+            Vostok.Cache.set("expire-k" + i, "v" + i, 80);
+        }
+        // TTL 过期
+        Thread.sleep(120);
+        // 后台驱逐线程执行
+        Thread.sleep(200);
+
+        // 验证所有过期 key 均已通过惰性删除或后台清理移除
+        int remaining = 0;
+        for (int i = 0; i < 50; i++) {
+            if (Vostok.Cache.exists("expire-k" + i)) {
+                remaining++;
+            }
+        }
+        assertEquals(0, remaining, "expected all expired keys removed, but " + remaining + " remain");
+    }
+
+    // ---- 新增测试：Feature3 命中率统计 ----
+
+    @Test
+    void testCacheStats() {
+        Vostok.Cache.init(new VKCacheConfig()
+                .providerType(VKCacheProviderType.MEMORY)
+                .codec("string")
+                .nullCacheEnabled(false)); // 关闭 null 缓存，让 miss 不被 null-marker 干扰
+
+        VKCacheStats stats = Vostok.Cache.stats();
+        // 初始全为 0
+        assertEquals(0, stats.getHits());
+        assertEquals(0, stats.getMisses());
+
+        Vostok.Cache.set("s1", "v1");
+        // 命中
+        Vostok.Cache.get("s1");
+        // 未命中
+        Vostok.Cache.get("notexist");
+        Vostok.Cache.get("notexist2");
+
+        assertEquals(1, stats.getHits());
+        assertEquals(2, stats.getMisses());
+        assertTrue(stats.hitRate() > 0.3 && stats.hitRate() < 0.4);
+
+        // 重置
+        Vostok.Cache.resetStats();
+        assertEquals(0, stats.getHits());
+        assertEquals(0, stats.getMisses());
+        assertEquals(0.0, stats.hitRate());
+    }
+
+    // ---- 新增测试：Feature5 事件监听器 ----
+
+    @Test
+    void testCacheEventListener() {
+        List<VKCacheEventType> events = new CopyOnWriteArrayList<>();
+
+        Vostok.Cache.init(new VKCacheConfig()
+                .providerType(VKCacheProviderType.MEMORY)
+                .codec("string")
+                .nullCacheEnabled(false)
+                .eventListener(event -> events.add(event.type())));
+
+        // SET 事件
+        Vostok.Cache.set("ek1", "v1");
+        // HIT 事件
+        Vostok.Cache.get("ek1");
+        // MISS 事件
+        Vostok.Cache.get("notexist");
+        // DELETE 事件
+        Vostok.Cache.delete("ek1");
+
+        assertTrue(events.contains(VKCacheEventType.SET), "expected SET event");
+        assertTrue(events.contains(VKCacheEventType.HIT), "expected HIT event");
+        assertTrue(events.contains(VKCacheEventType.MISS), "expected MISS event");
+        assertTrue(events.contains(VKCacheEventType.DELETE), "expected DELETE event");
+
+        // 事件顺序：SET → HIT → MISS → DELETE
+        int setIdx = events.indexOf(VKCacheEventType.SET);
+        int hitIdx = events.indexOf(VKCacheEventType.HIT);
+        int missIdx = events.indexOf(VKCacheEventType.MISS);
+        int delIdx = events.indexOf(VKCacheEventType.DELETE);
+        assertTrue(setIdx < hitIdx, "SET should come before HIT");
+        assertTrue(hitIdx < missIdx, "HIT should come before MISS");
+        assertTrue(missIdx < delIdx, "MISS should come before DELETE");
+    }
+
+    // ---- 新增测试：Feature4 Pipeline ----
+
+    @Test
+    void testPipeline() {
+        Vostok.Cache.init(new VKCacheConfig()
+                .providerType(VKCacheProviderType.MEMORY)
+                .codec("string"));
+
+        // set + incr（incrBy(1)）+ expire 批量执行
+        byte[] valBytes = "hello".getBytes(StandardCharsets.UTF_8);
+
+        // 先预置 counter（string codec 的 incrBy 从 0 开始）
+        VKCachePipelineResult result = Vostok.Cache.pipelineWithResult(pipe -> pipe
+                .incrBy("counter", 5)
+                .incrBy("counter", 3));
+
+        // 两次 incrBy：第一次返回 5，第二次返回 8
+        assertEquals(5L, result.getCount(0));
+        assertEquals(8L, result.getCount(1));
+        assertEquals(2, result.size());
+
+        // pipeline set + expire，验证值存在
+        Vostok.Cache.pipeline(pipe -> pipe
+                .set("pipe-key", valBytes, 60_000)
+                .expire("pipe-key", 120_000));
+
+        assertEquals("hello", Vostok.Cache.get("pipe-key"));
+    }
+
+    // ---- 新增测试：Feature1 TIERED 两级缓存 L1 命中 ----
+
+    @Test
+    void testTieredCacheL1Hit() {
+        // L1 = 内存（TTL 60s），L2 = 内存（作为后备，模拟 Redis 语义）
+        VKCacheConfig l1Cfg = new VKCacheConfig()
+                .providerType(VKCacheProviderType.MEMORY)
+                .defaultTtlMs(60_000);
+        VKCacheConfig l2Cfg = new VKCacheConfig()
+                .providerType(VKCacheProviderType.MEMORY);
+        VKCacheConfig tieredCfg = new VKCacheConfig()
+                .providerType(VKCacheProviderType.TIERED)
+                .l1Config(l1Cfg)
+                .l2Config(l2Cfg)
+                .codec("string");
+
+        Vostok.Cache.init(tieredCfg);
+
+        // 写入 → 同时写 L1+L2
+        Vostok.Cache.set("tkey", "tval");
+        // 第一次读，L1 命中
+        String v1 = Vostok.Cache.get("tkey");
+        assertEquals("tval", v1);
+        // 再次读，仍然命中
+        String v2 = Vostok.Cache.get("tkey");
+        assertEquals("tval", v2);
+    }
+
+    // ---- 新增测试：Bug4 限流器秒边界 ----
+
+    @Test
+    void testRateLimiterBoundary() throws Exception {
+        // 在新秒开始后，第一个请求不应被错误拒绝
+        Vostok.Cache.init(new VKCacheConfig()
+                .providerType(VKCacheProviderType.MEMORY)
+                .codec("string")
+                .rateLimitQps(5)
+                .degradePolicy(VKCacheDegradePolicy.RETURN_NULL)
+                .maxWaitMs(50));
+
+        // 等待下一秒边界
+        long now = System.currentTimeMillis();
+        long nextSecStart = ((now / 1000) + 1) * 1000;
+        Thread.sleep(Math.max(0, nextSecStart - System.currentTimeMillis()) + 5);
+
+        // 新秒第一个请求必须通过
+        Vostok.Cache.set("boundary-key", "v");
+        String v = Vostok.Cache.get("boundary-key", String.class);
+        assertNotNull(v, "First request of new second should not be rate-limited");
     }
 }

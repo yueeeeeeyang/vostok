@@ -69,8 +69,15 @@ final class VKRedisTopologyResolver {
         return out;
     }
 
+    /**
+     * Perf1 修复：使用 ThreadLocal 复用 CRC32 实例，消除 per-call new CRC32() 的对象分配开销。
+     * 每次使用前调用 reset() 清空状态，然后执行 update()。
+     */
+    private static final ThreadLocal<CRC32> CRC32_TL = ThreadLocal.withInitial(CRC32::new);
+
     private long crc32(String text) {
-        CRC32 crc = new CRC32();
+        CRC32 crc = CRC32_TL.get();
+        crc.reset();
         crc.update(text.getBytes(StandardCharsets.UTF_8));
         return crc.getValue();
     }

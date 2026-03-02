@@ -16,6 +16,9 @@ public final class VKCacheProviderFactory {
         if (t == VKCacheProviderType.REDIS) {
             return new VKRedisCacheProvider();
         }
+        if (t == VKCacheProviderType.TIERED) {
+            return new VKTieredCacheProvider();
+        }
         throw new VKCacheException(VKCacheErrorCode.CONFIG_ERROR, "Unsupported cache provider: " + t);
     }
 }

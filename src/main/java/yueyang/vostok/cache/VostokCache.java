@@ -3,13 +3,27 @@ package yueyang.vostok.cache;
 import yueyang.vostok.cache.codec.VKCacheCodec;
 import yueyang.vostok.cache.codec.VKCacheCodecs;
 import yueyang.vostok.cache.core.VKCacheRuntime;
+import yueyang.vostok.cache.pipeline.VKCachePipeline;
+import yueyang.vostok.cache.pipeline.VKCachePipelineResult;
+import yueyang.vostok.cache.stats.VKCacheStats;
 
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+/**
+ * 缓存模块公共 API 入口（静态门面）。
+ * <p>
+ * 所有操作委托给 {@link VKCacheRuntime} 单例执行。
+ * 新增 API（Feature3/4/5/6）：
+ * <ul>
+ *   <li>{@link #stats()} / {@link #stats(String)} / {@link #resetStats()} — 命中率统计</li>
+ *   <li>{@link #pipeline(Consumer)} / {@link #pipelineWithResult(Consumer)} — 批量命令</li>
+ * </ul>
+ */
 public class VostokCache {
     private static final VKCacheRuntime RUNTIME = VKCacheRuntime.getInstance();
 
@@ -82,6 +96,62 @@ public class VostokCache {
     public static void registerCodec(VKCacheCodec codec) {
         VKCacheCodecs.register(codec);
     }
+
+    // ---- Feature3：统计 API ----
+
+    /**
+     * 返回当前 ThreadLocal 上下文缓存分区的命中率统计对象。
+     */
+    public static VKCacheStats stats() {
+        return RUNTIME.stats();
+    }
+
+    /**
+     * 返回指定名称缓存分区的命中率统计对象。
+     *
+     * @param cacheName 缓存分区名
+     */
+    public static VKCacheStats stats(String cacheName) {
+        return RUNTIME.stats(cacheName);
+    }
+
+    /**
+     * 重置当前分区的统计数据（hits/misses/loads 等归零）。
+     */
+    public static void resetStats() {
+        RUNTIME.resetStats();
+    }
+
+    // ---- Feature4：Pipeline API ----
+
+    /**
+     * 批量执行写命令（不关心返回值）。
+     * <p>
+     * 示例：
+     * <pre>{@code
+     * VostokCache.pipeline(pipe -> pipe
+     *     .set("k1", encoded, 60_000)
+     *     .incrBy("counter", 1)
+     *     .expire("k2", 30_000));
+     * }</pre>
+     *
+     * @param pipelineConsumer 命令追加 lambda
+     */
+    public static void pipeline(Consumer<VKCachePipeline> pipelineConsumer) {
+        RUNTIME.pipeline(pipelineConsumer);
+    }
+
+    /**
+     * 批量执行写命令并返回每条命令的结果。
+     *
+     * @param pipelineConsumer 命令追加 lambda
+     * @return 每条命令的执行结果封装
+     */
+    public static VKCachePipelineResult pipelineWithResult(Consumer<VKCachePipeline> pipelineConsumer) {
+        return RUNTIME.pipelineWithResult(pipelineConsumer);
+    }
+
+    // ---- 缓存基础操作 ----
 
     public static void set(String key, Object value) {
         RUNTIME.set(key, value, null);

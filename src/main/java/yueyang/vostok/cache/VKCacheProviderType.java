@@ -2,7 +2,9 @@ package yueyang.vostok.cache;
 
 public enum VKCacheProviderType {
     MEMORY,
-    REDIS;
+    REDIS,
+    /** L1（内存）+ L2（任意 Provider）两级缓存模式。需配合 l1Config / l2Config 使用。 */
+    TIERED;
 
     public static VKCacheProviderType from(String value) {
         if (value == null || value.isBlank()) {
