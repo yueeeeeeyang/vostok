@@ -51,9 +51,9 @@
 <pre><code><span class="ty">Vostok</span>.Event.init();  <span class="cm">// 默认配置</span>
 
 <span class="ty">Vostok</span>.Event.init(<span class="kw">new</span> <span class="ty">VKEventConfig</span>()
-    .asyncCoreThreads(<span class="nu">4</span>)
-    .asyncMaxThreads(<span class="nu">16</span>)
-    .asyncQueueCapacity(<span class="nu">10000</span>)
+    .asyncCoreThreads(<span class="nu">4</span>)           <span class="cm">// 默认 CPU/2</span>
+    .asyncMaxThreads(<span class="nu">16</span>)           <span class="cm">// 默认 CPU*2</span>
+    .asyncQueueCapacity(<span class="nu">4096</span>)
     .listenerErrorStrategy(<span class="ty">VKEventListenerErrorStrategy</span>.CONTINUE)  <span class="cm">// 某监听失败继续后续</span>
     .rejectionPolicy(<span class="ty">VKEventRejectionPolicy</span>.CALLER_RUNS)
 );</code></pre>
@@ -117,11 +117,11 @@
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
     <tr><td class="param-name">enabled</td><td>boolean</td><td>true</td><td>是否启用事件总线</td></tr>
-    <tr><td class="param-name">asyncCoreThreads</td><td>int</td><td>4</td><td>异步线程池核心线程数</td></tr>
-    <tr><td class="param-name">asyncMaxThreads</td><td>int</td><td>16</td><td>异步线程池最大线程数</td></tr>
-    <tr><td class="param-name">asyncQueueCapacity</td><td>int</td><td>10000</td><td>异步任务队列容量</td></tr>
+    <tr><td class="param-name">asyncCoreThreads</td><td>int</td><td>CPU/2</td><td>异步线程池核心线程数</td></tr>
+    <tr><td class="param-name">asyncMaxThreads</td><td>int</td><td>CPU*2</td><td>异步线程池最大线程数</td></tr>
+    <tr><td class="param-name">asyncQueueCapacity</td><td>int</td><td>4096</td><td>异步任务队列容量</td></tr>
     <tr><td class="param-name">asyncKeepAliveMs</td><td>long</td><td>60000</td><td>空闲线程存活时间（ms）</td></tr>
-    <tr><td class="param-name">shutdownWaitMs</td><td>long</td><td>5000</td><td>关闭时等待任务完成的最长时间</td></tr>
+    <tr><td class="param-name">shutdownWaitMs</td><td>long</td><td>3000</td><td>关闭时等待任务完成的最长时间</td></tr>
     <tr><td class="param-name">rejectionPolicy</td><td>VKEventRejectionPolicy</td><td>CALLER_RUNS</td><td>队列满时策略：CALLER_RUNS / DISCARD</td></tr>
     <tr><td class="param-name">listenerErrorStrategy</td><td>VKEventListenerErrorStrategy</td><td>CONTINUE</td><td>监听器异常策略：CONTINUE（继续后续）/ STOP</td></tr>
   </tbody>

@@ -50,10 +50,9 @@
 <h2>初始化</h2>
 <pre><code><span class="ty">Vostok</span>.Http.init(<span class="kw">new</span> <span class="ty">VKHttpConfig</span>()
     .connectTimeoutMs(<span class="nu">3000</span>)
-    .readTimeoutMs(<span class="nu">10000</span>)
-    .maxRetries(<span class="nu">3</span>)
+    .totalTimeoutMs(<span class="nu">10000</span>)
+    .maxRetries(<span class="nu">1</span>)
     .retryBackoffBaseMs(<span class="nu">200</span>)
-    .maxActive(<span class="nu">20</span>)
 );</code></pre>
 
 <h2>快速请求</h2>
@@ -69,24 +68,22 @@
 
 <span class="cm">// POST JSON</span>
 <span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"https://api.example.com/users"</span>)
-    .body(<span class="ty">Vostok</span>.Util.toJson(user))
-    .header(<span class="st">"Content-Type"</span>, <span class="st">"application/json"</span>)
+    .bodyJson(user)
     .execute();
 
 <span class="cm">// 表单提交</span>
 <span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"https://example.com/form"</span>)
-    .formBody(<span class="ty">Map</span>.of(<span class="st">"username"</span>, <span class="st">"alice"</span>, <span class="st">"password"</span>, <span class="st">"secret"</span>))
+    .form(<span class="ty">Map</span>.of(<span class="st">"username"</span>, <span class="st">"alice"</span>, <span class="st">"password"</span>, <span class="st">"secret"</span>))
     .execute();</code></pre>
 
 <h2>请求构建器</h2>
-<pre><code><span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.request()
-    .method(<span class="st">"PATCH"</span>)
-    .url(<span class="st">"https://api.example.com/users/1"</span>)
-    .header(<span class="st">"Authorization"</span>, <span class="st">"Bearer "</span> + token)
-    .queryParam(<span class="st">"dryRun"</span>, <span class="st">"true"</span>)
-    .body(<span class="st">"{\"name\":\"Bob\"}"</span>)
-    .timeout(<span class="nu">5000</span>)
-    .retries(<span class="nu">2</span>)
+<pre><code><span class="cm">// 使用 put/patch/delete/head</span>
+<span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.put(<span class="st">"https://api.example.com/users/1"</span>)
+    .bearer(token)
+    .query(<span class="st">"dryRun"</span>, <span class="st">"true"</span>)
+    .bodyJson(<span class="ty">Map</span>.of(<span class="st">"name"</span>, <span class="st">"Bob"</span>))
+    .timeoutMs(<span class="nu">5000</span>)
+    .retry(<span class="nu">2</span>)
     .execute();</code></pre>
 
 <h2>命名 Client</h2>
@@ -100,7 +97,7 @@
 <span class="cm">// 在命名 Client 上下文中使用相对路径</span>
 <span class="ty">Vostok</span>.Http.withClient(<span class="st">"payments"</span>, () -&gt; {
     <span class="ty">VKHttpResponse</span> res = <span class="ty">Vostok</span>.Http.post(<span class="st">"/charge"</span>)
-        .body(chargeJson)
+        .bodyText(chargeJson)
         .execute();
 });</code></pre>
 
@@ -168,13 +165,13 @@ session.close();</code></pre>
 <table class="config-table">
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td class="param-name">connectTimeoutMs</td><td>long</td><td>5000</td><td>TCP 连接超时（ms）</td></tr>
-    <tr><td class="param-name">readTimeoutMs</td><td>long</td><td>30000</td><td>读取超时（ms）</td></tr>
-    <tr><td class="param-name">maxRetries</td><td>int</td><td>0</td><td>失败最大重试次数</td></tr>
+    <tr><td class="param-name">connectTimeoutMs</td><td>long</td><td>3000</td><td>TCP 连接超时（ms）</td></tr>
+    <tr><td class="param-name">totalTimeoutMs</td><td>long</td><td>10000</td><td>请求总超时（ms，0=无限制）</td></tr>
+    <tr><td class="param-name">readTimeoutMs</td><td>long</td><td>0</td><td>读取超时（0=无限制）</td></tr>
+    <tr><td class="param-name">maxRetries</td><td>int</td><td>1</td><td>失败最大重试次数</td></tr>
     <tr><td class="param-name">retryBackoffBaseMs</td><td>long</td><td>100</td><td>重试基础退避时间（指数退避）</td></tr>
-    <tr><td class="param-name">failOnNon2xx</td><td>boolean</td><td>false</td><td>非 2xx 状态码时是否抛异常</td></tr>
-    <tr><td class="param-name">minIdle</td><td>int</td><td>2</td><td>连接池最小空闲连接</td></tr>
-    <tr><td class="param-name">maxActive</td><td>int</td><td>10</td><td>连接池最大活跃连接</td></tr>
+    <tr><td class="param-name">failOnNon2xx</td><td>boolean</td><td>true</td><td>非 2xx 状态码时是否抛异常</td></tr>
+    <tr><td class="param-name">maxResponseBodyBytes</td><td>long</td><td>8388608</td><td>响应体最大字节数（8MB）</td></tr>
     <tr><td class="param-name">metricsEnabled</td><td>boolean</td><td>true</td><td>开启请求指标统计</td></tr>
     <tr><td class="param-name">requestBodyCompression</td><td>boolean</td><td>false</td><td>自动 GZIP 压缩请求体</td></tr>
   </tbody>
@@ -185,7 +182,6 @@ session.close();</code></pre>
   <thead><tr><th>方法</th><th>说明</th></tr></thead>
   <tbody>
     <tr><td><code>get(url)</code> / <code>post(url)</code> / <code>put(url)</code> / <code>delete(url)</code></td><td>快捷构建请求</td></tr>
-    <tr><td><code>request()</code></td><td>通用请求构建器</td></tr>
     <tr><td><code>.execute()</code></td><td>同步执行</td></tr>
     <tr><td><code>.executeAsync()</code></td><td>异步执行（CompletableFuture）</td></tr>
     <tr><td><code>.executeJson(Class)</code></td><td>同步执行并解析 JSON</td></tr>

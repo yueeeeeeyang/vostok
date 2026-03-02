@@ -59,15 +59,21 @@
 <span class="cm">// 严格模式</span>
 <span class="ty">Vostok</span>.Security.init(<span class="kw">new</span> <span class="ty">VKSecurityConfig</span>()
     .strictMode(<span class="kw">true</span>)
-    .auditLogEnabled(<span class="kw">true</span>)
+    .auditLog(<span class="kw">true</span>)
 );</code></pre>
 
 <h2>SQL 注入检测</h2>
 <pre><code><span class="cm">// 检测用户输入</span>
-<span class="kw">boolean</span> safe = <span class="ty">Vostok</span>.Security.checkSql(userInput);
-<span class="kw">if</span> (!safe) {
-    <span class="kw">throw new</span> <span class="ty">SecurityException</span>(<span class="st">"SQL injection detected"</span>);
+<span class="ty">VKSqlCheckResult</span> result = <span class="ty">Vostok</span>.Security.checkSql(userInput);
+<span class="kw">if</span> (!result.isSafe()) {
+    <span class="kw">throw new</span> <span class="ty">SecurityException</span>(<span class="st">"SQL injection detected: "</span> + result.getReason());
 }
+
+<span class="cm">// 便捷方法（直接返回 boolean）</span>
+<span class="kw">boolean</span> safe = <span class="ty">Vostok</span>.Security.isSafeSql(userInput);
+
+<span class="cm">// 断言式（不安全时直接抛异常）</span>
+<span class="ty">Vostok</span>.Security.assertSafeSql(userInput);
 
 <span class="cm">// 自定义规则</span>
 <span class="ty">Vostok</span>.Security.registerRule(input -&gt; !input.contains(<span class="st">"EXEC"</span>));
@@ -75,119 +81,142 @@
 
 <h2>XSS 检测与净化</h2>
 <pre><code><span class="cm">// 检测 XSS</span>
-<span class="kw">boolean</span> safe = <span class="ty">Vostok</span>.Security.checkXss(input);
+<span class="ty">VKSecurityCheckResult</span> r = <span class="ty">Vostok</span>.Security.checkXss(input);
+<span class="kw">if</span> (!r.isSafe()) { ... }
 
-<span class="cm">// HTML 净化（转义危险标签）</span>
-<span class="ty">String</span> clean = <span class="ty">Vostok</span>.Security.sanitizeHtml(userHtml);</code></pre>
+<span class="cm">// XSS 净化（转义危险标签）</span>
+<span class="ty">String</span> clean = <span class="ty">Vostok</span>.Security.sanitizeXss(userHtml);</code></pre>
 
 <h2>命令注入检测</h2>
-<pre><code><span class="kw">boolean</span> safe = <span class="ty">Vostok</span>.Security.checkCommandInjection(input);</code></pre>
+<pre><code><span class="ty">VKSecurityCheckResult</span> r = <span class="ty">Vostok</span>.Security.checkCommandInjection(input);
+<span class="kw">if</span> (!r.isSafe()) { ... }</code></pre>
 
 <h2>路径穿越检测</h2>
-<pre><code><span class="kw">boolean</span> safe = <span class="ty">Vostok</span>.Security.checkPathTraversal(filePath);</code></pre>
+<pre><code><span class="ty">VKSecurityCheckResult</span> r = <span class="ty">Vostok</span>.Security.checkPathTraversal(filePath);
+<span class="kw">if</span> (!r.isSafe()) { ... }</code></pre>
 
 <h2>SSRF 检测</h2>
-<pre><code><span class="kw">boolean</span> safe = <span class="ty">Vostok</span>.Security.checkSsrf(url);</code></pre>
+<pre><code><span class="ty">VKSecurityCheckResult</span> r = <span class="ty">Vostok</span>.Security.checkSsrf(url);
+<span class="kw">if</span> (!r.isSafe()) { ... }</code></pre>
 
 <h2>XXE 检测</h2>
-<pre><code><span class="kw">boolean</span> safe = <span class="ty">Vostok</span>.Security.checkXxe(xmlContent);</code></pre>
+<pre><code><span class="ty">VKSecurityCheckResult</span> r = <span class="ty">Vostok</span>.Security.checkXxe(xmlContent);
+<span class="kw">if</span> (!r.isSafe()) { ... }</code></pre>
 
 <h2>CRLF 注入检测</h2>
-<pre><code><span class="kw">boolean</span> safe = <span class="ty">Vostok</span>.Security.checkCrlf(headerValue);</code></pre>
+<pre><code><span class="ty">VKSecurityCheckResult</span> r = <span class="ty">Vostok</span>.Security.checkCrlf(headerValue);
+<span class="kw">if</span> (!r.isSafe()) { ... }</code></pre>
 
 <h2>NoSQL 注入检测</h2>
-<pre><code><span class="kw">boolean</span> safe = <span class="ty">Vostok</span>.Security.checkNoSqlInjection(mongoQuery);</code></pre>
+<pre><code><span class="ty">VKSecurityCheckResult</span> r = <span class="ty">Vostok</span>.Security.checkNoSqlInjection(mongoQuery);
+<span class="kw">if</span> (!r.isSafe()) { ... }</code></pre>
 
 <h2>文件类型检测</h2>
-<pre><code><span class="cm">// 通过魔数检测文件类型（防止伪装后缀上传）</span>
-<span class="kw">byte</span>[] fileBytes = req.bodyBytes();
-<span class="kw">boolean</span> valid = <span class="ty">Vostok</span>.Security.checkFile(fileBytes);
+<pre><code><span class="cm">// 检测文件魔数类型</span>
+<span class="ty">VKFileType</span> type = <span class="ty">Vostok</span>.Security.detectFileType(fileBytes);
 
-<span class="cm">// 通过文件路径检测</span>
-<span class="kw">boolean</span> valid = <span class="ty">Vostok</span>.Security.checkFile(<span class="ty">Path</span>.of(<span class="st">"upload/photo.jpg"</span>));</code></pre>
+<span class="cm">// 校验是否为允许的类型（防伪装后缀上传）</span>
+<span class="kw">boolean</span> valid = <span class="ty">Vostok</span>.Security.checkFileMagic(fileBytes, <span class="ty">VKFileType</span>.JPEG, <span class="ty">VKFileType</span>.PNG);
+
+<span class="cm">// 检测是否为可执行脚本（上传安全）</span>
+<span class="kw">boolean</span> dangerous = <span class="ty">Vostok</span>.Security.checkExecutableScriptUpload(fileName, fileBytes);</code></pre>
 
 <h2>响应脱敏</h2>
 <pre><code><span class="cm">// 对 JSON 响应中的敏感字段自动打码</span>
-<span class="ty">String</span> safeJson = <span class="ty">Vostok</span>.Security.desensitizeResponse(
-    responseJson,
-    <span class="ty">Set</span>.of(<span class="st">"password"</span>, <span class="st">"idCard"</span>, <span class="st">"phone"</span>, <span class="st">"creditCard"</span>)
-);
-<span class="cm">// 输出示例：{"phone":"138****5678","password":"****"}</span></code></pre>
+<span class="ty">String</span> safeJson = <span class="ty">Vostok</span>.Security.maskSensitiveResponse(responseJson);
+
+<span class="cm">// 检测响应是否包含敏感信息</span>
+<span class="ty">VKSecurityCheckResult</span> r = <span class="ty">Vostok</span>.Security.checkSensitiveResponse(responseJson);</code></pre>
 
 <h2>AES 加解密</h2>
 <pre><code><span class="cm">// 生成 AES 密钥（Base64 编码）</span>
-<span class="ty">String</span> keyBase64 = <span class="ty">Vostok</span>.Security.AesCrypto.generateKey();
+<span class="ty">String</span> keyBase64 = <span class="ty">Vostok</span>.Security.generateAesKey();
 
 <span class="cm">// 加密</span>
-<span class="ty">String</span> cipher = <span class="ty">Vostok</span>.Security.AesCrypto.encrypt(<span class="st">"hello"</span>, keyBase64);
+<span class="ty">String</span> cipher = <span class="ty">Vostok</span>.Security.encrypt(<span class="st">"hello"</span>, keyBase64);
 
 <span class="cm">// 解密</span>
-<span class="ty">String</span> plain = <span class="ty">Vostok</span>.Security.AesCrypto.decrypt(cipher, keyBase64);</code></pre>
+<span class="ty">String</span> plain = <span class="ty">Vostok</span>.Security.decrypt(cipher, keyBase64);</code></pre>
 
 <h2>RSA 加解密</h2>
 <pre><code><span class="cm">// 生成 RSA 密钥对</span>
-<span class="ty">VKRsaKeyPair</span> pair = <span class="ty">Vostok</span>.Security.RsaCrypto.generateKeyPair();
-<span class="ty">String</span> pubKey  = pair.publicKeyBase64();
-<span class="ty">String</span> privKey = pair.privateKeyBase64();
+<span class="ty">VKRsaKeyPair</span> pair = <span class="ty">Vostok</span>.Security.generateRsaKeyPair();
+<span class="ty">String</span> pubKeyPem  = pair.publicKeyPem();
+<span class="ty">String</span> privKeyPem = pair.privateKeyPem();
 
 <span class="cm">// 公钥加密</span>
-<span class="ty">String</span> cipher = <span class="ty">Vostok</span>.Security.RsaCrypto.encrypt(<span class="st">"hello"</span>, pubKey);
+<span class="ty">String</span> cipher = <span class="ty">Vostok</span>.Security.encryptByPublicKey(<span class="st">"hello"</span>, pubKeyPem);
 
 <span class="cm">// 私钥解密</span>
-<span class="ty">String</span> plain = <span class="ty">Vostok</span>.Security.RsaCrypto.decrypt(cipher, privKey);</code></pre>
+<span class="ty">String</span> plain = <span class="ty">Vostok</span>.Security.decryptByPrivateKey(cipher, privKeyPem);
+
+<span class="cm">// 签名验证</span>
+<span class="ty">String</span> sig = <span class="ty">Vostok</span>.Security.sign(<span class="st">"message"</span>, privKeyPem);
+<span class="kw">boolean</span> ok = <span class="ty">Vostok</span>.Security.verify(<span class="st">"message"</span>, sig, pubKeyPem);</code></pre>
 
 <h2>Hash 与 HMAC</h2>
 <pre><code><span class="cm">// SHA-256 哈希</span>
-<span class="ty">String</span> hash = <span class="ty">Vostok</span>.Security.HashCrypto.sha256(<span class="st">"password"</span>);
+<span class="ty">String</span> hash = <span class="ty">Vostok</span>.Security.sha256Hex(<span class="st">"password"</span>);
 
 <span class="cm">// HMAC-SHA256</span>
-<span class="ty">String</span> secretBase64 = <span class="ty">Vostok</span>.Security.HashCrypto.generateHmacKey();
-<span class="ty">String</span> mac = <span class="ty">Vostok</span>.Security.HashCrypto.hmacSha256(<span class="st">"message"</span>, secretBase64);</code></pre>
+<span class="ty">String</span> mac = <span class="ty">Vostok</span>.Security.hmacSha256(<span class="st">"message"</span>, secretBase64);</code></pre>
 
 <h2>Key Store（密钥存储）</h2>
-<pre><code><span class="cm">// 初始化本地密钥存储</span>
+<pre><code><span class="cm">// 初始化 Key Store</span>
 <span class="ty">Vostok</span>.Security.initKeyStore(<span class="kw">new</span> <span class="ty">VKKeyStoreConfig</span>()
     .dir(<span class="st">"./keys"</span>)
     .masterPassword(<span class="st">"masterSecret"</span>));
 
-<span class="cm">// 保存密钥（带 TTL）</span>
-<span class="ty">Vostok</span>.Security.saveKey(<span class="st">"aes-key-v1"</span>, keyBytes, <span class="nu">86400_000</span>);
+<span class="cm">// 按 keyId 自动创建/获取 AES 密钥</span>
+<span class="kw">byte</span>[] aesKey = <span class="ty">Vostok</span>.Security.getOrCreateAesKey(<span class="st">"aes-key-v1"</span>);
 
-<span class="cm">// 加载密钥</span>
-<span class="kw">byte</span>[] k = <span class="ty">Vostok</span>.Security.loadKey(<span class="st">"aes-key-v1"</span>);
+<span class="cm">// 带 TTL（秒）</span>
+<span class="kw">byte</span>[] aesKey = <span class="ty">Vostok</span>.Security.getOrCreateAesKey(<span class="st">"aes-key-v1"</span>, <span class="nu">86400L</span>);
 
-<span class="cm">// 管理</span>
-<span class="ty">Vostok</span>.Security.deleteKey(<span class="st">"aes-key-v1"</span>);
-<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; ids = <span class="ty">Vostok</span>.Security.listKeyIds();
+<span class="cm">// 按 keyId 自动创建/获取 RSA 密钥对</span>
+<span class="ty">VKRsaKeyPair</span> pair = <span class="ty">Vostok</span>.Security.getOrCreateRsaKeyPair(<span class="st">"rsa-key-v1"</span>);
 
-<span class="cm">// 注册自定义 Key Store</span>
-<span class="ty">Vostok</span>.Security.setKeyStore(myRedisKeyStore);</code></pre>
+<span class="cm">// 使用 keyId 加解密（自动密钥管理）</span>
+<span class="ty">String</span> cipherPayload = <span class="ty">Vostok</span>.Security.encryptWithKeyId(<span class="st">"hello"</span>, <span class="st">"aes-key-v1"</span>);
+<span class="ty">String</span> plain = <span class="ty">Vostok</span>.Security.decryptWithKeyId(cipherPayload);
+
+<span class="cm">// 密钥轮转</span>
+<span class="ty">Vostok</span>.Security.rotateAesKey(<span class="st">"aes-key-v1"</span>);
+<span class="ty">Vostok</span>.Security.rotateRsaKeyPair(<span class="st">"rsa-key-v1"</span>);
+<span class="ty">Vostok</span>.Security.rotateKek(<span class="st">"aes-key-v1"</span>);</code></pre>
 
 <h2>API 速查</h2>
 <table class="api-table">
   <thead><tr><th>方法</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>checkSql(input)</code></td><td>SQL 注入检测，安全返回 true</td></tr>
-    <tr><td><code>checkXss(input)</code></td><td>XSS 检测</td></tr>
-    <tr><td><code>sanitizeHtml(html)</code></td><td>HTML 净化/转义</td></tr>
-    <tr><td><code>checkCommandInjection(input)</code></td><td>命令注入检测</td></tr>
-    <tr><td><code>checkPathTraversal(path)</code></td><td>路径穿越检测</td></tr>
-    <tr><td><code>checkSsrf(url)</code></td><td>SSRF 检测</td></tr>
-    <tr><td><code>checkXxe(xml)</code></td><td>XXE 检测</td></tr>
-    <tr><td><code>checkCrlf(input)</code></td><td>CRLF 注入检测</td></tr>
-    <tr><td><code>checkNoSqlInjection(input)</code></td><td>NoSQL 注入检测</td></tr>
-    <tr><td><code>checkFile(bytes)</code></td><td>文件魔数类型验证</td></tr>
-    <tr><td><code>desensitizeResponse(json, fields)</code></td><td>响应脱敏（按字段名打码）</td></tr>
-    <tr><td><code>AesCrypto.encrypt(plain, keyB64)</code></td><td>AES 加密</td></tr>
-    <tr><td><code>AesCrypto.decrypt(cipher, keyB64)</code></td><td>AES 解密</td></tr>
-    <tr><td><code>RsaCrypto.generateKeyPair()</code></td><td>生成 RSA 密钥对</td></tr>
-    <tr><td><code>RsaCrypto.encrypt(plain, pubKey)</code></td><td>RSA 公钥加密</td></tr>
-    <tr><td><code>RsaCrypto.decrypt(cipher, privKey)</code></td><td>RSA 私钥解密</td></tr>
-    <tr><td><code>HashCrypto.sha256(input)</code></td><td>SHA-256 哈希</td></tr>
-    <tr><td><code>HashCrypto.hmacSha256(input, key)</code></td><td>HMAC-SHA256</td></tr>
+    <tr><td><code>checkSql(input)</code></td><td>SQL 注入检测，返回 VKSqlCheckResult；isSafeSql(input) 返回 boolean</td></tr>
+    <tr><td><code>checkXss(input)</code></td><td>XSS 检测，返回 VKSecurityCheckResult</td></tr>
+    <tr><td><code>sanitizeXss(html)</code></td><td>XSS 净化/转义</td></tr>
+    <tr><td><code>checkCommandInjection(input)</code></td><td>命令注入检测，返回 VKSecurityCheckResult</td></tr>
+    <tr><td><code>checkPathTraversal(path)</code></td><td>路径穿越检测，返回 VKSecurityCheckResult</td></tr>
+    <tr><td><code>checkSsrf(url)</code></td><td>SSRF 检测，返回 VKSecurityCheckResult</td></tr>
+    <tr><td><code>checkXxe(xml)</code></td><td>XXE 检测，返回 VKSecurityCheckResult</td></tr>
+    <tr><td><code>checkCrlf(input)</code></td><td>CRLF 注入检测，返回 VKSecurityCheckResult</td></tr>
+    <tr><td><code>checkNoSqlInjection(input)</code></td><td>NoSQL 注入检测，返回 VKSecurityCheckResult</td></tr>
+    <tr><td><code>detectFileType(bytes)</code></td><td>文件魔数类型检测</td></tr>
+    <tr><td><code>checkFileMagic(bytes, types...)</code></td><td>校验允许的文件类型</td></tr>
+    <tr><td><code>maskSensitiveResponse(json)</code></td><td>响应敏感信息打码</td></tr>
+    <tr><td><code>encrypt(plain, keyB64)</code></td><td>AES 加密</td></tr>
+    <tr><td><code>decrypt(cipher, keyB64)</code></td><td>AES 解密</td></tr>
+    <tr><td><code>generateAesKey()</code></td><td>生成 AES 密钥（Base64 编码）</td></tr>
+    <tr><td><code>generateRsaKeyPair()</code></td><td>生成 RSA 密钥对</td></tr>
+    <tr><td><code>encryptByPublicKey(plain, pubKey)</code></td><td>RSA 公钥加密</td></tr>
+    <tr><td><code>decryptByPrivateKey(cipher, privKey)</code></td><td>RSA 私钥解密</td></tr>
+    <tr><td><code>sign(text, privKey)</code></td><td>RSA 签名</td></tr>
+    <tr><td><code>verify(text, sig, pubKey)</code></td><td>RSA 签名验证</td></tr>
+    <tr><td><code>sha256Hex(input)</code></td><td>SHA-256 哈希</td></tr>
+    <tr><td><code>hmacSha256(input, key)</code></td><td>HMAC-SHA256</td></tr>
     <tr><td><code>registerRule(rule)</code></td><td>注册自定义 SQL 安全规则</td></tr>
-    <tr><td><code>saveKey(id, bytes, ttlMs)</code></td><td>保存密钥到 Key Store</td></tr>
-    <tr><td><code>loadKey(id)</code></td><td>从 Key Store 加载密钥</td></tr>
+    <tr><td><code>getOrCreateAesKey(keyId)</code></td><td>按 keyId 自动创建/获取 AES 密钥</td></tr>
+    <tr><td><code>getOrCreateRsaKeyPair(keyId)</code></td><td>按 keyId 自动创建/获取 RSA 密钥对</td></tr>
+    <tr><td><code>encryptWithKeyId(text, keyId)</code></td><td>使用 keyId 加密（自动密钥管理）</td></tr>
+    <tr><td><code>decryptWithKeyId(payload)</code></td><td>使用 keyId 解密（自动密钥管理）</td></tr>
+    <tr><td><code>rotateAesKey(keyId)</code></td><td>轮转 AES 密钥</td></tr>
   </tbody>
 </table>
 

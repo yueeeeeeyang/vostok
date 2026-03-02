@@ -52,15 +52,14 @@
 
 <span class="cm">// 注册模型</span>
 <span class="ty">Vostok</span>.AI.registerModel(<span class="st">"gpt4"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
-    .modelType(<span class="ty">VKAiModelType</span>.GPT4)
+    .type(<span class="ty">VKAiModelType</span>.GPT4)
     .apiKey(System.getenv(<span class="st">"OPENAI_KEY"</span>))
     .baseUrl(<span class="st">"https://api.openai.com/v1"</span>)
-    .maxTokens(<span class="nu">4096</span>)
-    .temperature(<span class="nu">0.7</span>)
+    .model(<span class="st">"gpt-4o"</span>)
 );
 
 <span class="ty">Vostok</span>.AI.registerModel(<span class="st">"claude"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
-    .modelType(<span class="ty">VKAiModelType</span>.CLAUDE)
+    .type(<span class="ty">VKAiModelType</span>.CLAUDE)
     .apiKey(<span class="ty">System</span>.getenv(<span class="st">"ANTHROPIC_KEY"</span>))
 );</code></pre>
 
@@ -95,9 +94,10 @@
 <span class="ty">VKAiSession</span> session = <span class="ty">Vostok</span>.AI.createSession(<span class="st">"gpt4"</span>);
 <span class="ty">String</span> sessionId = session.sessionId();
 
-<span class="cm">// 基于会话的对话（自动携带历史）</span>
-<span class="ty">String</span> reply1 = <span class="ty">Vostok</span>.AI.chatSession(sessionId, <span class="st">"Java 有哪些主要特性？"</span>);
-<span class="ty">String</span> reply2 = <span class="ty">Vostok</span>.AI.chatSession(sessionId, <span class="st">"它与 Go 有什么区别？"</span>);
+<span class="cm">// 基于会话的对话（自动携带历史，返回 VKAiChatResponse）</span>
+<span class="ty">VKAiChatResponse</span> reply1 = <span class="ty">Vostok</span>.AI.chatSession(sessionId, <span class="st">"Java 有哪些主要特性？"</span>);
+<span class="ty">VKAiChatResponse</span> reply2 = <span class="ty">Vostok</span>.AI.chatSession(sessionId, <span class="st">"它与 Go 有什么区别？"</span>);
+<span class="ty">System</span>.out.println(reply1.content());
 
 <span class="cm">// 查看历史消息</span>
 <span class="ty">List</span>&lt;<span class="ty">VKAiSessionMessage</span>&gt; history = <span class="ty">Vostok</span>.AI.sessionMessages(sessionId);
@@ -109,13 +109,13 @@
 <span class="ty">Vostok</span>.AI.deleteSession(sessionId);</code></pre>
 
 <h2>生成 Embedding</h2>
-<pre><code><span class="ty">VKAiEmbedding</span> emb = <span class="ty">Vostok</span>.AI.embed(
+<pre><code><span class="ty">List</span>&lt;<span class="ty">VKAiEmbedding</span>&gt; embeddings = <span class="ty">Vostok</span>.AI.embed(
     <span class="ty">VKAiEmbeddingRequest</span>.builder()
         .model(<span class="st">"text-embedding-ada-002"</span>)
         .input(<span class="st">"Vostok 是一个 Java 框架"</span>)
         .build()
 );
-<span class="ty">List</span>&lt;<span class="ty">Double</span>&gt; vector = emb.vector();</code></pre>
+<span class="ty">List</span>&lt;<span class="ty">Double</span>&gt; vector = embeddings.get(<span class="nu">0</span>).vector();</code></pre>
 
 <h2>向量存储与检索</h2>
 <pre><code><span class="cm">// 设置向量存储后端</span>
@@ -127,10 +127,10 @@
 ));
 
 <span class="cm">// 向量相似度检索</span>
-<span class="ty">List</span>&lt;<span class="ty">VKAiVectorDoc</span>&gt; results = <span class="ty">Vostok</span>.AI.searchVector(queryVector, <span class="nu">5</span>);
+<span class="ty">List</span>&lt;<span class="ty">VKAiVectorHit</span>&gt; results = <span class="ty">Vostok</span>.AI.searchVector(queryVector, <span class="nu">5</span>);
 
 <span class="cm">// 关键词检索</span>
-<span class="ty">List</span>&lt;<span class="ty">VKAiVectorDoc</span>&gt; results = <span class="ty">Vostok</span>.AI.searchKeywords(<span class="st">"Java 框架"</span>, <span class="nu">5</span>);</code></pre>
+<span class="ty">List</span>&lt;<span class="ty">VKAiVectorHit</span>&gt; results = <span class="ty">Vostok</span>.AI.searchKeywords(<span class="st">"Java 框架"</span>, <span class="nu">5</span>);</code></pre>
 
 <h2>RAG（检索增强生成）</h2>
 <pre><code><span class="cm">// 1. 写入文档到 RAG 知识库</span>
@@ -193,7 +193,7 @@
     <tr><td><code>chatJson(request, Class)</code></td><td>对话并解析 JSON 结构</td></tr>
     <tr><td><code>chatJsonAsync(request, Class)</code></td><td>异步对话解析 JSON</td></tr>
     <tr><td><code>createSession(model)</code></td><td>创建多轮对话 Session</td></tr>
-    <tr><td><code>chatSession(sessionId, text)</code></td><td>基于 Session 的对话</td></tr>
+    <tr><td><code>chatSession(sessionId, text)</code></td><td>基于 Session 的对话，返回 VKAiChatResponse</td></tr>
     <tr><td><code>sessionMessages(sessionId)</code></td><td>获取会话历史消息</td></tr>
     <tr><td><code>switchSessionModel(sessionId, model)</code></td><td>切换会话使用的模型</td></tr>
     <tr><td><code>deleteSession(sessionId)</code></td><td>删除会话</td></tr>
@@ -201,8 +201,8 @@
     <tr><td><code>rerank(request)</code></td><td>文档重排序</td></tr>
     <tr><td><code>setVectorStore(store)</code></td><td>设置向量数据库后端</td></tr>
     <tr><td><code>upsertVectorDocs(docs)</code></td><td>写入向量文档</td></tr>
-    <tr><td><code>searchVector(vector, topK)</code></td><td>向量相似度检索</td></tr>
-    <tr><td><code>searchKeywords(query, topK)</code></td><td>关键词检索</td></tr>
+    <tr><td><code>searchVector(vector, topK)</code></td><td>向量相似度检索，返回 List&lt;VKAiVectorHit&gt;</td></tr>
+    <tr><td><code>searchKeywords(query, topK)</code></td><td>关键词检索，返回 List&lt;VKAiVectorHit&gt;</td></tr>
     <tr><td><code>ingestRagDocument(request)</code></td><td>向 RAG 知识库写入文档</td></tr>
     <tr><td><code>rag(request)</code></td><td>RAG 检索增强对话</td></tr>
     <tr><td><code>registerTool(tool)</code></td><td>注册 Tool Call 函数</td></tr>
