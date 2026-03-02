@@ -4,7 +4,7 @@
 
 > 当前版本定位为实验与技术验证，不建议直接用于生产环境。
 
-**详细文档**：[docs/index.html](docs/index.html)
+**详细文档**：[docs/index.html](https://yueeeeeeyang.github.io/vostok/)
 
 ---
 
