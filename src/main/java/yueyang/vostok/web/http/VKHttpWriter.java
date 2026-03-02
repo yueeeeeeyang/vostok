@@ -74,23 +74,73 @@ public final class VKHttpWriter {
         return body == null ? 0 : body.length;
     }
 
+    /**
+     * 为 SSE 响应写出 HTTP 头部（不含 Content-Length，因为 SSE 是无界流）。
+     * 连接保持 keep-alive，响应头写完后连接切换为 SSE 协议。
+     *
+     * @param res       SSE 响应对象（已设置 Content-Type 等必要头）
+     * @param keepAlive 是否保持连接（SSE 通常为 true）
+     * @return HTTP 头部字节数组，以空行结尾
+     */
+    public static byte[] writeSseHead(VKResponse res, boolean keepAlive) {
+        int status = res.status();
+        String reason = reason(status);
+
+        StringBuilder sb = new StringBuilder(200);
+        sb.append("HTTP/1.1 ").append(status).append(' ').append(reason).append("\r\n");
+
+        boolean hasConnection = false;
+        for (Map.Entry<String, String> e : res.headers().entrySet()) {
+            String name = e.getKey();
+            String value = e.getValue();
+            if (name == null || value == null) {
+                continue;
+            }
+            // SSE 不写 Content-Length，保持连接为流模式
+            if ("content-length".equalsIgnoreCase(name)) {
+                continue;
+            }
+            if ("connection".equalsIgnoreCase(name)) {
+                hasConnection = true;
+            }
+            sb.append(name).append(": ").append(value).append("\r\n");
+        }
+        if (!hasConnection) {
+            sb.append("Connection: keep-alive\r\n");
+        }
+        sb.append("\r\n");
+        return sb.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+    }
+
     private static String reason(int status) {
         return switch (status) {
             case 200 -> "OK";
             case 201 -> "Created";
+            case 202 -> "Accepted";
             case 204 -> "No Content";
+            case 206 -> "Partial Content";
+            case 301 -> "Moved Permanently";
+            case 302 -> "Found";
             case 304 -> "Not Modified";
             case 400 -> "Bad Request";
+            case 401 -> "Unauthorized";
             case 403 -> "Forbidden";
             case 404 -> "Not Found";
             case 405 -> "Method Not Allowed";
             case 408 -> "Request Timeout";
+            case 409 -> "Conflict";
+            case 410 -> "Gone";
             case 413 -> "Payload Too Large";
+            case 415 -> "Unsupported Media Type";
+            case 422 -> "Unprocessable Entity";
             case 429 -> "Too Many Requests";
             case 431 -> "Request Header Fields Too Large";
             case 500 -> "Internal Server Error";
+            case 501 -> "Not Implemented";
+            case 502 -> "Bad Gateway";
             case 503 -> "Service Unavailable";
-            default -> "OK";
+            case 504 -> "Gateway Timeout";
+            default -> "Unknown";
         };
     }
 }

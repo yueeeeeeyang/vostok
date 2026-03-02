@@ -19,6 +19,7 @@ import yueyang.vostok.web.websocket.VKWebSocketHandler;
 import yueyang.vostok.web.websocket.VKWebSocketSession;
 import yueyang.vostok.web.websocket.VKWsRegistry;
 
+import javax.net.ssl.SSLContext;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.channels.Selector;
@@ -31,6 +32,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Web 服务器核心协调类，管理 Reactor 线程组、Worker 线程池、路由、中间件等。
+ *
+ * 集成点：
+ * - VKReactor：NIO 事件循环，处理网络 I/O
+ * - VKWorkerPool：业务逻辑执行线程池
+ * - VKMetrics：请求指标收集
+ * - VKWsRegistry：WebSocket 会话注册与广播
+ */
 public final class VKWebServer {
     private final VKWebConfig config;
     private final VKRouter router = new VKRouter();
@@ -51,10 +61,14 @@ public final class VKWebServer {
     private final Map<String, VKRateLimiter> routeRateLimiters = new ConcurrentHashMap<>();
     private final Map<String, VKWebSocketEndpoint> webSockets = new ConcurrentHashMap<>();
     private final VKWsRegistry wsRegistry = new VKWsRegistry();
+    /** 运行时指标，记录请求数、错误数、响应时间等。 */
+    private final VKMetrics metrics = new VKMetrics();
 
     public VKWebServer(VKWebConfig config) {
         this.config = config;
         this.errorHandler = (err, req, res) -> res.status(500).text("Internal Server Error");
+        // 注入活跃连接数回调，确保 metrics 每次查询到实时值
+        metrics.setActiveConnectionsSupplier(activeConnections::get);
     }
 
     public void addRoute(String method, String path, VKHandler handler) {
@@ -96,12 +110,24 @@ public final class VKWebServer {
                 accessLogger = new VKAccessLogger(config.getAccessLogQueueSize());
                 accessLogger.start();
             }
+
+            // 若配置了 TLS，构建 SSLContext 后传给每个 Reactor
+            SSLContext sslContext = null;
+            if (config.getTlsConfig() != null) {
+                try {
+                    sslContext = config.getTlsConfig().buildSslContext();
+                } catch (Exception e) {
+                    throw new IllegalStateException("Failed to build TLS SSLContext", e);
+                }
+            }
+
             int ioThreads = Math.max(1, config.getIoThreads());
             reactors = new VKReactor[ioThreads];
             for (int i = 0; i < ioThreads; i++) {
                 Selector sel = Selector.open();
                 reactors[i] = new VKReactor(this, sel, workers, router, middlewares, errorHandler,
-                        new VKHttpParser(config.getMaxHeaderBytes(), config.getMaxBodyBytes()), bufferPool, config);
+                        new VKHttpParser(config.getMaxHeaderBytes(), config.getMaxBodyBytes()),
+                        bufferPool, config, sslContext);
                 Thread t = new Thread(reactors[i], "vostok-web-reactor-" + i);
                 t.start();
             }
@@ -143,6 +169,11 @@ public final class VKWebServer {
         return boundPort;
     }
 
+    /** 获取运行时指标对象，供 VostokWeb 注册 health/metrics 端点使用。 */
+    public VKMetrics metrics() {
+        return metrics;
+    }
+
     public void setGlobalRateLimit(VKRateLimitConfig config) {
         if (config == null) {
             this.globalRateLimiter = null;
@@ -181,6 +212,8 @@ public final class VKWebServer {
         return wsRegistry;
     }
 
+    // ---- WebSocket Text Broadcast ----
+
     public int broadcastWebSocket(String path, String text) {
         return wsRegistry.broadcastAllText(normalizePath(path), text);
     }
@@ -195,6 +228,24 @@ public final class VKWebServer {
 
     public int broadcastWebSocketRoomAndGroup(String path, String room, String group, String text) {
         return wsRegistry.broadcastRoomAndGroupText(normalizePath(path), room, group, text);
+    }
+
+    // ---- WebSocket Binary Broadcast ----
+
+    public int broadcastWebSocketBinary(String path, byte[] data) {
+        return wsRegistry.broadcastAllBinary(normalizePath(path), data);
+    }
+
+    public int broadcastWebSocketRoomBinary(String path, String room, byte[] data) {
+        return wsRegistry.broadcastRoomBinary(normalizePath(path), room, data);
+    }
+
+    public int broadcastWebSocketGroupBinary(String path, String group, byte[] data) {
+        return wsRegistry.broadcastGroupBinary(normalizePath(path), group, data);
+    }
+
+    public int broadcastWebSocketRoomAndGroupBinary(String path, String room, String group, byte[] data) {
+        return wsRegistry.broadcastRoomAndGroupBinary(normalizePath(path), room, group, data);
     }
 
     boolean tryRateLimit(VKRequest req, VKRouteMatch match, VKResponse res) {
@@ -224,6 +275,20 @@ public final class VKWebServer {
             }
         }
         return true;
+    }
+
+    /**
+     * 记录一次请求完成的指标。
+     *
+     * @param nanos 请求处理耗时（纳秒）
+     * @param error 是否为错误响应（5xx）
+     */
+    void recordRequest(long nanos, boolean error) {
+        metrics.totalRequests.incrementAndGet();
+        metrics.totalResponseNs.addAndGet(nanos);
+        if (error) {
+            metrics.totalErrors.incrementAndGet();
+        }
     }
 
     private void cleanup() {

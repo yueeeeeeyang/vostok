@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -254,6 +255,70 @@ public class VostokWebSocketTest {
                         .get(3, TimeUnit.SECONDS));
         assertInstanceOf(WebSocketHandshakeException.class, ex.getCause());
         assertTrue(rejectCalled.get());
+    }
+
+    @Test
+    void testBinaryBroadcastRoom() throws Exception {
+        Vostok.Web.init(0)
+                .websocket("/ws-bin", new yueyang.vostok.web.websocket.VKWebSocketHandler() {
+                    @Override
+                    public void onOpen(VKWebSocketSession session) {
+                        session.joinRoom("room1");
+                    }
+                });
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        QueueBinaryListener l1 = new QueueBinaryListener();
+        QueueBinaryListener l2 = new QueueBinaryListener();
+
+        WebSocket ws1 = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()
+                .newWebSocketBuilder()
+                .buildAsync(new URI("ws://127.0.0.1:" + port + "/ws-bin"), l1)
+                .get(3, TimeUnit.SECONDS);
+        WebSocket ws2 = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build()
+                .newWebSocketBuilder()
+                .buildAsync(new URI("ws://127.0.0.1:" + port + "/ws-bin"), l2)
+                .get(3, TimeUnit.SECONDS);
+
+        // Give server time to register sessions in room
+        Thread.sleep(200);
+
+        byte[] payload = new byte[]{10, 20, 30};
+        int sent = Vostok.Web.websocketBroadcastRoomBinary("/ws-bin", "room1", payload);
+        assertTrue(sent >= 1, "Expected at least 1 sent, got " + sent);
+
+        byte[] received = l1.awaitBinary(3);
+        assertNotNull(received);
+        assertEquals(3, received.length);
+        assertEquals(10, received[0]);
+
+        ws1.sendClose(WebSocket.NORMAL_CLOSURE, "bye").join();
+        ws2.sendClose(WebSocket.NORMAL_CLOSURE, "bye").join();
+    }
+
+    private static final class QueueBinaryListener implements WebSocket.Listener {
+        private final BlockingQueue<byte[]> binaries = new LinkedBlockingQueue<>();
+
+        @Override
+        public void onOpen(WebSocket webSocket) {
+            webSocket.request(1);
+        }
+
+        @Override
+        public CompletionStage<?> onBinary(WebSocket webSocket, ByteBuffer data, boolean last) {
+            if (last) {
+                byte[] out = new byte[data.remaining()];
+                data.get(out);
+                binaries.offer(out);
+            }
+            webSocket.request(1);
+            return null;
+        }
+
+        byte[] awaitBinary(int seconds) throws InterruptedException {
+            return binaries.poll(seconds, TimeUnit.SECONDS);
+        }
     }
 
     private static final class EchoListener implements WebSocket.Listener {

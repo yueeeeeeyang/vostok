@@ -18,8 +18,16 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import yueyang.vostok.web.middleware.VKCorsConfig;
+import yueyang.vostok.web.middleware.VKGzipConfig;
+import yueyang.vostok.web.sse.VKSseEmitter;
+
+import java.util.ArrayList;
+import java.util.Collections;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class VostokWebTest {
@@ -403,5 +411,168 @@ public class VostokWebTest {
         assertEquals(200, o2.statusCode());
         assertEquals(429, o3.statusCode());
         assertFalse(o3.body().isEmpty());
+    }
+
+    @Test
+    void testCorsMiddleware() throws Exception {
+        Vostok.Web.init(0)
+                .cors(new VKCorsConfig().allowOrigins("https://example.com").allowCredentials(true))
+                .get("/api", (req, res) -> res.json("{\"ok\":true}"));
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        HttpClient client = HttpClient.newHttpClient();
+
+        // preflight OPTIONS -> 204, CORS headers present
+        HttpRequest preflight = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/api"))
+                .header("Origin", "https://example.com")
+                .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                .build();
+        HttpResponse<String> pre = client.send(preflight, HttpResponse.BodyHandlers.ofString());
+        assertEquals(204, pre.statusCode());
+        assertEquals("https://example.com",
+                pre.headers().firstValue("Access-Control-Allow-Origin").orElse(""));
+        assertEquals("true",
+                pre.headers().firstValue("Access-Control-Allow-Credentials").orElse(""));
+
+        // normal GET with Origin -> CORS headers + 200
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/api"))
+                .header("Origin", "https://example.com")
+                .GET().build();
+        HttpResponse<String> res = client.send(req, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, res.statusCode());
+        assertEquals("https://example.com",
+                res.headers().firstValue("Access-Control-Allow-Origin").orElse(""));
+
+        // no Origin header -> no CORS header
+        HttpRequest noOrigin = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/api"))
+                .GET().build();
+        HttpResponse<String> noOriginRes = client.send(noOrigin, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, noOriginRes.statusCode());
+        assertFalse(noOriginRes.headers().firstValue("Access-Control-Allow-Origin").isPresent());
+    }
+
+    @Test
+    void testGzipCompression() throws Exception {
+        String largeBody = "hello world ".repeat(30); // 360 bytes, above default 256 threshold
+        Vostok.Web.init(0)
+                .gzip(new VKGzipConfig().minBytes(100))
+                .get("/big", (req, res) -> res.json("{\"data\":\"" + largeBody + "\"}"));
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        HttpClient client = HttpClient.newBuilder().build();
+
+        // With Accept-Encoding: gzip -> compressed
+        HttpRequest gzipReq = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/big"))
+                .header("Accept-Encoding", "gzip")
+                .GET().build();
+        HttpResponse<byte[]> gzipRes = client.send(gzipReq, HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(200, gzipRes.statusCode());
+        assertEquals("gzip", gzipRes.headers().firstValue("Content-Encoding").orElse(""));
+        assertTrue(gzipRes.headers().firstValue("Vary").orElse("").contains("Accept-Encoding"));
+
+        // Without Accept-Encoding -> no compression
+        HttpRequest plainReq = HttpRequest.newBuilder()
+                .uri(new URI("http://127.0.0.1:" + port + "/big"))
+                .GET().build();
+        HttpResponse<String> plainRes = client.send(plainReq, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, plainRes.statusCode());
+        assertFalse(plainRes.headers().firstValue("Content-Encoding").isPresent());
+    }
+
+    @Test
+    void testHealthEndpoint() throws Exception {
+        Vostok.Web.init(0).health();
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        HttpClient client = HttpClient.newHttpClient();
+        HttpResponse<String> res = client.send(
+                HttpRequest.newBuilder()
+                        .uri(new URI("http://127.0.0.1:" + port + "/actuator/health"))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, res.statusCode());
+        assertTrue(res.body().contains("\"status\":\"UP\""), res.body());
+        assertTrue(res.body().contains("\"connections\""), res.body());
+    }
+
+    @Test
+    void testMetricsEndpoint() throws Exception {
+        Vostok.Web.init(0)
+                .get("/ping", (req, res) -> res.text("ok"))
+                .metrics();
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        HttpClient client = HttpClient.newHttpClient();
+
+        // Make a few requests to populate metrics
+        for (int i = 0; i < 3; i++) {
+            client.send(HttpRequest.newBuilder()
+                    .uri(new URI("http://127.0.0.1:" + port + "/ping"))
+                    .GET().build(), HttpResponse.BodyHandlers.discarding());
+        }
+
+        HttpResponse<String> res = client.send(
+                HttpRequest.newBuilder()
+                        .uri(new URI("http://127.0.0.1:" + port + "/actuator/metrics"))
+                        .GET().build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, res.statusCode());
+        assertTrue(res.body().contains("\"requests\""), res.body());
+        // At least 3 requests recorded (the pings) + 1 for metrics itself = 4
+        assertTrue(res.body().contains("\"requests\":4") || res.body().contains("\"requests\":3"),
+                "Expected at least 3 requests in metrics: " + res.body());
+        assertTrue(res.body().contains("\"avgResponseMs\""), res.body());
+    }
+
+    @Test
+    void testSse() throws Exception {
+        List<VKSseEmitter> emitters = Collections.synchronizedList(new ArrayList<>());
+
+        Vostok.Web.init(0)
+                .sse("/events", (req, emitter) -> emitters.add(emitter));
+        Vostok.Web.start();
+        int port = Vostok.Web.port();
+
+        // Use raw socket to read SSE stream
+        try (Socket socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(3000);
+            OutputStream out = socket.getOutputStream();
+            out.write("GET /events HTTP/1.1\r\nHost: 127.0.0.1\r\nAccept: text/event-stream\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+            out.flush();
+
+            // Wait for emitter to be registered
+            long deadline = System.currentTimeMillis() + 2000;
+            while (emitters.isEmpty() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(20);
+            }
+            assertFalse(emitters.isEmpty(), "Emitter should have been registered");
+            assertTrue(emitters.get(0).isOpen());
+
+            // Read SSE headers
+            InputStream in = socket.getInputStream();
+            byte[] buf = new byte[2048];
+            int n = in.read(buf);
+            String headers = n > 0 ? new String(buf, 0, n, StandardCharsets.UTF_8) : "";
+            assertTrue(headers.contains("text/event-stream"), "Expected SSE content-type: " + headers);
+            assertTrue(headers.contains("200"), "Expected 200: " + headers);
+
+            // Push an event and read it
+            emitters.get(0).send("hello", "world");
+            n = in.read(buf);
+            String event = n > 0 ? new String(buf, 0, n, StandardCharsets.UTF_8) : "";
+            assertTrue(event.contains("data: world"), "Expected SSE data: " + event);
+            assertTrue(event.contains("event: hello"), "Expected SSE event: " + event);
+
+            emitters.get(0).close();
+        }
     }
 }

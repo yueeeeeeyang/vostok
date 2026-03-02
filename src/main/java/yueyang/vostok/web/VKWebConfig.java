@@ -1,5 +1,7 @@
 package yueyang.vostok.web;
 
+import yueyang.vostok.web.tls.VKTlsConfig;
+
 /**
  * Web server configuration.
  */
@@ -33,6 +35,8 @@ public final class VKWebConfig {
     private int websocketPingIntervalMs = 30_000;
     private int websocketPongTimeoutMs = 10_000;
     private int websocketIdleTimeoutMs = 120_000;
+    /** TLS 配置，null 表示明文 HTTP。 */
+    private VKTlsConfig tlsConfig;
 
     public int getPort() {
         return port;
@@ -294,6 +298,17 @@ public final class VKWebConfig {
 
     public VKWebConfig websocketIdleTimeoutMs(int websocketIdleTimeoutMs) {
         this.websocketIdleTimeoutMs = Math.max(1000, websocketIdleTimeoutMs);
+        return this;
+    }
+
+    /** 获取 TLS 配置，null 表示明文 HTTP。 */
+    public VKTlsConfig getTlsConfig() {
+        return tlsConfig;
+    }
+
+    /** 设置 TLS 配置，启用 HTTPS。 */
+    public VKWebConfig tls(VKTlsConfig tls) {
+        this.tlsConfig = tls;
         return this;
     }
 }

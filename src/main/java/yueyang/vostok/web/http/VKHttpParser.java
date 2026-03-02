@@ -138,7 +138,9 @@ public final class VKHttpParser {
 
                 String name = asciiLowerString(buf, nameStart, nameEnd);
                 String value = asciiString(buf, valueStart, valueEnd);
-                headers.put(name, value);
+                // Bug4修复：RFC 7230 规定同名 header 应合并，而非覆盖
+                String existing = headers.get(name);
+                headers.put(name, existing == null ? value : existing + ", " + value);
 
                 if ("content-length".equals(name)) {
                     try {
@@ -253,8 +255,21 @@ public final class VKHttpParser {
         return !conn.equalsIgnoreCase("close");
     }
 
-    private boolean containsIgnoreCase(String source, String target) {
-        return source != null && source.toLowerCase().contains(target);
+    /**
+     * Perf3：零分配的 case-insensitive 包含检查，避免创建 lowercase String。
+     * target 参数必须已全小写。
+     */
+    private boolean containsIgnoreCase(String src, String target) {
+        if (src == null) return false;
+        int len = src.length(), tlen = target.length();
+        outer:
+        for (int i = 0; i <= len - tlen; i++) {
+            for (int j = 0; j < tlen; j++) {
+                if (Character.toLowerCase(src.charAt(i + j)) != target.charAt(j)) continue outer;
+            }
+            return true;
+        }
+        return false;
     }
 
     private int indexOfHeaderEnd(byte[] buf, int len, int start) {

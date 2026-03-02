@@ -1,11 +1,14 @@
 package yueyang.vostok.web.http;
 
+import yueyang.vostok.web.sse.VKSseEmitter;
+
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Consumer;
 
 public final class VKResponse {
     private int status = 200;
@@ -15,6 +18,9 @@ public final class VKResponse {
     private Path filePath;
     private long fileOffset;
     private long fileLength = -1;
+    // SSE 模式：响应头后保持连接开放，由 reactor 转为 Protocol.SSE
+    private boolean sseMode = false;
+    private Consumer<VKSseEmitter> sseConsumer;
 
     public int status() {
         return status;
@@ -80,6 +86,32 @@ public final class VKResponse {
             return this;
         }
         return cookie(new VKCookie(name, "").maxAge(0).path("/"));
+    }
+
+    /**
+     * 标记此响应为 SSE 模式，设置必要的响应头，并注册事件推送回调。
+     * handler 返回后 reactor 检测到 sseMode 为 true，会切换连接到 SSE 协议，
+     * 先写出响应头（无 Content-Length），然后将连接移交给 consumer。
+     *
+     * @param consumer 接受 VKSseEmitter 的回调，在 reactor 线程中调用
+     */
+    public VKResponse sseResponse(Consumer<VKSseEmitter> consumer) {
+        this.sseMode = true;
+        this.sseConsumer = consumer;
+        header("Content-Type", "text/event-stream");
+        header("Cache-Control", "no-cache");
+        header("X-Accel-Buffering", "no");
+        return this;
+    }
+
+    /** 是否为 SSE 响应模式。 */
+    public boolean isSse() {
+        return sseMode;
+    }
+
+    /** 获取 SSE consumer，由 reactor 在切换协议后调用。 */
+    public Consumer<VKSseEmitter> sseConsumer() {
+        return sseConsumer;
     }
 
     public VKResponse file(Path path, long length) {

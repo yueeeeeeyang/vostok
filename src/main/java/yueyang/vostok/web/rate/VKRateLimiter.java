@@ -5,12 +5,11 @@ import yueyang.vostok.web.http.VKResponse;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.ThreadLocalRandom;
 
 public final class VKRateLimiter {
     private final VKRateLimitConfig config;
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
-    private final AtomicLong cleanupTick = new AtomicLong();
 
     public VKRateLimiter(VKRateLimitConfig config) {
         this.config = config == null ? new VKRateLimitConfig() : config;
@@ -77,12 +76,15 @@ public final class VKRateLimiter {
         if (req.remoteAddress() != null && req.remoteAddress().getAddress() != null) {
             return req.remoteAddress().getAddress().getHostAddress();
         }
-        return "-";
+        // Bug5修复：用 "0.0.0.0" 替代 "-"，避免与其他 key 策略的 fallback 混用
+        return "0.0.0.0";
     }
 
+    /**
+     * Perf6：用 ThreadLocalRandom 替代 AtomicLong 的 1/1024 概率触发清理，零 CAS 竞争。
+     */
     private void cleanupIfNeeded(long now) {
-        long tick = cleanupTick.incrementAndGet();
-        if ((tick & 1023) != 0) {
+        if (ThreadLocalRandom.current().nextInt(1024) != 0) {
             return;
         }
         long staleMs = Math.max(config.getRefillPeriodMs() * 20L, 60_000L);

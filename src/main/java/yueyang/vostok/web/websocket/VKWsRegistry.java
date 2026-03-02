@@ -1,5 +1,6 @@
 package yueyang.vostok.web.websocket;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -99,13 +100,83 @@ public final class VKWsRegistry {
 
     public int broadcastAllText(String path, String text) {
         String p = normalize(path);
-        Map<String, VKWebSocketSession> sessions = sessionsByPath.getOrDefault(p, new ConcurrentHashMap<>());
+        Map<String, VKWebSocketSession> sessions = sessionsByPath.get(p);
+        if (sessions == null || sessions.isEmpty()) {
+            return 0;
+        }
         int sent = 0;
-        for (VKWsCandidate candidate : sessions.values().stream().map(s -> new VKWsCandidate(s, s.id())).toList()) {
-            if (sendText(candidate.session, text)) {
+        // Perf2：直接迭代 entrySet 快照，避免创建 Stream 和中间 VKWsCandidate 对象
+        for (Map.Entry<String, VKWebSocketSession> e : List.copyOf(sessions.entrySet())) {
+            if (sendText(e.getValue(), text)) {
                 sent++;
             } else {
-                unregister(p, candidate.sessionId);
+                unregister(p, e.getKey());
+            }
+        }
+        return sent;
+    }
+
+    public int broadcastAllBinary(String path, byte[] data) {
+        String p = normalize(path);
+        Map<String, VKWebSocketSession> sessions = sessionsByPath.get(p);
+        if (sessions == null || sessions.isEmpty()) {
+            return 0;
+        }
+        int sent = 0;
+        for (Map.Entry<String, VKWebSocketSession> e : List.copyOf(sessions.entrySet())) {
+            if (sendBinary(e.getValue(), data)) {
+                sent++;
+            } else {
+                unregister(p, e.getKey());
+            }
+        }
+        return sent;
+    }
+
+    public int broadcastRoomBinary(String path, String room, byte[] data) {
+        if (isBlank(room)) {
+            return 0;
+        }
+        String p = normalize(path);
+        Set<String> ids = snapshot(roomsByPath.get(p), room);
+        return sendBinaryByIds(p, ids, data);
+    }
+
+    public int broadcastGroupBinary(String path, String group, byte[] data) {
+        if (isBlank(group)) {
+            return 0;
+        }
+        String p = normalize(path);
+        Set<String> ids = snapshot(groupsByPath.get(p), group);
+        return sendBinaryByIds(p, ids, data);
+    }
+
+    public int broadcastRoomAndGroupBinary(String path, String room, String group, byte[] data) {
+        if (isBlank(room) || isBlank(group)) {
+            return 0;
+        }
+        String p = normalize(path);
+        Set<String> roomIds = snapshot(roomsByPath.get(p), room);
+        Set<String> groupIds = snapshot(groupsByPath.get(p), group);
+        if (roomIds.isEmpty() || groupIds.isEmpty()) {
+            return 0;
+        }
+        Set<String> small = roomIds.size() <= groupIds.size() ? roomIds : groupIds;
+        Set<String> large = Objects.equals(small, roomIds) ? groupIds : roomIds;
+        int sent = 0;
+        for (String id : small) {
+            if (!large.contains(id)) {
+                continue;
+            }
+            VKWebSocketSession session = session(p, id);
+            if (session == null || !session.isOpen()) {
+                unregister(p, id);
+                continue;
+            }
+            if (sendBinary(session, data)) {
+                sent++;
+            } else {
+                unregister(p, id);
             }
         }
         return sent;
@@ -160,6 +231,26 @@ public final class VKWsRegistry {
         return sent;
     }
 
+    private int sendBinaryByIds(String path, Set<String> ids, byte[] data) {
+        if (ids.isEmpty()) {
+            return 0;
+        }
+        int sent = 0;
+        for (String id : ids) {
+            VKWebSocketSession session = session(path, id);
+            if (session == null || !session.isOpen()) {
+                unregister(path, id);
+                continue;
+            }
+            if (sendBinary(session, data)) {
+                sent++;
+            } else {
+                unregister(path, id);
+            }
+        }
+        return sent;
+    }
+
     private int sendByIds(String path, Set<String> ids, String text) {
         if (ids.isEmpty()) {
             return 0;
@@ -183,6 +274,15 @@ public final class VKWsRegistry {
     private static boolean sendText(VKWebSocketSession session, String text) {
         try {
             session.sendText(text);
+            return true;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
+    private static boolean sendBinary(VKWebSocketSession session, byte[] data) {
+        try {
+            session.sendBinary(data);
             return true;
         } catch (Throwable e) {
             return false;
