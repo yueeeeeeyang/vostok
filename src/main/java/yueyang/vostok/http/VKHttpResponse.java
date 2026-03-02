@@ -37,6 +37,14 @@ public final class VKHttpResponse {
         return body.clone();
     }
 
+    /**
+     * 优化4：包级私有方法，返回内部 byte[] 引用（不 clone），供同包内反序列化代码直接使用，
+     * 减少大响应体时的中间 byte[] 复制开销。调用方不得修改返回的数组。
+     */
+    byte[] bodyBytesUnsafe() {
+        return body;
+    }
+
     public String bodyText() {
         return bodyText(StandardCharsets.UTF_8);
     }

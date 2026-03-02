@@ -389,15 +389,25 @@ public final class VKHttpRequestBuilder {
         return sb.toString();
     }
 
+    /**
+     * Bug2修复：对 multipart 中的 name/filename 做转义，防止 Header 注入攻击。
+     * 转义反斜杠和双引号，过滤回车换行符。
+     */
+    private static String escapeMultipartToken(String value) {
+        return value.replace("\\", "\\\\").replace("\"", "\\\"")
+                    .replace("\r", "").replace("\n", "");
+    }
+
     private static byte[] buildMultipart(String boundary, List<MultipartPart> parts) {
         ByteArrayOutputStream out = new ByteArrayOutputStream(512);
         byte[] crlf = "\r\n".getBytes(StandardCharsets.UTF_8);
         for (MultipartPart p : parts) {
             out.writeBytes(("--" + boundary).getBytes(StandardCharsets.UTF_8));
             out.writeBytes(crlf);
-            String disposition = "Content-Disposition: form-data; name=\"" + p.name + "\"";
+            // Bug2修复：对 name/filename 使用转义方法，防止注入
+            String disposition = "Content-Disposition: form-data; name=\"" + escapeMultipartToken(p.name) + "\"";
             if (p.filename != null && !p.filename.isBlank()) {
-                disposition += "; filename=\"" + p.filename + "\"";
+                disposition += "; filename=\"" + escapeMultipartToken(p.filename) + "\"";
             }
             out.writeBytes(disposition.getBytes(StandardCharsets.UTF_8));
             out.writeBytes(crlf);

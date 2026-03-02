@@ -6,6 +6,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
+
 public class VostokHttp {
     private static final VKHttpRuntime RUNTIME = VKHttpRuntime.getInstance();
 
@@ -128,11 +129,39 @@ public class VostokHttp {
         return RUNTIME.metrics();
     }
 
+    /** 扩展5：返回指定命名客户端的独立 Metrics 快照。 */
+    public static VKHttpMetrics metrics(String clientName) {
+        return RUNTIME.metrics(clientName);
+    }
+
     public static void resetMetrics() {
         RUNTIME.resetMetrics();
     }
 
     public static String urlEncode(String value) {
         return VKHttpRuntime.urlEncode(value);
+    }
+
+    // -----------------------------------------------------------------------
+    // 扩展1：拦截器管理
+    // -----------------------------------------------------------------------
+
+    /** 添加全局拦截器（对所有客户端生效）。 */
+    public static void addInterceptor(VKHttpInterceptor interceptor) {
+        RUNTIME.addInterceptor(interceptor);
+    }
+
+    /** 添加客户端级拦截器（仅对指定命名客户端生效）。 */
+    public static void addInterceptor(String client, VKHttpInterceptor interceptor) {
+        RUNTIME.addInterceptor(client, interceptor);
+    }
+
+    // -----------------------------------------------------------------------
+    // 扩展4：WebSocket 支持
+    // -----------------------------------------------------------------------
+
+    /** 建立 WebSocket 连接，返回会话对象。连接建立过程阻塞直到完成或超时。 */
+    public static VKHttpWebSocketSession websocket(VKHttpRequest request, VKHttpWebSocketListener listener) {
+        return RUNTIME.websocket(request, listener);
     }
 }

@@ -3,8 +3,10 @@ package yueyang.vostok.http;
 import yueyang.vostok.http.auth.VKHttpAuth;
 
 import javax.net.ssl.SSLContext;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -55,6 +57,10 @@ public class VKHttpClientConfig {
     private String keyStorePassword;
     private String keyStoreKeyPassword;
     private String keyStoreType = "PKCS12";
+    // 扩展1：客户端级拦截器（在全局拦截器之后执行）
+    private List<VKHttpInterceptor> interceptors = new ArrayList<>();
+    // 扩展2：Cookie 策略，null 表示继承全局配置或不启用
+    private String cookiePolicy;
 
     public VKHttpClientConfig copy() {
         VKHttpClientConfig c = new VKHttpClientConfig();
@@ -104,6 +110,8 @@ public class VKHttpClientConfig {
         c.keyStorePassword = this.keyStorePassword;
         c.keyStoreKeyPassword = this.keyStoreKeyPassword;
         c.keyStoreType = this.keyStoreType;
+        c.interceptors = new ArrayList<>(this.interceptors);
+        c.cookiePolicy = this.cookiePolicy;
         return c;
     }
 
@@ -560,6 +568,42 @@ public class VKHttpClientConfig {
         this.keyStorePassword = storePassword;
         this.keyStoreKeyPassword = keyPassword;
         this.keyStoreType = (type == null || type.isBlank()) ? "PKCS12" : type.trim();
+        return this;
+    }
+
+    /** 添加客户端级拦截器（在全局拦截器之后执行）。 */
+    public VKHttpClientConfig addInterceptor(VKHttpInterceptor interceptor) {
+        if (interceptor != null) {
+            this.interceptors.add(interceptor);
+        }
+        return this;
+    }
+
+    /** 返回客户端级拦截器列表（不可修改快照）。 */
+    public List<VKHttpInterceptor> getInterceptors() {
+        return List.copyOf(interceptors);
+    }
+
+    /** Cookie 策略，null 表示不启用（ACCEPT_ALL / ACCEPT_NONE / ACCEPT_ORIGINAL_SERVER）。 */
+    public String getCookiePolicy() {
+        return cookiePolicy;
+    }
+
+    /** 设置此客户端的 Cookie 策略。 */
+    public VKHttpClientConfig cookiePolicy(String cookiePolicy) {
+        this.cookiePolicy = cookiePolicy;
+        return this;
+    }
+
+    /** 便捷方法：设置 Basic Auth。 */
+    public VKHttpClientConfig basic(String username, String password) {
+        this.auth = new yueyang.vostok.http.auth.VKBasicAuth(username, password);
+        return this;
+    }
+
+    /** 便捷方法：设置 Bearer Token Auth。 */
+    public VKHttpClientConfig bearer(String token) {
+        this.auth = new yueyang.vostok.http.auth.VKBearerAuth(token);
         return this;
     }
 

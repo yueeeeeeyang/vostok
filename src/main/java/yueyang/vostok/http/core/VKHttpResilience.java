@@ -23,22 +23,24 @@ final class ResilienceRuntime {
 final class TokenBucketLimiter {
     private final int qps;
     private final int burst;
+    // 优化5：使用 currentTimeMillis + long 运算替代 nanoTime + 浮点运算，对 QPS 限制（毫秒精度）更高效
     private double tokens;
-    private long lastRefillNanos;
+    private long lastRefillMs;
 
     TokenBucketLimiter(int qps, int burst) {
         this.qps = Math.max(1, qps);
         this.burst = Math.max(1, burst);
         this.tokens = this.burst;
-        this.lastRefillNanos = System.nanoTime();
+        this.lastRefillMs = System.currentTimeMillis();
     }
 
     synchronized boolean tryAcquire() {
-        long now = System.nanoTime();
-        double elapsedSec = Math.max(0, now - lastRefillNanos) / 1_000_000_000.0;
-        if (elapsedSec > 0) {
-            tokens = Math.min(burst, tokens + elapsedSec * qps);
-            lastRefillNanos = now;
+        long now = System.currentTimeMillis();
+        long elapsed = now - lastRefillMs;
+        if (elapsed > 0) {
+            // 按照已过去的毫秒数补充令牌，qps/1000 即每毫秒令牌产生速率
+            tokens = Math.min(burst, tokens + (double) elapsed * qps / 1000.0);
+            lastRefillMs = now;
         }
         if (tokens >= 1.0d) {
             tokens -= 1.0d;
@@ -104,6 +106,8 @@ final class CircuitBreaker {
     private volatile long openUntilMs;
     private volatile int halfOpenAttempted;
     private volatile int halfOpenFailures;
+    // Bug1修复：增加成功计数器，只要所有已发起探测全部成功即关闭（无需等配额耗尽）
+    private volatile int halfOpenSuccesses;
 
     CircuitBreaker(int windowSize, int minCalls, int failureRateThreshold, long openWaitMs, int halfOpenMaxCalls) {
         this.windowSize = Math.max(1, windowSize);
@@ -126,6 +130,7 @@ final class CircuitBreaker {
                     state.set(CircuitState.HALF_OPEN);
                     halfOpenAttempted = 0;
                     halfOpenFailures = 0;
+                    halfOpenSuccesses = 0;  // Bug1：重置成功计数器
                 }
             }
             s = state.get();
@@ -151,7 +156,10 @@ final class CircuitBreaker {
                 if (state.get() != CircuitState.HALF_OPEN) {
                     return;
                 }
-                if (halfOpenFailures == 0 && halfOpenAttempted >= halfOpenMaxCalls) {
+                halfOpenSuccesses++;
+                // Bug1修复：只要所有已发起的探测全部成功（且至少1次），立即关闭
+                // 不需要等待配额 halfOpenMaxCalls 耗尽
+                if (halfOpenSuccesses == halfOpenAttempted && halfOpenAttempted > 0 && halfOpenFailures == 0) {
                     state.set(CircuitState.CLOSED);
                     outcomes.clear();
                 }

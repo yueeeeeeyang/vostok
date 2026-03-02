@@ -4,6 +4,8 @@ import yueyang.vostok.Vostok;
 import yueyang.vostok.http.VKHttpChunkListener;
 import yueyang.vostok.http.VKHttpClientConfig;
 import yueyang.vostok.http.VKHttpConfig;
+import yueyang.vostok.http.VKHttpInterceptor;
+import yueyang.vostok.http.VKHttpInterceptorChain;
 import yueyang.vostok.http.VKHttpMetrics;
 import yueyang.vostok.http.VKHttpRequest;
 import yueyang.vostok.http.VKHttpResponse;
@@ -11,6 +13,8 @@ import yueyang.vostok.http.VKHttpResponseMeta;
 import yueyang.vostok.http.VKHttpSseEvent;
 import yueyang.vostok.http.VKHttpSseListener;
 import yueyang.vostok.http.VKHttpStreamSession;
+import yueyang.vostok.http.VKHttpWebSocketListener;
+import yueyang.vostok.http.VKHttpWebSocketSession;
 import yueyang.vostok.http.exception.VKHttpErrorCode;
 import yueyang.vostok.http.exception.VKHttpException;
 
@@ -21,6 +25,8 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.CookieManager;
+import java.net.CookiePolicy;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -28,6 +34,7 @@ import java.net.http.HttpConnectTimeoutException;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.HttpTimeoutException;
+import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,6 +42,7 @@ import java.security.KeyStore;
 import java.time.Duration;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -45,6 +53,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
@@ -52,22 +62,39 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
+/**
+ * VostokHttp 运行时核心，单例模式。
+ * <p>
+ * 职责：
+ * - 管理全局配置和命名客户端配置
+ * - 懒创建/缓存 HttpClient 实例（含 SSL、Cookie、超时设置）
+ * - 执行同步/异步 HTTP 请求，包含重试、熔断、限流、舱壁等韧性策略
+ * - 管理 SSE 和 Chunk 流会话（含空闲超时 watchdog）
+ * - 提供拦截器链（扩展1）、Cookie 管理（扩展2）、WebSocket（扩展4）、每客户端 Metrics（扩展5）
+ */
 public final class VKHttpRuntime {
     private static final Object LOCK = new Object();
     private static final VKHttpRuntime INSTANCE = new VKHttpRuntime();
 
     private static final String DEFAULT_CLIENT_KEY = "__default__";
-    private static final Set<String> SAFE_METHODS = Set.of("GET", "HEAD", "OPTIONS", "PUT", "DELETE", "TRACE");
+    // Bug6修复：SAFE_METHODS 重命名为 IDEMPOTENT_METHODS，含义更准确（幂等方法列表）
+    private static final Set<String> IDEMPOTENT_METHODS = Set.of("GET", "HEAD", "OPTIONS", "PUT", "DELETE", "TRACE");
 
     private final ConcurrentHashMap<String, VKHttpClientConfig> clients = new ConcurrentHashMap<>();
     private final ThreadLocal<String> clientContext = new ThreadLocal<>();
-    private final HttpMetrics metrics = new HttpMetrics();
+    private final VKHttpInternalMetrics metrics = new VKHttpInternalMetrics();
 
     private final ConcurrentHashMap<String, ClientRuntimeEntry> clientRuntimeCache = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, ResilienceRuntime> resilienceCache = new ConcurrentHashMap<>();
     private final AtomicLong executeSeq = new AtomicLong();
     private final AtomicLong clientBuilds = new AtomicLong();
+
+    /** 流消费专用线程池（SSE/Chunk 流、stream watchdog）。 */
     private volatile ExecutorService streamExecutor;
+    /** Bug3：专用异步执行线程池（daemon CachedThreadPool），避免占用公共 ForkJoinPool。 */
+    private volatile ExecutorService asyncExecutor;
+    /** Opt2：调度器，用于 stream idle watchdog 及异步重试延迟（单线程，daemon）。 */
+    private volatile ScheduledExecutorService retryScheduler;
 
     private volatile VKHttpConfig config = new VKHttpConfig();
     private volatile boolean initialized;
@@ -79,6 +106,10 @@ public final class VKHttpRuntime {
         return INSTANCE;
     }
 
+    // -----------------------------------------------------------------------
+    // 初始化 & 生命周期
+    // -----------------------------------------------------------------------
+
     public void init(VKHttpConfig cfg) {
         synchronized (LOCK) {
             if (initialized) {
@@ -87,7 +118,7 @@ public final class VKHttpRuntime {
             config = (cfg == null ? new VKHttpConfig() : cfg.copy());
             initialized = true;
             clearClientRuntimes();
-            refreshStreamExecutor();
+            refreshExecutors();
         }
     }
 
@@ -96,7 +127,7 @@ public final class VKHttpRuntime {
             config = (cfg == null ? new VKHttpConfig() : cfg.copy());
             initialized = true;
             clearClientRuntimes();
-            refreshStreamExecutor();
+            refreshExecutors();
         }
     }
 
@@ -116,12 +147,20 @@ public final class VKHttpRuntime {
             clearClientRuntimes();
             clientBuilds.set(0);
             executeSeq.set(0);
-            closeStreamExecutor();
+            closeExecutors();
             config = new VKHttpConfig();
             initialized = false;
         }
     }
 
+    // -----------------------------------------------------------------------
+    // 客户端注册 & 上下文
+    // -----------------------------------------------------------------------
+
+    /**
+     * 注册命名客户端配置。
+     * Bug4修复：仅驱逐与该 clientName 相关的缓存条目，避免全量失效。
+     */
     public void registerClient(String name, VKHttpClientConfig cfg) {
         ensureInit();
         if (name == null || name.isBlank()) {
@@ -131,7 +170,10 @@ public final class VKHttpRuntime {
             throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "VKHttpClientConfig is null");
         }
         clients.put(name.trim(), cfg.copy());
-        clearClientRuntimes();
+        // Bug4/Opt6：仅驱逐该 clientName 相关的缓存条目
+        String prefix = name.trim() + "|";
+        clientRuntimeCache.entrySet().removeIf(e -> e.getKey().startsWith(prefix));
+        resilienceCache.entrySet().removeIf(e -> e.getKey().startsWith(prefix));
     }
 
     public void withClient(String name, Runnable action) {
@@ -178,14 +220,64 @@ public final class VKHttpRuntime {
         return clientContext.get();
     }
 
+    // -----------------------------------------------------------------------
+    // 拦截器管理（扩展1）
+    // -----------------------------------------------------------------------
+
+    /** 添加全局拦截器（直接注入到当前运行时 config）。 */
+    public void addInterceptor(VKHttpInterceptor interceptor) {
+        ensureInit();
+        if (interceptor != null) {
+            config.addInterceptor(interceptor);
+        }
+    }
+
+    /** 添加客户端级拦截器。 */
+    public void addInterceptor(String clientName, VKHttpInterceptor interceptor) {
+        ensureInit();
+        if (clientName == null || clientName.isBlank()) {
+            throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "Client name is blank");
+        }
+        VKHttpClientConfig clientCfg = clients.get(clientName.trim());
+        if (clientCfg == null) {
+            throw new VKHttpException(VKHttpErrorCode.CONFIG_ERROR, "Http client not found: " + clientName);
+        }
+        if (interceptor != null) {
+            clientCfg.addInterceptor(interceptor);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 请求执行（同步）
+    // -----------------------------------------------------------------------
+
+    /**
+     * 同步执行 HTTP 请求（含拦截器链 + 重试循环）。
+     * 扩展1：先构建拦截器链，存在拦截器时通过链执行；否则直接走 executeCore()。
+     */
     public VKHttpResponse execute(VKHttpRequest request) {
         ensureInit();
         if (request == null) {
             throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "VKHttpRequest is null");
         }
-
         maybeEvictIdleRuntimes();
 
+        // 解析有效客户端名（request 优先，否则 ThreadLocal）
+        String clientName = resolveClientName(request);
+        List<VKHttpInterceptor> interceptors = buildInterceptorList(clientName);
+
+        if (!interceptors.isEmpty()) {
+            // 扩展1：构建并执行拦截器链，终端节点为 executeCore()
+            VKHttpInterceptorChain chain = buildChain(request, interceptors, 0);
+            return chain.proceed();
+        }
+        return executeCore(request);
+    }
+
+    /**
+     * 实际执行请求的核心方法（含重试循环），由 execute() 或拦截器链终端调用。
+     */
+    private VKHttpResponse executeCore(VKHttpRequest request) {
         long start = System.currentTimeMillis();
         ResolvedRequest resolved = resolveRequest(request, false);
 
@@ -224,7 +316,7 @@ public final class VKHttpRuntime {
                 }
                 if (shouldRetryByStatus(resolved, status, retryIndex)) {
                     if (config.isMetricsEnabled()) {
-                        metrics.recordRetry();
+                        metrics.recordRetry(resolved.clientName());
                     }
                     long waitMs = computeRetryDelayMs(resolved, retryIndex, raw.headers().firstValue("Retry-After").orElse(null));
                     sleepRetry(waitMs);
@@ -234,7 +326,7 @@ public final class VKHttpRuntime {
                 VKHttpResponse response = new VKHttpResponse(status, raw.headers().map(), body);
                 long costMs = System.currentTimeMillis() - start;
                 if (config.isMetricsEnabled()) {
-                    metrics.recordResponse(response.statusCode(), costMs);
+                    metrics.recordResponse(resolved.clientName(), response.statusCode(), costMs);
                 }
                 logCall(resolved, response.statusCode(), costMs, retryIndex);
 
@@ -250,7 +342,7 @@ public final class VKHttpRuntime {
                 }
                 if (shouldRetryByError(resolved, e, retryIndex)) {
                     if (config.isMetricsEnabled()) {
-                        metrics.recordRetry();
+                        metrics.recordRetry(resolved.clientName());
                     }
                     long waitMs = computeRetryDelayMs(resolved, retryIndex, null);
                     sleepRetry(waitMs);
@@ -258,7 +350,7 @@ public final class VKHttpRuntime {
                 }
 
                 if (config.isMetricsEnabled() && e.getCode() != VKHttpErrorCode.HTTP_STATUS) {
-                    metrics.recordFailure(e.getCode(), System.currentTimeMillis() - start);
+                    metrics.recordFailure(resolved.clientName(), e.getCode(), System.currentTimeMillis() - start);
                 }
                 throw e;
             } finally {
@@ -276,13 +368,45 @@ public final class VKHttpRuntime {
         return execute(request).bodyJson(type);
     }
 
+    // -----------------------------------------------------------------------
+    // 异步执行（Bug3：使用专用 asyncExecutor 替换公共 ForkJoinPool）
+    // -----------------------------------------------------------------------
+
+    /**
+     * 异步执行 HTTP 请求。
+     * Bug3修复：使用专用 daemon CachedThreadPool（asyncExecutor），不占用公共 ForkJoinPool。
+     * 扩展3：调用线程立即返回 Future，实际执行（含重试 sleep）在 asyncExecutor 线程完成。
+     */
     public CompletableFuture<VKHttpResponse> executeAsync(VKHttpRequest request) {
-        return CompletableFuture.supplyAsync(() -> execute(request));
+        ensureInit();
+        if (request == null) {
+            throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "VKHttpRequest is null");
+        }
+        ExecutorService exec = asyncExecutor;
+        if (exec == null) {
+            throw new VKHttpException(VKHttpErrorCode.STATE_ERROR, "Http async executor not initialized");
+        }
+        return CompletableFuture.supplyAsync(() -> execute(request), exec);
     }
 
     public <T> CompletableFuture<T> executeJsonAsync(VKHttpRequest request, Class<T> type) {
-        return CompletableFuture.supplyAsync(() -> executeJson(request, type));
+        ensureInit();
+        if (request == null) {
+            throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "VKHttpRequest is null");
+        }
+        if (type == null) {
+            throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "Response type is null");
+        }
+        ExecutorService exec = asyncExecutor;
+        if (exec == null) {
+            throw new VKHttpException(VKHttpErrorCode.STATE_ERROR, "Http async executor not initialized");
+        }
+        return CompletableFuture.supplyAsync(() -> executeJson(request, type), exec);
     }
+
+    // -----------------------------------------------------------------------
+    // 流执行
+    // -----------------------------------------------------------------------
 
     public VKHttpStreamSession openSse(VKHttpRequest request, VKHttpSseListener listener) {
         return openStreamInternal(request, listener, null);
@@ -294,7 +418,12 @@ public final class VKHttpRuntime {
     }
 
     public CompletableFuture<Void> executeSseAsync(VKHttpRequest request, VKHttpSseListener listener) {
-        return CompletableFuture.runAsync(() -> executeSse(request, listener));
+        ensureInit();
+        ExecutorService exec = asyncExecutor;
+        if (exec == null) {
+            return CompletableFuture.runAsync(() -> executeSse(request, listener));
+        }
+        return CompletableFuture.runAsync(() -> executeSse(request, listener), exec);
     }
 
     public VKHttpStreamSession openStream(VKHttpRequest request, VKHttpChunkListener listener) {
@@ -307,7 +436,12 @@ public final class VKHttpRuntime {
     }
 
     public CompletableFuture<Void> executeStreamAsync(VKHttpRequest request, VKHttpChunkListener listener) {
-        return CompletableFuture.runAsync(() -> executeStream(request, listener));
+        ensureInit();
+        ExecutorService exec = asyncExecutor;
+        if (exec == null) {
+            return CompletableFuture.runAsync(() -> executeStream(request, listener));
+        }
+        return CompletableFuture.runAsync(() -> executeStream(request, listener), exec);
     }
 
     private VKHttpStreamSession openStreamInternal(VKHttpRequest request, VKHttpSseListener sseListener, VKHttpChunkListener chunkListener) {
@@ -356,7 +490,7 @@ public final class VKHttpRuntime {
                     }
                 }
                 if (config.isMetricsEnabled()) {
-                    metrics.recordResponse(status, System.currentTimeMillis() - start);
+                    metrics.recordResponse(resolved.clientName(), status, System.currentTimeMillis() - start);
                 }
                 logCall(resolved, status, System.currentTimeMillis() - start, 0);
                 throw new VKHttpException(VKHttpErrorCode.HTTP_STATUS,
@@ -364,7 +498,8 @@ public final class VKHttpRuntime {
                         status);
             }
 
-            String contentType = firstHeader(raw.headers().map(), "Content-Type");
+            // Opt3修复：使用 HttpResponse.headers().firstValue() 替代手写的 firstHeader() 线性扫描
+            String contentType = raw.headers().firstValue("Content-Type").orElse(null);
             if (sseListener != null && (contentType == null || !contentType.toLowerCase().contains("text/event-stream"))) {
                 closeQuietly(raw.body());
                 if (resolved.policy().circuitEnabled() && resolved.resilience().circuitBreaker != null) {
@@ -382,8 +517,8 @@ public final class VKHttpRuntime {
             );
 
             if (config.isMetricsEnabled()) {
-                metrics.recordResponse(status, System.currentTimeMillis() - start);
-                metrics.recordStreamOpen();
+                metrics.recordResponse(resolved.clientName(), status, System.currentTimeMillis() - start);
+                metrics.recordStreamOpen(resolved.clientName());
             }
             if (config.isLogEnabled()) {
                 Vostok.Log.info("Vostok.Http stream-open {} {} status={} client={}",
@@ -399,13 +534,13 @@ public final class VKHttpRuntime {
                     if (sseListener != null) {
                         consumeSse(meta, resolved, sseListener, session);
                     } else {
-                        consumeChunks(meta, resolved.policy().streamIdleTimeoutMs(), chunkListener, session);
+                        consumeChunks(meta, resolved.policy().streamIdleTimeoutMs(), resolved.clientName(), chunkListener, session);
                     }
                 });
             } catch (RuntimeException e) {
                 VKHttpException ex = new VKHttpException(VKHttpErrorCode.STATE_ERROR, "Http stream task rejected", e);
                 if (config.isMetricsEnabled()) {
-                    metrics.recordStreamError();
+                    metrics.recordStreamError(resolved.clientName());
                 }
                 closeQuietly(raw.body());
                 throw ex;
@@ -420,7 +555,7 @@ public final class VKHttpRuntime {
                 resolved.resilience().circuitBreaker.onFailure();
             }
             if (config.isMetricsEnabled() && e.getCode() != VKHttpErrorCode.HTTP_STATUS) {
-                metrics.recordFailure(e.getCode(), System.currentTimeMillis() - start);
+                metrics.recordFailure(resolved.clientName(), e.getCode(), System.currentTimeMillis() - start);
             }
             throw e;
         }
@@ -433,13 +568,80 @@ public final class VKHttpRuntime {
         throw new VKHttpException(VKHttpErrorCode.STATE_ERROR, "Unexpected stream session implementation");
     }
 
+    // -----------------------------------------------------------------------
+    // WebSocket（扩展4）
+    // -----------------------------------------------------------------------
+
+    /**
+     * 建立 WebSocket 连接并返回会话。
+     * 扩展4：使用命名客户端的 HttpClient 创建 WebSocket Builder，注入请求头，使用 connectTimeoutMs 作为连接超时。
+     */
+    public VKHttpWebSocketSession websocket(VKHttpRequest request, VKHttpWebSocketListener listener) {
+        ensureInit();
+        if (request == null) {
+            throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "VKHttpRequest is null");
+        }
+        if (listener == null) {
+            throw new VKHttpException(VKHttpErrorCode.INVALID_ARGUMENT, "VKHttpWebSocketListener is null");
+        }
+
+        ResolvedRequest resolved = resolveRequest(request, false);
+        // 将 http:// / https:// 转换为 ws:// / wss://
+        String wsUrl = resolved.url()
+                .replaceFirst("^http://", "ws://")
+                .replaceFirst("^https://", "wss://");
+
+        VKHttpWebSocketSessionImpl session = new VKHttpWebSocketSessionImpl(listener);
+
+        WebSocket.Builder builder = resolved.runtime().client.newWebSocketBuilder();
+        // 注入请求头（Auth、User-Agent、defaultHeaders 等已在 resolveRequest 中合并）
+        for (Map.Entry<String, String> e : resolved.headers().entrySet()) {
+            if (e.getKey() != null && !e.getKey().isBlank() && e.getValue() != null) {
+                try {
+                    builder.header(e.getKey(), e.getValue());
+                } catch (IllegalArgumentException ignore) {
+                    // WebSocket 不允许某些 HTTP/2 伪头，跳过
+                }
+            }
+        }
+
+        try {
+            long connectTimeout = Math.max(1000, config.getConnectTimeoutMs());
+            CompletableFuture<WebSocket> wsFuture = builder.buildAsync(URI.create(wsUrl), session);
+            // 等待连接建立（超时使用 connect timeout）
+            wsFuture.get(connectTimeout, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new VKHttpException(VKHttpErrorCode.WEBSOCKET_ERROR, "WebSocket connection interrupted", e);
+        } catch (TimeoutException e) {
+            throw new VKHttpException(VKHttpErrorCode.WEBSOCKET_ERROR, "WebSocket connection timeout", e);
+        } catch (ExecutionException e) {
+            throw new VKHttpException(VKHttpErrorCode.WEBSOCKET_ERROR, "WebSocket connection failed: " + e.getCause().getMessage(), e.getCause());
+        }
+
+        return session;
+    }
+
+    // -----------------------------------------------------------------------
+    // Metrics
+    // -----------------------------------------------------------------------
+
     public VKHttpMetrics metrics() {
         return metrics.snapshot();
+    }
+
+    /** 扩展5：返回指定命名客户端的独立 Metrics 快照。 */
+    public VKHttpMetrics metrics(String clientName) {
+        return metrics.snapshot(clientName);
     }
 
     public void resetMetrics() {
         metrics.reset();
     }
+
+    // -----------------------------------------------------------------------
+    // 包级测试辅助方法
+    // -----------------------------------------------------------------------
 
     int clientRuntimeCountForTests() {
         return clientRuntimeCache.size();
@@ -449,13 +651,22 @@ public final class VKHttpRuntime {
         return clientBuilds.get();
     }
 
+    // -----------------------------------------------------------------------
+    // 低级 HTTP 执行
+    // -----------------------------------------------------------------------
+
+    /**
+     * 执行单次 HTTP 请求（不含重试）。
+     * Bug5修复：无 readTimeout 时直接使用同步 client.send()，不再通过 sendAsync().get() 多一层包装。
+     */
     private HttpResponse<byte[]> executeOnce(ResolvedRequest resolved) {
         try {
-            CompletableFuture<HttpResponse<byte[]>> cf = resolved.runtime().client.sendAsync(
-                    resolved.httpRequest(),
-                    HttpResponse.BodyHandlers.ofByteArray()
-            );
             if (resolved.policy().readTimeoutMs() > 0) {
+                // 有 readTimeout：sendAsync + 超时等待（超时后 cancel future）
+                CompletableFuture<HttpResponse<byte[]>> cf = resolved.runtime().client.sendAsync(
+                        resolved.httpRequest(),
+                        HttpResponse.BodyHandlers.ofByteArray()
+                );
                 try {
                     return cf.get(resolved.policy().readTimeoutMs(), TimeUnit.MILLISECONDS);
                 } catch (TimeoutException e) {
@@ -463,27 +674,37 @@ public final class VKHttpRuntime {
                     throw new VKHttpException(VKHttpErrorCode.READ_TIMEOUT,
                             "HTTP read timeout exceeded: " + resolved.policy().readTimeoutMs() + "ms", e);
                 }
+            } else {
+                // Bug5：无 readTimeout，直接同步调用，避免不必要的 Future 分配
+                return resolved.runtime().client.send(
+                        resolved.httpRequest(),
+                        HttpResponse.BodyHandlers.ofByteArray()
+                );
             }
-            return cf.get();
+        } catch (VKHttpException e) {
+            throw e;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new VKHttpException(VKHttpErrorCode.NETWORK_ERROR, "HTTP request interrupted", e);
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
-            if (cause instanceof VKHttpException ex) {
-                throw ex;
-            }
-            if (cause instanceof HttpConnectTimeoutException) {
-                throw new VKHttpException(VKHttpErrorCode.CONNECT_TIMEOUT, "HTTP connect timeout", cause);
-            }
-            if (cause instanceof HttpTimeoutException) {
-                throw new VKHttpException(VKHttpErrorCode.TOTAL_TIMEOUT, "HTTP total timeout", cause);
-            }
-            if (cause instanceof IOException) {
-                throw new VKHttpException(VKHttpErrorCode.NETWORK_ERROR, "HTTP request failed", cause);
-            }
-            throw new VKHttpException(VKHttpErrorCode.NETWORK_ERROR, "HTTP request failed", cause);
+            return translateException(cause);
+        } catch (HttpConnectTimeoutException e) {
+            throw new VKHttpException(VKHttpErrorCode.CONNECT_TIMEOUT, "HTTP connect timeout", e);
+        } catch (HttpTimeoutException e) {
+            throw new VKHttpException(VKHttpErrorCode.TOTAL_TIMEOUT, "HTTP total timeout", e);
+        } catch (IOException e) {
+            throw new VKHttpException(VKHttpErrorCode.NETWORK_ERROR, "HTTP request failed", e);
         }
+    }
+
+    /** 将异步执行异常翻译为 VKHttpException（永不正常返回）。 */
+    private <T> T translateException(Throwable cause) {
+        if (cause instanceof VKHttpException ex) throw ex;
+        if (cause instanceof HttpConnectTimeoutException) throw new VKHttpException(VKHttpErrorCode.CONNECT_TIMEOUT, "HTTP connect timeout", cause);
+        if (cause instanceof HttpTimeoutException) throw new VKHttpException(VKHttpErrorCode.TOTAL_TIMEOUT, "HTTP total timeout", cause);
+        if (cause instanceof IOException) throw new VKHttpException(VKHttpErrorCode.NETWORK_ERROR, "HTTP request failed", cause);
+        throw new VKHttpException(VKHttpErrorCode.NETWORK_ERROR, "HTTP request failed", cause);
     }
 
     private HttpResponse<InputStream> executeOnceStream(ResolvedRequest resolved) {
@@ -501,40 +722,191 @@ public final class VKHttpRuntime {
         }
     }
 
-    private static String readBodySafely(InputStream in, long maxBytes) {
-        if (in == null) {
-            return "";
-        }
-        long limit = Math.max(1024, maxBytes);
-        try (InputStream input = in) {
-            byte[] all = input.readNBytes((int) Math.min(Integer.MAX_VALUE, limit));
-            return new String(all, StandardCharsets.UTF_8);
-        } catch (Exception ignore) {
-            return "";
-        }
-    }
+    // -----------------------------------------------------------------------
+    // 流消费（SSE & Chunk）
+    // -----------------------------------------------------------------------
 
-    private static String firstHeader(Map<String, List<String>> headers, String name) {
-        if (headers == null || headers.isEmpty() || name == null) {
-            return null;
-        }
-        for (Map.Entry<String, List<String>> e : headers.entrySet()) {
-            if (e.getKey() != null && e.getKey().equalsIgnoreCase(name) && e.getValue() != null && !e.getValue().isEmpty()) {
-                return e.getValue().get(0);
+    private void consumeSse(VKHttpResponseMeta meta,
+                            ResolvedRequest resolved,
+                            VKHttpSseListener listener,
+                            StreamSessionImpl session) {
+        Throwable failure = null;
+        boolean endedByDone = false;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(session.input(), StandardCharsets.UTF_8))) {
+            safeInvoke(() -> listener.onOpen(meta));
+            // Opt2：watchdog 使用 retryScheduler（ScheduledFuture），不占用 streamExecutor 线程
+            ScheduledFuture<?> watchdog = startIdleWatchdog(resolved.policy().streamIdleTimeoutMs(), session);
+            SseAccumulator event = new SseAccumulator();
+            String line;
+            while (!session.isCancelled() && (line = reader.readLine()) != null) {
+                session.touch();
+                if (line.isEmpty()) {
+                    if (!event.isEmpty()) {
+                        VKHttpSseEvent out = event.toEvent();
+                        validateSseEventSize(out, resolved.policy().sseMaxEventBytes());
+                        if ("[DONE]".equals(out.getData())) {
+                            if (resolved.policy().sseEmitDoneEvent()) {
+                                safeInvoke(() -> listener.onEvent(out));
+                            }
+                            endedByDone = true;
+                            break;
+                        }
+                        safeInvoke(() -> listener.onEvent(out));
+                        if (config.isMetricsEnabled()) {
+                            metrics.recordSseEvent(resolved.clientName());
+                        }
+                        event.reset();
+                    }
+                    continue;
+                }
+                if (line.startsWith(":")) {
+                    continue;
+                }
+                event.appendLine(line);
+            }
+            if (!endedByDone && !event.isEmpty() && !session.isCancelled()) {
+                VKHttpSseEvent out = event.toEvent();
+                validateSseEventSize(out, resolved.policy().sseMaxEventBytes());
+                if (!"[DONE]".equals(out.getData()) || resolved.policy().sseEmitDoneEvent()) {
+                    safeInvoke(() -> listener.onEvent(out));
+                    if (config.isMetricsEnabled()) {
+                        metrics.recordSseEvent(resolved.clientName());
+                    }
+                }
+            }
+            if (watchdog != null) {
+                watchdog.cancel(true);
+            }
+        } catch (Throwable e) {
+            if (!session.isCancelled()) {
+                failure = e;
             }
         }
-        return null;
+
+        if (session.idleTimeoutTriggered()) {
+            failure = new VKHttpException(VKHttpErrorCode.STREAM_IDLE_TIMEOUT, "HTTP stream idle timeout");
+        }
+        if (failure != null) {
+            VKHttpException streamError = asStreamError(failure);
+            safeNotify(() -> listener.onError(streamError));
+            if (config.isMetricsEnabled()) {
+                metrics.recordStreamError(resolved.clientName());
+            }
+            session.fail(streamError, config.isMetricsEnabled());
+            return;
+        }
+        safeNotify(listener::onComplete);
+        if (config.isMetricsEnabled()) {
+            metrics.recordStreamClose(resolved.clientName());
+        }
+        session.complete(config.isMetricsEnabled());
     }
 
-    private static String abbreviate(String value, int maxLen) {
-        if (value == null) {
-            return "";
+    private void consumeChunks(VKHttpResponseMeta meta, long idleTimeoutMs, String clientName,
+                               VKHttpChunkListener listener, StreamSessionImpl session) {
+        Throwable failure = null;
+        try (InputStream in = session.input()) {
+            safeInvoke(() -> listener.onOpen(meta));
+            // Opt2：watchdog 使用 retryScheduler
+            ScheduledFuture<?> watchdog = startIdleWatchdog(idleTimeoutMs, session);
+            byte[] buf = new byte[2048];
+            int n;
+            while (!session.isCancelled() && (n = in.read(buf)) >= 0) {
+                session.touch();
+                if (n == 0) {
+                    continue;
+                }
+                byte[] chunk = new byte[n];
+                System.arraycopy(buf, 0, chunk, 0, n);
+                safeInvoke(() -> listener.onChunk(chunk));
+            }
+            if (watchdog != null) {
+                watchdog.cancel(true);
+            }
+        } catch (Throwable e) {
+            if (!session.isCancelled()) {
+                failure = e;
+            }
         }
-        if (value.length() <= maxLen) {
-            return value;
+        if (session.idleTimeoutTriggered()) {
+            failure = new VKHttpException(VKHttpErrorCode.STREAM_IDLE_TIMEOUT, "HTTP stream idle timeout");
         }
-        return value.substring(0, Math.max(0, maxLen)) + "...";
+        if (failure != null) {
+            VKHttpException streamError = asStreamError(failure);
+            safeNotify(() -> listener.onError(streamError));
+            if (config.isMetricsEnabled()) {
+                metrics.recordStreamError(clientName);
+            }
+            session.fail(streamError, config.isMetricsEnabled());
+            return;
+        }
+        safeNotify(listener::onComplete);
+        if (config.isMetricsEnabled()) {
+            metrics.recordStreamClose(clientName);
+        }
+        session.complete(config.isMetricsEnabled());
     }
+
+    /**
+     * 启动流空闲超时 watchdog。
+     * Opt2修复：改用 retryScheduler.scheduleAtFixedRate()，返回 ScheduledFuture 而非 CompletableFuture，
+     * 不再占用 streamExecutor 线程（streamExecutor 线程数有限）。
+     */
+    private ScheduledFuture<?> startIdleWatchdog(long idleTimeoutMs, StreamSessionImpl session) {
+        if (idleTimeoutMs <= 0) {
+            return null;
+        }
+        ScheduledExecutorService scheduler = retryScheduler;
+        if (scheduler == null) {
+            return null;
+        }
+        long intervalMs = Math.min(500, Math.max(50, idleTimeoutMs / 4));
+        return scheduler.scheduleAtFixedRate(() -> {
+            if (!session.isOpen() || session.isCancelled()) {
+                // session 已结束，watchdog 本身在 ScheduledFuture.cancel() 后停止
+                return;
+            }
+            long idle = System.currentTimeMillis() - session.lastActiveAt();
+            if (idle > idleTimeoutMs) {
+                session.markIdleTimeout();
+                session.cancel();
+            }
+        }, intervalMs, intervalMs, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 校验 SSE 事件整体大小。
+     * Bug7修复：累加 event、id、data 以及所有 extFields 的 UTF-8 字节长度后统一比较。
+     */
+    private static void validateSseEventSize(VKHttpSseEvent event, int maxBytes) {
+        if (event == null) {
+            return;
+        }
+        int len = 0;
+        if (event.getEvent() != null) {
+            len += event.getEvent().getBytes(StandardCharsets.UTF_8).length;
+        }
+        if (event.getId() != null) {
+            len += event.getId().getBytes(StandardCharsets.UTF_8).length;
+        }
+        if (event.getData() != null) {
+            len += event.getData().getBytes(StandardCharsets.UTF_8).length;
+        }
+        if (event.getExtFields() != null) {
+            for (Map.Entry<String, String> e : event.getExtFields().entrySet()) {
+                if (e.getKey() != null) len += e.getKey().getBytes(StandardCharsets.UTF_8).length;
+                if (e.getValue() != null) len += e.getValue().getBytes(StandardCharsets.UTF_8).length;
+            }
+        }
+        if (len > maxBytes) {
+            throw new VKHttpException(VKHttpErrorCode.SSE_PARSE_ERROR,
+                    "SSE event exceeds max size: " + len + " > " + maxBytes);
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 重试逻辑
+    // -----------------------------------------------------------------------
 
     private boolean shouldRetryByStatus(ResolvedRequest resolved, int status, long retryIndex) {
         if (retryIndex >= resolved.policy().maxRetries()) {
@@ -567,11 +939,16 @@ public final class VKHttpRuntime {
         return false;
     }
 
+    /**
+     * 检查当前请求方法是否允许重试。
+     * Bug6修复：将常量名从 SAFE_METHODS 改为 IDEMPOTENT_METHODS。
+     * GET/HEAD/OPTIONS/PUT/DELETE/TRACE 为幂等方法，重试无需 idempotency key。
+     */
     private boolean isRetryMethodAllowed(ResolvedRequest resolved) {
         if (!resolved.policy().retryMethods().contains(resolved.method())) {
             return false;
         }
-        if (SAFE_METHODS.contains(resolved.method())) {
+        if (IDEMPOTENT_METHODS.contains(resolved.method())) {
             return true;
         }
         if (!resolved.policy().requireIdempotencyKeyForUnsafeRetry()) {
@@ -638,228 +1015,73 @@ public final class VKHttpRuntime {
                 && code != VKHttpErrorCode.CIRCUIT_OPEN;
     }
 
-    private void consumeSse(VKHttpResponseMeta meta,
-                            ResolvedRequest resolved,
-                            VKHttpSseListener listener,
-                            StreamSessionImpl session) {
-        Throwable failure = null;
-        boolean endedByDone = false;
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(session.input(), StandardCharsets.UTF_8))) {
-            safeInvoke(() -> listener.onOpen(meta));
-            CompletableFuture<Void> watchdog = startIdleWatchdog(resolved.policy().streamIdleTimeoutMs(), session);
-            SseAccumulator event = new SseAccumulator();
-            String line;
-            while (!session.isCancelled() && (line = reader.readLine()) != null) {
-                session.touch();
-                if (line.isEmpty()) {
-                    if (!event.isEmpty()) {
-                        VKHttpSseEvent out = event.toEvent();
-                        validateSseEventSize(out, resolved.policy().sseMaxEventBytes());
-                        if ("[DONE]".equals(out.getData())) {
-                            if (resolved.policy().sseEmitDoneEvent()) {
-                                safeInvoke(() -> listener.onEvent(out));
-                            }
-                            endedByDone = true;
-                            break;
-                        }
-                        safeInvoke(() -> listener.onEvent(out));
-                        if (config.isMetricsEnabled()) {
-                            metrics.recordSseEvent();
-                        }
-                        event.reset();
-                    }
-                    continue;
+    // -----------------------------------------------------------------------
+    // 拦截器链构建（扩展1）
+    // -----------------------------------------------------------------------
+
+    /**
+     * 解析有效客户端名（request 中指定的优先，否则取 ThreadLocal 上下文）。
+     */
+    private String resolveClientName(VKHttpRequest request) {
+        String name = request.getClientName();
+        if ((name == null || name.isBlank()) && clientContext.get() != null) {
+            name = clientContext.get();
+        }
+        return name;
+    }
+
+    /**
+     * 合并全局拦截器 + 客户端拦截器，返回有序列表。
+     * 执行顺序：global interceptors → client interceptors。
+     */
+    private List<VKHttpInterceptor> buildInterceptorList(String clientName) {
+        List<VKHttpInterceptor> all = new ArrayList<>(config.getGlobalInterceptors());
+        if (clientName != null && !clientName.isBlank() && !DEFAULT_CLIENT_KEY.equals(clientName)) {
+            VKHttpClientConfig clientCfg = clients.get(clientName.trim());
+            if (clientCfg != null && !clientCfg.getInterceptors().isEmpty()) {
+                all.addAll(clientCfg.getInterceptors());
+            }
+        }
+        return all;
+    }
+
+    /**
+     * 构建拦截器链节点。
+     * 节点 index 指向当前应被执行的拦截器；当 index == interceptors.size() 时为终端节点，调用 executeCore()。
+     */
+    private VKHttpInterceptorChain buildChain(VKHttpRequest request, List<VKHttpInterceptor> interceptors, int index) {
+        return new VKHttpInterceptorChain() {
+            // 当前请求（允许拦截器通过 proceed(newRequest) 替换）
+            private VKHttpRequest current = request;
+
+            @Override
+            public VKHttpRequest request() {
+                return current;
+            }
+
+            @Override
+            public VKHttpResponse proceed() {
+                return proceed(current);
+            }
+
+            @Override
+            public VKHttpResponse proceed(VKHttpRequest newRequest) {
+                current = newRequest;
+                if (index < interceptors.size()) {
+                    // 当前节点调用 interceptors[index]，并为其提供指向 index+1 的链
+                    VKHttpInterceptor next = interceptors.get(index);
+                    VKHttpInterceptorChain nextChain = buildChain(newRequest, interceptors, index + 1);
+                    return next.intercept(nextChain);
                 }
-                if (line.startsWith(":")) {
-                    continue;
-                }
-                event.appendLine(line);
+                // 终端：执行实际 HTTP 请求（含重试）
+                return executeCore(newRequest);
             }
-            if (!endedByDone && !event.isEmpty() && !session.isCancelled()) {
-                VKHttpSseEvent out = event.toEvent();
-                validateSseEventSize(out, resolved.policy().sseMaxEventBytes());
-                if (!"[DONE]".equals(out.getData()) || resolved.policy().sseEmitDoneEvent()) {
-                    safeInvoke(() -> listener.onEvent(out));
-                    if (config.isMetricsEnabled()) {
-                        metrics.recordSseEvent();
-                    }
-                }
-            }
-            if (watchdog != null) {
-                watchdog.cancel(true);
-            }
-        } catch (Throwable e) {
-            if (!session.isCancelled()) {
-                failure = e;
-            }
-        }
-
-        if (session.idleTimeoutTriggered()) {
-            failure = new VKHttpException(VKHttpErrorCode.STREAM_IDLE_TIMEOUT, "HTTP stream idle timeout");
-        }
-        if (failure != null) {
-            VKHttpException streamError = asStreamError(failure);
-            safeNotify(() -> listener.onError(streamError));
-            if (config.isMetricsEnabled()) {
-                metrics.recordStreamError();
-            }
-            session.fail(streamError, config.isMetricsEnabled());
-            return;
-        }
-        safeNotify(listener::onComplete);
-        if (config.isMetricsEnabled()) {
-            metrics.recordStreamClose();
-        }
-        session.complete(config.isMetricsEnabled());
+        };
     }
 
-    private void consumeChunks(VKHttpResponseMeta meta, long idleTimeoutMs, VKHttpChunkListener listener, StreamSessionImpl session) {
-        Throwable failure = null;
-        try (InputStream in = session.input()) {
-            safeInvoke(() -> listener.onOpen(meta));
-            CompletableFuture<Void> watchdog = startIdleWatchdog(idleTimeoutMs, session);
-            byte[] buf = new byte[2048];
-            int n;
-            while (!session.isCancelled() && (n = in.read(buf)) >= 0) {
-                session.touch();
-                if (n == 0) {
-                    continue;
-                }
-                byte[] chunk = new byte[n];
-                System.arraycopy(buf, 0, chunk, 0, n);
-                safeInvoke(() -> listener.onChunk(chunk));
-            }
-            if (watchdog != null) {
-                watchdog.cancel(true);
-            }
-        } catch (Throwable e) {
-            if (!session.isCancelled()) {
-                failure = e;
-            }
-        }
-        if (session.idleTimeoutTriggered()) {
-            failure = new VKHttpException(VKHttpErrorCode.STREAM_IDLE_TIMEOUT, "HTTP stream idle timeout");
-        }
-        if (failure != null) {
-            VKHttpException streamError = asStreamError(failure);
-            safeNotify(() -> listener.onError(streamError));
-            if (config.isMetricsEnabled()) {
-                metrics.recordStreamError();
-            }
-            session.fail(streamError, config.isMetricsEnabled());
-            return;
-        }
-        safeNotify(listener::onComplete);
-        if (config.isMetricsEnabled()) {
-            metrics.recordStreamClose();
-        }
-        session.complete(config.isMetricsEnabled());
-    }
-
-    private CompletableFuture<Void> startIdleWatchdog(long idleTimeoutMs, StreamSessionImpl session) {
-        if (idleTimeoutMs <= 0) {
-            return null;
-        }
-        ExecutorService executor = streamExecutor;
-        if (executor == null) {
-            return null;
-        }
-        return CompletableFuture.runAsync(() -> {
-            long intervalMs = Math.min(500, Math.max(50, idleTimeoutMs / 4));
-            while (session.isOpen() && !session.isCancelled()) {
-                long idle = System.currentTimeMillis() - session.lastActiveAt();
-                if (idle > idleTimeoutMs) {
-                    session.markIdleTimeout();
-                    session.cancel();
-                    return;
-                }
-                try {
-                    Thread.sleep(intervalMs);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
-        }, executor);
-    }
-
-    private static void validateSseEventSize(VKHttpSseEvent event, int maxBytes) {
-        if (event == null || event.getData() == null) {
-            return;
-        }
-        int len = event.getData().getBytes(StandardCharsets.UTF_8).length;
-        if (len > maxBytes) {
-            throw new VKHttpException(VKHttpErrorCode.SSE_PARSE_ERROR,
-                    "SSE event exceeds max size: " + len + " > " + maxBytes);
-        }
-    }
-
-    private static void safeInvoke(Runnable action) {
-        try {
-            action.run();
-        } catch (VKHttpException e) {
-            throw e;
-        } catch (Throwable e) {
-            throw new VKHttpException(VKHttpErrorCode.STREAM_CONSUMER_BACKPRESSURE, "HTTP stream listener failed", e);
-        }
-    }
-
-    private static void safeNotify(Runnable action) {
-        try {
-            action.run();
-        } catch (Throwable ignore) {
-        }
-    }
-
-    private static VKHttpException asStreamError(Throwable throwable) {
-        if (throwable instanceof VKHttpException e) {
-            return e;
-        }
-        if (throwable instanceof IOException) {
-            return new VKHttpException(VKHttpErrorCode.NETWORK_ERROR, "HTTP stream read failed", throwable);
-        }
-        return new VKHttpException(VKHttpErrorCode.STREAM_CLOSED, "HTTP stream failed", throwable);
-    }
-
-    private static void closeQuietly(InputStream in) {
-        if (in == null) {
-            return;
-        }
-        try {
-            in.close();
-        } catch (IOException ignore) {
-        }
-    }
-
-    private void logCall(ResolvedRequest resolved, int status, long costMs, long retryCount) {
-        if (!config.isLogEnabled()) {
-            return;
-        }
-        try {
-            Vostok.Log.info("Vostok.Http {} {} status={} costMs={} retries={} client={}",
-                    resolved.method(),
-                    resolved.url(),
-                    status,
-                    costMs,
-                    retryCount,
-                    resolved.clientName() == null ? "-" : resolved.clientName());
-        } catch (Throwable ignore) {
-        }
-    }
-
-    private void ensureInit() {
-        if (initialized) {
-            return;
-        }
-        synchronized (LOCK) {
-            if (!initialized) {
-                config = new VKHttpConfig();
-                initialized = true;
-                clearClientRuntimes();
-                refreshStreamExecutor();
-            }
-        }
-    }
+    // -----------------------------------------------------------------------
+    // 请求解析（resolveRequest）
+    // -----------------------------------------------------------------------
 
     private ResolvedRequest resolveRequest(VKHttpRequest request, boolean streamMode) {
         String clientName = request.getClientName();
@@ -948,8 +1170,13 @@ public final class VKHttpRuntime {
             headers.putIfAbsent("User-Agent", userAgent);
         }
 
-        String runtimeKey = buildRuntimeKey(selectedClientName, connectTimeoutMs, followRedirects, clientCfg);
-        ClientRuntimeEntry runtime = getOrCreateClientRuntime(runtimeKey, connectTimeoutMs, followRedirects, clientCfg);
+        // 扩展2：将 cookiePolicy 纳入 runtimeKey，保证不同 cookie 策略的客户端各自独立
+        String effectiveCookiePolicy = clientCfg != null && clientCfg.getCookiePolicy() != null
+                ? clientCfg.getCookiePolicy()
+                : config.getCookiePolicy();
+
+        String runtimeKey = buildRuntimeKey(selectedClientName, connectTimeoutMs, followRedirects, clientCfg, effectiveCookiePolicy);
+        ClientRuntimeEntry runtime = getOrCreateClientRuntime(runtimeKey, connectTimeoutMs, followRedirects, clientCfg, effectiveCookiePolicy);
 
         HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
                 .uri(URI.create(targetUrl));
@@ -1055,10 +1282,19 @@ public final class VKHttpRuntime {
         );
     }
 
+    // -----------------------------------------------------------------------
+    // HttpClient 管理
+    // -----------------------------------------------------------------------
+
+    /**
+     * 获取或懒创建 HttpClient 实例。
+     * 扩展2：若 cookiePolicy 非 null，创建并注入 CookieManager。
+     */
     private ClientRuntimeEntry getOrCreateClientRuntime(String runtimeKey,
                                                         long connectTimeoutMs,
                                                         boolean followRedirects,
-                                                        VKHttpClientConfig clientCfg) {
+                                                        VKHttpClientConfig clientCfg,
+                                                        String cookiePolicy) {
         ClientRuntimeEntry existing = clientRuntimeCache.get(runtimeKey);
         if (existing != null) {
             existing.lastUsedAt = System.currentTimeMillis();
@@ -1081,11 +1317,28 @@ public final class VKHttpRuntime {
                 builder.sslContext(sslContext);
             }
 
-            ClientRuntimeEntry created = new ClientRuntimeEntry(builder.build(), System.currentTimeMillis());
+            // 扩展2：注入 CookieManager
+            CookieManager cookieManager = null;
+            if (cookiePolicy != null && !cookiePolicy.isBlank()) {
+                cookieManager = new CookieManager(null, resolveCookiePolicy(cookiePolicy));
+                builder.cookieHandler(cookieManager);
+            }
+
+            ClientRuntimeEntry created = new ClientRuntimeEntry(builder.build(), cookieManager, System.currentTimeMillis());
             clientRuntimeCache.put(runtimeKey, created);
             clientBuilds.incrementAndGet();
             return created;
         }
+    }
+
+    /** 将字符串 Cookie 策略名称映射到 java.net.CookiePolicy 实例。 */
+    private static CookiePolicy resolveCookiePolicy(String policy) {
+        if (policy == null) return CookiePolicy.ACCEPT_NONE;
+        return switch (policy.toUpperCase()) {
+            case "ACCEPT_ALL" -> CookiePolicy.ACCEPT_ALL;
+            case "ACCEPT_ORIGINAL_SERVER" -> CookiePolicy.ACCEPT_ORIGINAL_SERVER;
+            default -> CookiePolicy.ACCEPT_NONE;
+        };
     }
 
     private ResilienceRuntime getOrCreateResilienceRuntime(String runtimeKey, ResolvedPolicy policy) {
@@ -1110,11 +1363,13 @@ public final class VKHttpRuntime {
         }
     }
 
-    private String buildRuntimeKey(String clientName, long connectTimeoutMs, boolean followRedirects, VKHttpClientConfig clientCfg) {
+    private String buildRuntimeKey(String clientName, long connectTimeoutMs, boolean followRedirects,
+                                   VKHttpClientConfig clientCfg, String cookiePolicy) {
         StringBuilder sb = new StringBuilder(128);
         sb.append(clientName).append('|')
                 .append(connectTimeoutMs).append('|')
-                .append(followRedirects).append('|');
+                .append(followRedirects).append('|')
+                .append(nullToEmpty(cookiePolicy)).append('|');  // 扩展2：cookiePolicy 纳入 key
 
         if (clientCfg == null) {
             sb.append("no-ssl");
@@ -1135,9 +1390,9 @@ public final class VKHttpRuntime {
         return sb.toString();
     }
 
-    private static String nullToEmpty(String value) {
-        return value == null ? "" : value;
-    }
+    // -----------------------------------------------------------------------
+    // SSL / TLS
+    // -----------------------------------------------------------------------
 
     private SSLContext resolveSslContext(VKHttpClientConfig clientCfg) {
         if (clientCfg == null) {
@@ -1204,31 +1459,70 @@ public final class VKHttpRuntime {
         return value == null ? new char[0] : value.toCharArray();
     }
 
-    private void clearClientRuntimes() {
-        clientRuntimeCache.clear();
-        resilienceCache.clear();
-    }
+    // -----------------------------------------------------------------------
+    // 线程池管理
+    // -----------------------------------------------------------------------
 
-    private void refreshStreamExecutor() {
-        ExecutorService old = streamExecutor;
+    private void refreshExecutors() {
+        // 流消费线程池（固定大小）
+        ExecutorService oldStream = streamExecutor;
         int threads = Math.max(1, config.getStreamExecutorThreads());
-        ThreadFactory factory = runnable -> {
+        ThreadFactory streamFactory = runnable -> {
             Thread t = new Thread(runnable, "vostok-http-stream-" + System.nanoTime());
             t.setDaemon(true);
             return t;
         };
-        streamExecutor = Executors.newFixedThreadPool(threads, factory);
-        if (old != null) {
-            old.shutdownNow();
+        streamExecutor = Executors.newFixedThreadPool(threads, streamFactory);
+        if (oldStream != null) {
+            oldStream.shutdownNow();
+        }
+
+        // Bug3：专用异步执行线程池（无界 CachedThreadPool，daemon 线程）
+        ExecutorService oldAsync = asyncExecutor;
+        ThreadFactory asyncFactory = runnable -> {
+            Thread t = new Thread(runnable, "vostok-http-async-" + System.nanoTime());
+            t.setDaemon(true);
+            return t;
+        };
+        asyncExecutor = Executors.newCachedThreadPool(asyncFactory);
+        if (oldAsync != null) {
+            oldAsync.shutdownNow();
+        }
+
+        // Opt2：调度器（单线程 daemon，用于 watchdog + 未来异步重试调度）
+        ScheduledExecutorService oldScheduler = retryScheduler;
+        ThreadFactory schedulerFactory = runnable -> {
+            Thread t = new Thread(runnable, "vostok-http-scheduler-" + System.nanoTime());
+            t.setDaemon(true);
+            return t;
+        };
+        retryScheduler = Executors.newSingleThreadScheduledExecutor(schedulerFactory);
+        if (oldScheduler != null) {
+            oldScheduler.shutdownNow();
         }
     }
 
-    private void closeStreamExecutor() {
-        ExecutorService old = streamExecutor;
+    private void closeExecutors() {
+        ExecutorService oldStream = streamExecutor;
         streamExecutor = null;
-        if (old != null) {
-            old.shutdownNow();
-        }
+        if (oldStream != null) oldStream.shutdownNow();
+
+        ExecutorService oldAsync = asyncExecutor;
+        asyncExecutor = null;
+        if (oldAsync != null) oldAsync.shutdownNow();
+
+        ScheduledExecutorService oldScheduler = retryScheduler;
+        retryScheduler = null;
+        if (oldScheduler != null) oldScheduler.shutdownNow();
+    }
+
+    // -----------------------------------------------------------------------
+    // 缓存管理
+    // -----------------------------------------------------------------------
+
+    private void clearClientRuntimes() {
+        clientRuntimeCache.clear();
+        resilienceCache.clear();
     }
 
     private void maybeEvictIdleRuntimes() {
@@ -1242,6 +1536,100 @@ public final class VKHttpRuntime {
             if (now - e.getValue().lastUsedAt > ttlMs) {
                 clientRuntimeCache.remove(e.getKey(), e.getValue());
             }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // 工具方法
+    // -----------------------------------------------------------------------
+
+    private void ensureInit() {
+        if (initialized) {
+            return;
+        }
+        synchronized (LOCK) {
+            if (!initialized) {
+                config = new VKHttpConfig();
+                initialized = true;
+                clearClientRuntimes();
+                refreshExecutors();
+            }
+        }
+    }
+
+    private static String readBodySafely(InputStream in, long maxBytes) {
+        if (in == null) {
+            return "";
+        }
+        long limit = Math.max(1024, maxBytes);
+        try (InputStream input = in) {
+            byte[] all = input.readNBytes((int) Math.min(Integer.MAX_VALUE, limit));
+            return new String(all, StandardCharsets.UTF_8);
+        } catch (Exception ignore) {
+            return "";
+        }
+    }
+
+    private static String abbreviate(String value, int maxLen) {
+        if (value == null) {
+            return "";
+        }
+        if (value.length() <= maxLen) {
+            return value;
+        }
+        return value.substring(0, Math.max(0, maxLen)) + "...";
+    }
+
+    private static void safeInvoke(Runnable action) {
+        try {
+            action.run();
+        } catch (VKHttpException e) {
+            throw e;
+        } catch (Throwable e) {
+            throw new VKHttpException(VKHttpErrorCode.STREAM_CONSUMER_BACKPRESSURE, "HTTP stream listener failed", e);
+        }
+    }
+
+    private static void safeNotify(Runnable action) {
+        try {
+            action.run();
+        } catch (Throwable ignore) {
+        }
+    }
+
+    private static VKHttpException asStreamError(Throwable throwable) {
+        if (throwable instanceof VKHttpException e) {
+            return e;
+        }
+        if (throwable instanceof IOException) {
+            return new VKHttpException(VKHttpErrorCode.NETWORK_ERROR, "HTTP stream read failed", throwable);
+        }
+        return new VKHttpException(VKHttpErrorCode.STREAM_CLOSED, "HTTP stream failed", throwable);
+    }
+
+    private static void closeQuietly(InputStream in) {
+        if (in == null) {
+            return;
+        }
+        try {
+            in.close();
+        } catch (IOException ignore) {
+        }
+    }
+
+    private void logCall(ResolvedRequest resolved, int status, long costMs, long retryCount) {
+        if (!config.isLogEnabled()) {
+            return;
+        }
+        try {
+            Vostok.Log.info("Vostok.Http {} {} status={} costMs={} retries={} client={}",
+                    resolved.method(),
+                    resolved.url(),
+                    status,
+                    costMs,
+                    retryCount,
+                    resolved.clientName() == null ? "-" : resolved.clientName());
+        } catch (Throwable ignore) {
         }
     }
 
@@ -1311,6 +1699,10 @@ public final class VKHttpRuntime {
         return URLEncoder.encode(v, StandardCharsets.UTF_8).replace("+", "%20");
     }
 
+    private static String nullToEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
     private static long resolvePositive(Long requestValue, long clientValue, long globalValue) {
         if (requestValue != null && requestValue > 0) {
             return requestValue;
@@ -1360,5 +1752,4 @@ public final class VKHttpRuntime {
         }
         return globalValue;
     }
-
 }

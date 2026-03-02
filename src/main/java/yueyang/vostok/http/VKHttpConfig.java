@@ -1,7 +1,9 @@
 package yueyang.vostok.http;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -49,6 +51,10 @@ public class VKHttpConfig {
     private int streamQueueCapacity = 1024;
     private String userAgent = "VostokHttp/1.0";
     private Map<String, String> defaultHeaders = new LinkedHashMap<>();
+    // 扩展1：全局拦截器链（按添加顺序执行）
+    private List<VKHttpInterceptor> globalInterceptors = new ArrayList<>();
+    // 扩展2：Cookie 策略，null 表示不启用，可选值：ACCEPT_ALL / ACCEPT_NONE / ACCEPT_ORIGINAL_SERVER
+    private String cookiePolicy;
 
     public VKHttpConfig copy() {
         VKHttpConfig c = new VKHttpConfig();
@@ -95,6 +101,8 @@ public class VKHttpConfig {
         c.streamQueueCapacity = this.streamQueueCapacity;
         c.userAgent = this.userAgent;
         c.defaultHeaders = new LinkedHashMap<>(this.defaultHeaders);
+        c.globalInterceptors = new ArrayList<>(this.globalInterceptors);
+        c.cookiePolicy = this.cookiePolicy;
         return c;
     }
 
@@ -540,6 +548,30 @@ public class VKHttpConfig {
         if (name != null && !name.isBlank() && value != null) {
             this.defaultHeaders.put(name.trim(), value);
         }
+        return this;
+    }
+
+    /** 添加全局拦截器（所有客户端的请求都会经过此拦截器）。 */
+    public VKHttpConfig addInterceptor(VKHttpInterceptor interceptor) {
+        if (interceptor != null) {
+            this.globalInterceptors.add(interceptor);
+        }
+        return this;
+    }
+
+    /** 返回全局拦截器列表（不可修改快照）。 */
+    public List<VKHttpInterceptor> getGlobalInterceptors() {
+        return List.copyOf(globalInterceptors);
+    }
+
+    /** Cookie 自动管理策略，null 表示不启用。 */
+    public String getCookiePolicy() {
+        return cookiePolicy;
+    }
+
+    /** 设置 Cookie 策略：ACCEPT_ALL / ACCEPT_NONE / ACCEPT_ORIGINAL_SERVER，null 表示关闭。 */
+    public VKHttpConfig cookiePolicy(String cookiePolicy) {
+        this.cookiePolicy = cookiePolicy;
         return this;
     }
 
