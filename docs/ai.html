@@ -44,170 +44,618 @@
 <div class="page-header">
   <div class="module-tag">🤖 Vostok.AI</div>
   <h1>AI 集成模块</h1>
-  <p class="desc">统一 AI 客户端，支持多模型注册与切换、会话管理（多轮对话）、JSON 结构化响应、流式输出、RAG 检索增强生成、向量检索、Tool Call 函数调用。</p>
+  <p class="desc">统一 AI 客户端，支持多模型注册与切换、单轮/多轮对话、JSON 结构化输出、流式输出、RAG 检索增强生成、向量检索、Tool Call 函数调用、Prompt 模板、审计与指标采集。</p>
 </div>
 
 <h2>初始化</h2>
-<pre><code><span class="ty">Vostok</span>.AI.init(<span class="kw">new</span> <span class="ty">VKAiConfig</span>());
+<p>通过 <code>Vostok.AI.init()</code> 初始化模块，可传入 <code>VKAiConfig</code> 覆盖全局默认配置。</p>
+<pre><code><span class="cm">// 使用默认配置初始化</span>
+<span class="ty">Vostok</span>.AI.init();
 
-<span class="cm">// 注册模型</span>
-<span class="ty">Vostok</span>.AI.registerModel(<span class="st">"gpt4"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
-    .type(<span class="ty">VKAiModelType</span>.GPT4)
-    .apiKey(System.getenv(<span class="st">"OPENAI_KEY"</span>))
-    .baseUrl(<span class="st">"https://api.openai.com/v1"</span>)
-    .model(<span class="st">"gpt-4o"</span>)
-);
-
-<span class="ty">Vostok</span>.AI.registerModel(<span class="st">"claude"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
-    .type(<span class="ty">VKAiModelType</span>.CLAUDE)
-    .apiKey(<span class="ty">System</span>.getenv(<span class="st">"ANTHROPIC_KEY"</span>))
+<span class="cm">// 使用自定义配置初始化</span>
+<span class="ty">Vostok</span>.AI.init(<span class="kw">new</span> <span class="ty">VKAiConfig</span>()
+    .connectTimeoutMs(<span class="nu">3000</span>)
+    .readTimeoutMs(<span class="nu">60_000</span>)
+    .maxRetries(<span class="nu">2</span>)
+    .metricsEnabled(<span class="kw">true</span>)
+    .auditEnabled(<span class="kw">true</span>)
+    .securityCheckEnabled(<span class="kw">true</span>)
+    .agentLoopEnabled(<span class="kw">true</span>)
+    .maxAgentLoops(<span class="nu">5</span>)
+    .tokenBudgetPerRequest(<span class="nu">0</span>)        <span class="cm">// 0 = 不限制</span>
+    .ragCacheEnabled(<span class="kw">true</span>)
 );</code></pre>
 
-<h2>单轮对话</h2>
-<pre><code><span class="cm">// 简单 Chat</span>
-<span class="ty">VKAiChatRequest</span> req = <span class="ty">VKAiChatRequest</span>.builder()
-    .model(<span class="st">"gpt4"</span>)
-    .userMessage(<span class="st">"用一句话解释量子纠缠"</span>)
-    .systemMessage(<span class="st">"你是一位物理学教授"</span>)
-    .build();
+<h3>VKAiConfig 配置项</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>connectTimeoutMs(long)</code></td><td>long</td><td>3000</td><td>HTTP 连接超时（毫秒）</td></tr>
+    <tr><td><code>readTimeoutMs(long)</code></td><td>long</td><td>30000</td><td>HTTP 读取超时（毫秒）</td></tr>
+    <tr><td><code>maxRetries(int)</code></td><td>int</td><td>1</td><td>最大重试次数</td></tr>
+    <tr><td><code>retryBackoffMs(long)</code></td><td>long</td><td>150</td><td>首次重试等待时间（毫秒）</td></tr>
+    <tr><td><code>maxRetryBackoffMs(long)</code></td><td>long</td><td>1500</td><td>最大重试等待时间（毫秒）</td></tr>
+    <tr><td><code>retryOnStatuses(Integer...)</code></td><td>Set&lt;Integer&gt;</td><td>429,500,502,503,504</td><td>触发重试的 HTTP 状态码</td></tr>
+    <tr><td><code>retryOnNetworkError(boolean)</code></td><td>boolean</td><td>true</td><td>网络异常时是否重试</td></tr>
+    <tr><td><code>retryOnTimeout(boolean)</code></td><td>boolean</td><td>true</td><td>超时时是否重试</td></tr>
+    <tr><td><code>failOnNon2xx(boolean)</code></td><td>boolean</td><td>true</td><td>非 2xx 响应时是否抛出异常</td></tr>
+    <tr><td><code>metricsEnabled(boolean)</code></td><td>boolean</td><td>true</td><td>是否启用指标采集</td></tr>
+    <tr><td><code>logEnabled(boolean)</code></td><td>boolean</td><td>false</td><td>是否启用请求日志</td></tr>
+    <tr><td><code>toolCallingEnabled(boolean)</code></td><td>boolean</td><td>true</td><td>是否允许 Tool Call</td></tr>
+    <tr><td><code>securityCheckEnabled(boolean)</code></td><td>boolean</td><td>true</td><td>是否启用安全扫描（XSS/注入检测）</td></tr>
+    <tr><td><code>blockOnSecurityRisk(boolean)</code></td><td>boolean</td><td>true</td><td>安全风险时是否阻断请求</td></tr>
+    <tr><td><code>auditEnabled(boolean)</code></td><td>boolean</td><td>true</td><td>是否启用审计记录</td></tr>
+    <tr><td><code>maxToolCallsPerRequest(int)</code></td><td>int</td><td>8</td><td>单次请求最大 Tool Call 次数</td></tr>
+    <tr><td><code>maxAuditRecords(int)</code></td><td>int</td><td>1000</td><td>内存中保留的最大审计记录数</td></tr>
+    <tr><td><code>ragCacheEnabled(boolean)</code></td><td>boolean</td><td>true</td><td>是否启用 RAG 缓存（Embedding/Rerank/答案）</td></tr>
+    <tr><td><code>embeddingCacheTtlMs(long)</code></td><td>long</td><td>21600000</td><td>Embedding 缓存 TTL（毫秒，默认 6 小时）</td></tr>
+    <tr><td><code>rerankCacheTtlMs(long)</code></td><td>long</td><td>1800000</td><td>Rerank 缓存 TTL（毫秒，默认 30 分钟）</td></tr>
+    <tr><td><code>ragAnswerCacheTtlMs(long)</code></td><td>long</td><td>600000</td><td>RAG 答案缓存 TTL（毫秒，默认 10 分钟）</td></tr>
+    <tr><td><code>ragRerankTimeoutMs(long)</code></td><td>long</td><td>1500</td><td>RAG 内部 Rerank 超时（毫秒）</td></tr>
+    <tr><td><code>agentLoopEnabled(boolean)</code></td><td>boolean</td><td>true</td><td>是否启用 Agentic 多轮 Tool 循环</td></tr>
+    <tr><td><code>maxAgentLoops(int)</code></td><td>int</td><td>5</td><td>Agentic 循环最大轮次</td></tr>
+    <tr><td><code>tokenBudgetPerRequest(int)</code></td><td>int</td><td>0</td><td>全局 Token 预算上限（0 = 不限制）</td></tr>
+  </tbody>
+</table>
 
-<span class="ty">VKAiChatResponse</span> res = <span class="ty">Vostok</span>.AI.chat(req);
-<span class="ty">System</span>.out.println(res.content());
+<h2>注册模型</h2>
+<p>所有 API 调用通过模型名称路由，需先注册。<code>VKAiModelType</code> 区分模型用途：<code>CHAT</code>、<code>EMBEDDING</code>、<code>RERANK</code>。当前 Provider 支持 <code>OPENAI_COMPATIBLE</code>（兼容 OpenAI 接口格式的所有服务）。</p>
+<pre><code><span class="cm">// 注册 Chat 模型（OpenAI / 任何兼容 OpenAI 接口的服务）</span>
+<span class="ty">Vostok</span>.AI.registerModel(<span class="st">"gpt4o"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
+    .type(<span class="ty">VKAiModelType</span>.CHAT)
+    .baseUrl(<span class="st">"https://api.openai.com/v1"</span>)
+    .model(<span class="st">"gpt-4o"</span>)
+    .apiKey(<span class="ty">System</span>.getenv(<span class="st">"OPENAI_KEY"</span>))
+);
+
+<span class="cm">// 注册 Claude（通过 OpenAI 兼容代理或原生兼容层）</span>
+<span class="ty">Vostok</span>.AI.registerModel(<span class="st">"claude"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
+    .type(<span class="ty">VKAiModelType</span>.CHAT)
+    .baseUrl(<span class="st">"https://api.anthropic.com/v1"</span>)
+    .model(<span class="st">"claude-opus-4-6"</span>)
+    .apiKey(<span class="ty">System</span>.getenv(<span class="st">"ANTHROPIC_KEY"</span>))
+);
+
+<span class="cm">// 注册 Embedding 模型</span>
+<span class="ty">Vostok</span>.AI.registerModel(<span class="st">"embed"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
+    .type(<span class="ty">VKAiModelType</span>.EMBEDDING)
+    .baseUrl(<span class="st">"https://api.openai.com/v1"</span>)
+    .model(<span class="st">"text-embedding-ada-002"</span>)
+    .apiKey(<span class="ty">System</span>.getenv(<span class="st">"OPENAI_KEY"</span>))
+);
+
+<span class="cm">// 注册 Rerank 模型</span>
+<span class="ty">Vostok</span>.AI.registerModel(<span class="st">"rerank"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
+    .type(<span class="ty">VKAiModelType</span>.RERANK)
+    .baseUrl(<span class="st">"https://api.cohere.ai/v1"</span>)
+    .model(<span class="st">"rerank-multilingual-v2.0"</span>)
+    .apiKey(<span class="ty">System</span>.getenv(<span class="st">"COHERE_KEY"</span>))
+);
+
+<span class="cm">// 模型级别覆盖超时与重试（覆盖全局 VKAiConfig）</span>
+<span class="ty">Vostok</span>.AI.registerModel(<span class="st">"slow-model"</span>, <span class="kw">new</span> <span class="ty">VKAiModelConfig</span>()
+    .type(<span class="ty">VKAiModelType</span>.CHAT)
+    .baseUrl(<span class="st">"https://api.example.com/v1"</span>)
+    .model(<span class="st">"my-llm"</span>)
+    .apiKey(<span class="st">"..."</span>)
+    .connectTimeoutMs(<span class="nu">5000</span>)
+    .readTimeoutMs(<span class="nu">120_000</span>)
+    .maxRetries(<span class="nu">3</span>)
+    .putHeader(<span class="st">"X-Custom-Header"</span>, <span class="st">"value"</span>)
+);</code></pre>
+
+<h3>VKAiModelConfig 配置项</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>type(VKAiModelType)</code></td><td>模型类型：CHAT / EMBEDDING / RERANK</td></tr>
+    <tr><td><code>provider(VKAiProvider)</code></td><td>Provider 协议，默认 OPENAI_COMPATIBLE</td></tr>
+    <tr><td><code>baseUrl(String)</code></td><td>API 基础 URL（必填）</td></tr>
+    <tr><td><code>model(String)</code></td><td>模型标识符，如 "gpt-4o"</td></tr>
+    <tr><td><code>apiKey(String)</code></td><td>API 密钥</td></tr>
+    <tr><td><code>path(String)</code></td><td>覆盖默认接口路径（如 /v1/chat/completions）</td></tr>
+    <tr><td><code>connectTimeoutMs(long)</code></td><td>覆盖连接超时（&lt;= 0 时使用全局配置）</td></tr>
+    <tr><td><code>readTimeoutMs(long)</code></td><td>覆盖读取超时（&lt;= 0 时使用全局配置）</td></tr>
+    <tr><td><code>maxRetries(int)</code></td><td>覆盖最大重试次数</td></tr>
+    <tr><td><code>failOnNon2xx(Boolean)</code></td><td>覆盖非 2xx 时是否抛异常（null 时使用全局配置）</td></tr>
+    <tr><td><code>putHeader(String, String)</code></td><td>追加固定请求头</td></tr>
+    <tr><td><code>defaultHeaders(Map)</code></td><td>设置全部固定请求头</td></tr>
+  </tbody>
+</table>
+
+<h2>单轮对话</h2>
+<p><code>VKAiChatRequest</code> 使用链式调用构造请求，无需静态 builder。</p>
+<pre><code><span class="cm">// 同步 Chat</span>
+<span class="ty">VKAiChatResponse</span> res = <span class="ty">Vostok</span>.AI.chat(<span class="kw">new</span> <span class="ty">VKAiChatRequest</span>()
+    .model(<span class="st">"gpt4o"</span>)
+    .system(<span class="st">"你是一位物理学教授"</span>)
+    .message(<span class="st">"user"</span>, <span class="st">"用一句话解释量子纠缠"</span>)
+    .temperature(<span class="nu">0.7</span>)
+    .maxTokens(<span class="nu">256</span>)
+);
+<span class="ty">System</span>.out.println(res.getText());        <span class="cm">// 模型回复文本</span>
+<span class="ty">System</span>.out.println(res.getFinishReason()); <span class="cm">// "stop" / "length" / "tool_calls" 等</span>
+<span class="ty">System</span>.out.println(res.getLatencyMs());   <span class="cm">// 请求耗时（毫秒）</span>
+
+<span class="cm">// token 用量</span>
+<span class="ty">VKAiUsage</span> usage = res.getUsage();
+<span class="ty">System</span>.out.println(usage.getPromptTokens() + usage.getCompletionTokens());
 
 <span class="cm">// 异步</span>
-<span class="ty">CompletableFuture</span>&lt;<span class="ty">VKAiChatResponse</span>&gt; future = <span class="ty">Vostok</span>.AI.chatAsync(req);</code></pre>
+<span class="ty">CompletableFuture</span>&lt;<span class="ty">VKAiChatResponse</span>&gt; future = <span class="ty">Vostok</span>.AI.chatAsync(<span class="kw">new</span> <span class="ty">VKAiChatRequest</span>()
+    .model(<span class="st">"gpt4o"</span>)
+    .message(<span class="st">"user"</span>, <span class="st">"Hello!"</span>)
+);
+future.thenAccept(r -> <span class="ty">System</span>.out.println(r.getText()));</code></pre>
+
+<h3>VKAiChatRequest 参数</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>model(String)</code></td><td>已注册模型名称</td></tr>
+    <tr><td><code>system(String)</code></td><td>System Prompt</td></tr>
+    <tr><td><code>message(String role, String content)</code></td><td>追加一条消息，role 为 "user" 或 "assistant"</td></tr>
+    <tr><td><code>message(VKAiMessage)</code></td><td>追加 VKAiMessage 对象</td></tr>
+    <tr><td><code>temperature(Double)</code></td><td>采样温度（null 时使用模型默认值）</td></tr>
+    <tr><td><code>maxTokens(Integer)</code></td><td>最大输出 Token 数</td></tr>
+    <tr><td><code>stream(boolean)</code></td><td>是否启用流式输出，默认 false</td></tr>
+    <tr><td><code>allowTool(String)</code></td><td>允许本次请求使用的工具名称（可多次调用）</td></tr>
+    <tr><td><code>allowTools(String...)</code></td><td>批量设置允许工具白名单</td></tr>
+    <tr><td><code>historyTrimEnabled(boolean)</code></td><td>是否启用历史裁剪，默认 true</td></tr>
+    <tr><td><code>historyMaxMessages(Integer)</code></td><td>历史裁剪：最多保留的消息数</td></tr>
+    <tr><td><code>historyMaxChars(Integer)</code></td><td>历史裁剪：最多保留的总字符数</td></tr>
+    <tr><td><code>responseFormat(String)</code></td><td>结构化输出模式："json_object" 或 "json_schema"</td></tr>
+    <tr><td><code>responseJsonSchema(String)</code></td><td>JSON Schema 字符串，与 responseFormat("json_schema") 配合使用</td></tr>
+    <tr><td><code>tokenBudgetTokens(Integer)</code></td><td>本次请求 Token 预算上限（0 = 不限，null = 使用全局配置）</td></tr>
+  </tbody>
+</table>
+
+<h3>VKAiChatResponse 返回值</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>getText()</code></td><td>String</td><td>模型回复文本</td></tr>
+    <tr><td><code>getFinishReason()</code></td><td>String</td><td>结束原因："stop" / "length" / "tool_calls" 等</td></tr>
+    <tr><td><code>getUsage()</code></td><td>VKAiUsage</td><td>Token 用量（promptTokens / completionTokens / totalTokens）</td></tr>
+    <tr><td><code>getLatencyMs()</code></td><td>long</td><td>请求耗时（毫秒）</td></tr>
+    <tr><td><code>getStatusCode()</code></td><td>int</td><td>HTTP 响应状态码</td></tr>
+    <tr><td><code>getProviderRequestId()</code></td><td>String</td><td>Provider 返回的请求 ID</td></tr>
+    <tr><td><code>getToolResults()</code></td><td>List&lt;VKAiToolCallResult&gt;</td><td>本次请求触发的 Tool Call 执行结果列表</td></tr>
+    <tr><td><code>isStreaming()</code></td><td>boolean</td><td>是否为流式响应</td></tr>
+    <tr><td><code>stream()</code></td><td>VKAiChatDeltaStream</td><td>流式输出对象（仅 stream=true 时非 null）</td></tr>
+  </tbody>
+</table>
+
+<h2>流式输出</h2>
+<pre><code><span class="ty">VKAiChatResponse</span> res = <span class="ty">Vostok</span>.AI.chat(<span class="kw">new</span> <span class="ty">VKAiChatRequest</span>()
+    .model(<span class="st">"gpt4o"</span>)
+    .message(<span class="st">"user"</span>, <span class="st">"写一首关于春天的诗"</span>)
+    .stream(<span class="kw">true</span>)
+);
+
+<span class="ty">VKAiChatDeltaStream</span> stream = res.stream();
+<span class="kw">try</span> {
+    <span class="kw">while</span> (stream.hasNext(<span class="nu">5000</span>)) {   <span class="cm">// 等待下一个 delta，超时 5 秒</span>
+        <span class="ty">VKAiChatDelta</span> delta = stream.next();
+        <span class="ty">System</span>.out.print(delta.getContent()); <span class="cm">// 增量文本</span>
+        <span class="kw">if</span> (delta.isDone()) <span class="kw">break</span>;
+    }
+    <span class="cm">// 流结束后获取完整用量</span>
+    <span class="ty">VKAiUsage</span> usage = stream.finalUsage();
+    <span class="ty">System</span>.out.println(<span class="st">"\n结束原因: "</span> + stream.finishReason());
+} <span class="kw">finally</span> {
+    stream.close();
+}
+
+<span class="cm">// 取消流</span>
+stream.cancel();</code></pre>
+
+<h3>VKAiChatDeltaStream 接口</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>hasNext(long timeoutMs)</code></td><td>是否还有下一个 delta，阻塞等待至多 timeoutMs 毫秒</td></tr>
+    <tr><td><code>next()</code></td><td>获取下一个 VKAiChatDelta（content + isDone）</td></tr>
+    <tr><td><code>isDone()</code></td><td>流是否已结束</td></tr>
+    <tr><td><code>finalUsage()</code></td><td>流结束后的完整 Token 用量（isDone() 后调用）</td></tr>
+    <tr><td><code>finishReason()</code></td><td>结束原因（isDone() 后调用）</td></tr>
+    <tr><td><code>providerRequestId()</code></td><td>Provider 请求 ID</td></tr>
+    <tr><td><code>toolCalls()</code></td><td>流中累积的 Tool Call 列表（isDone() 后调用）</td></tr>
+    <tr><td><code>cancel()</code></td><td>主动取消流</td></tr>
+    <tr><td><code>close()</code></td><td>释放资源（实现 AutoCloseable）</td></tr>
+  </tbody>
+</table>
 
 <h2>JSON 结构化输出</h2>
+<p>使用 <code>chatJson</code> 可直接将模型输出反序列化为 Java 对象。</p>
 <pre><code><span class="kw">record</span> <span class="ty">Sentiment</span>(<span class="ty">String</span> label, <span class="kw">double</span> score) {}
 
 <span class="ty">Sentiment</span> result = <span class="ty">Vostok</span>.AI.chatJson(
-    <span class="ty">VKAiChatRequest</span>.builder()
-        .model(<span class="st">"gpt4"</span>)
-        .userMessage(<span class="st">"分析这段评论的情感：'这个产品太棒了！'"</span>)
-        .systemMessage(<span class="st">"返回 JSON: {\"label\": ..., \"score\": ...}"</span>)
-        .build(),
+    <span class="kw">new</span> <span class="ty">VKAiChatRequest</span>()
+        .model(<span class="st">"gpt4o"</span>)
+        .system(<span class="st">"返回 JSON: {\"label\": \"positive/negative\", \"score\": 0.0~1.0}"</span>)
+        .message(<span class="st">"user"</span>, <span class="st">"分析评论的情感：'这个产品太棒了！'"</span>)
+        .responseFormat(<span class="st">"json_object"</span>),
+    <span class="ty">Sentiment</span>.class
+);
+<span class="ty">System</span>.out.println(result.label() + <span class="st">" "</span> + result.score());
+
+<span class="cm">// 异步版本</span>
+<span class="ty">CompletableFuture</span>&lt;<span class="ty">Sentiment</span>&gt; future = <span class="ty">Vostok</span>.AI.chatJsonAsync(
+    <span class="kw">new</span> <span class="ty">VKAiChatRequest</span>()
+        .model(<span class="st">"gpt4o"</span>)
+        .message(<span class="st">"user"</span>, <span class="st">"..."</span>)
+        .responseFormat(<span class="st">"json_object"</span>),
     <span class="ty">Sentiment</span>.class
 );</code></pre>
 
 <h2>多轮会话</h2>
-<pre><code><span class="cm">// 创建会话（维护对话历史）</span>
-<span class="ty">VKAiSession</span> session = <span class="ty">Vostok</span>.AI.createSession(<span class="st">"gpt4"</span>);
-<span class="ty">String</span> sessionId = session.sessionId();
+<p>会话自动维护对话历史，支持跨请求的上下文传递。</p>
+<pre><code><span class="cm">// 创建会话（指定模型名称）</span>
+<span class="ty">VKAiSession</span> session = <span class="ty">Vostok</span>.AI.createSession(<span class="st">"gpt4o"</span>);
+<span class="ty">String</span> sessionId = session.getSessionId();
 
-<span class="cm">// 基于会话的对话（自动携带历史，返回 VKAiChatResponse）</span>
+<span class="cm">// 基于会话的多轮对话（自动携带历史）</span>
 <span class="ty">VKAiChatResponse</span> reply1 = <span class="ty">Vostok</span>.AI.chatSession(sessionId, <span class="st">"Java 有哪些主要特性？"</span>);
 <span class="ty">VKAiChatResponse</span> reply2 = <span class="ty">Vostok</span>.AI.chatSession(sessionId, <span class="st">"它与 Go 有什么区别？"</span>);
-<span class="ty">System</span>.out.println(reply1.content());
+<span class="ty">System</span>.out.println(reply1.getText());
+<span class="ty">System</span>.out.println(reply2.getText());
 
-<span class="cm">// 查看历史消息</span>
+<span class="cm">// 获取会话信息</span>
+<span class="ty">VKAiSession</span> s = <span class="ty">Vostok</span>.AI.session(sessionId);
+<span class="ty">System</span>.out.println(s.getCurrentModel()); <span class="cm">// 当前模型名</span>
+
+<span class="cm">// 查看历史消息列表</span>
 <span class="ty">List</span>&lt;<span class="ty">VKAiSessionMessage</span>&gt; history = <span class="ty">Vostok</span>.AI.sessionMessages(sessionId);
+<span class="kw">for</span> (<span class="ty">VKAiSessionMessage</span> msg : history) {
+    <span class="ty">System</span>.out.println(msg.getRole() + <span class="st">": "</span> + msg.getContent());
+}
 
-<span class="cm">// 切换模型（保留历史）</span>
-<span class="ty">Vostok</span>.AI.switchSessionModel(sessionId, <span class="st">"claude"</span>);
+<span class="cm">// 切换会话使用的模型（保留历史）</span>
+<span class="ty">VKAiSession</span> updated = <span class="ty">Vostok</span>.AI.switchSessionModel(sessionId, <span class="st">"claude"</span>);
+
+<span class="cm">// 更新会话 metadata</span>
+<span class="ty">Vostok</span>.AI.updateSessionMetadata(sessionId, <span class="ty">Map</span>.of(<span class="st">"userId"</span>, <span class="st">"u-123"</span>, <span class="st">"scene"</span>, <span class="st">"support"</span>));
 
 <span class="cm">// 删除会话</span>
 <span class="ty">Vostok</span>.AI.deleteSession(sessionId);</code></pre>
 
+<h3>VKAiSession 字段</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>getSessionId()</code></td><td>String</td><td>唯一会话 ID</td></tr>
+    <tr><td><code>getCurrentModel()</code></td><td>String</td><td>当前使用的模型名称</td></tr>
+    <tr><td><code>getCreatedAt()</code></td><td>long</td><td>创建时间戳（毫秒）</td></tr>
+    <tr><td><code>getUpdatedAt()</code></td><td>long</td><td>最后更新时间戳（毫秒）</td></tr>
+    <tr><td><code>getMetadata()</code></td><td>Map&lt;String, String&gt;</td><td>用户自定义元数据</td></tr>
+  </tbody>
+</table>
+
+<h3>VKAiSessionMessage 字段</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>getSessionId()</code></td><td>String</td><td>所属会话 ID</td></tr>
+    <tr><td><code>getSeq()</code></td><td>long</td><td>消息序号（递增）</td></tr>
+    <tr><td><code>getRole()</code></td><td>String</td><td>"user" 或 "assistant"</td></tr>
+    <tr><td><code>getContent()</code></td><td>String</td><td>消息内容</td></tr>
+    <tr><td><code>getModel()</code></td><td>String</td><td>生成该消息时使用的模型名称</td></tr>
+    <tr><td><code>getTimestamp()</code></td><td>long</td><td>消息时间戳（毫秒）</td></tr>
+  </tbody>
+</table>
+
+<h3>自定义会话存储</h3>
+<p>默认使用内存存储。实现 <code>VKAiMemoryStore</code> 接口可接入数据库等持久化后端。</p>
+<pre><code><span class="cm">// 切换到内置的数据库存储（依赖 Vostok.Data 模块）</span>
+<span class="ty">Vostok</span>.AI.setMemoryStore(<span class="kw">new</span> <span class="ty">VKAiDataMemoryStore</span>());
+
+<span class="cm">// 或实现自定义存储</span>
+<span class="ty">Vostok</span>.AI.setMemoryStore(<span class="kw">new</span> <span class="ty">VKAiMemoryStore</span>() {
+    <span class="kw">public</span> <span class="ty">VKAiSession</span> saveSession(<span class="ty">VKAiSession</span> s) { <span class="cm">/* ... */</span> }
+    <span class="kw">public</span> <span class="ty">VKAiSession</span> findSession(<span class="ty">String</span> id) { <span class="cm">/* ... */</span> }
+    <span class="kw">public void</span> appendMessage(<span class="ty">VKAiSessionMessage</span> msg) { <span class="cm">/* ... */</span> }
+    <span class="kw">public</span> <span class="ty">List</span>&lt;<span class="ty">VKAiSessionMessage</span>&gt; listMessages(<span class="ty">String</span> id) { <span class="cm">/* ... */</span> }
+    <span class="kw">public void</span> deleteSession(<span class="ty">String</span> id) { <span class="cm">/* ... */</span> }
+});</code></pre>
+
 <h2>生成 Embedding</h2>
 <pre><code><span class="ty">List</span>&lt;<span class="ty">VKAiEmbedding</span>&gt; embeddings = <span class="ty">Vostok</span>.AI.embed(
-    <span class="ty">VKAiEmbeddingRequest</span>.builder()
-        .model(<span class="st">"text-embedding-ada-002"</span>)
+    <span class="kw">new</span> <span class="ty">VKAiEmbeddingRequest</span>()
+        .model(<span class="st">"embed"</span>)
         .input(<span class="st">"Vostok 是一个 Java 框架"</span>)
-        .build()
+        .input(<span class="st">"支持多模型 AI 集成"</span>)   <span class="cm">// 可批量</span>
 );
-<span class="ty">List</span>&lt;<span class="ty">Double</span>&gt; vector = embeddings.get(<span class="nu">0</span>).vector();</code></pre>
+<span class="ty">List</span>&lt;<span class="ty">Double</span>&gt; vector = embeddings.get(<span class="nu">0</span>).getVector(); <span class="cm">// 第一个输入的向量</span>
+<span class="kw">int</span> dim = vector.size();                               <span class="cm">// 向量维度</span></code></pre>
 
 <h2>向量存储与检索</h2>
-<pre><code><span class="cm">// 设置向量存储后端</span>
-<span class="ty">Vostok</span>.AI.setVectorStore(myPineconeStore);
-
-<span class="cm">// 存储文档</span>
+<p>框架内置内存向量存储（<code>VKAiInMemoryVectorStore</code>，支持 BM25 关键词索引 + 余弦相似度），也可接入外部向量数据库。</p>
+<pre><code><span class="cm">// 写入向量文档（id + 文本 + 向量 + 可选 metadata）</span>
 <span class="ty">Vostok</span>.AI.upsertVectorDocs(<span class="ty">List</span>.of(
-    <span class="ty">VKAiVectorDoc</span>.of(<span class="st">"doc-1"</span>, vector1, <span class="st">"Vostok 是..."</span>)
+    <span class="kw">new</span> <span class="ty">VKAiVectorDoc</span>(<span class="st">"doc-1"</span>, <span class="st">"Vostok 支持 Redis 缓存"</span>, vector1, <span class="kw">null</span>),
+    <span class="kw">new</span> <span class="ty">VKAiVectorDoc</span>(<span class="st">"doc-2"</span>, <span class="st">"Vostok 支持 MySQL 数据库"</span>, vector2,
+        <span class="ty">Map</span>.of(<span class="st">"category"</span>, <span class="st">"data"</span>, <span class="st">"lang"</span>, <span class="st">"zh"</span>))
 ));
 
-<span class="cm">// 向量相似度检索</span>
-<span class="ty">List</span>&lt;<span class="ty">VKAiVectorHit</span>&gt; results = <span class="ty">Vostok</span>.AI.searchVector(queryVector, <span class="nu">5</span>);
+<span class="cm">// 向量相似度检索（余弦相似度，返回 topK 条）</span>
+<span class="ty">List</span>&lt;<span class="ty">VKAiVectorHit</span>&gt; hits = <span class="ty">Vostok</span>.AI.searchVector(queryVector, <span class="nu">5</span>);
+<span class="kw">for</span> (<span class="ty">VKAiVectorHit</span> hit : hits) {
+    <span class="ty">System</span>.out.println(hit.getId() + <span class="st">" score="</span> + hit.getScore());
+    <span class="ty">System</span>.out.println(hit.getText());
+    <span class="ty">System</span>.out.println(hit.getMetadata());
+}
 
-<span class="cm">// 关键词检索</span>
-<span class="ty">List</span>&lt;<span class="ty">VKAiVectorHit</span>&gt; results = <span class="ty">Vostok</span>.AI.searchKeywords(<span class="st">"Java 框架"</span>, <span class="nu">5</span>);</code></pre>
+<span class="cm">// 关键词检索（BM25）</span>
+<span class="ty">List</span>&lt;<span class="ty">VKAiVectorHit</span>&gt; kw = <span class="ty">Vostok</span>.AI.searchKeywords(<span class="st">"Redis 缓存"</span>, <span class="nu">5</span>);
+
+<span class="cm">// 清空向量存储</span>
+<span class="ty">Vostok</span>.AI.clearVectorStore();
+
+<span class="cm">// 接入外部向量数据库（实现 VKAiVectorStore 接口）</span>
+<span class="ty">Vostok</span>.AI.setVectorStore(myPineconeStore);</code></pre>
 
 <h2>RAG（检索增强生成）</h2>
-<pre><code><span class="cm">// 1. 写入文档到 RAG 知识库</span>
-<span class="ty">Vostok</span>.AI.ingestRagDocument(
-    <span class="ty">VKAiRagIngestRequest</span>.builder()
-        .embeddingModel(<span class="st">"text-embedding-ada-002"</span>)
-        .docId(<span class="st">"vostok-readme"</span>)
-        .content(readmeText)
-        .chunkSize(<span class="nu">512</span>)
-        .build()
+<p>RAG 流程：自动完成文档分片 → Embedding → 向量/关键词混合检索 → 可选 Rerank → Context 压缩 → Chat 生成答案。</p>
+<pre><code><span class="cm">// 1. 写入文档到 RAG 知识库（自动分片 + 生成 Embedding + 写入向量存储）</span>
+<span class="ty">VKAiRagIngestResult</span> result = <span class="ty">Vostok</span>.AI.ingestRagDocument(
+    <span class="kw">new</span> <span class="ty">VKAiRagIngestRequest</span>()
+        .model(<span class="st">"embed"</span>)            <span class="cm">// Embedding 模型名</span>
+        .documentId(<span class="st">"vostok-readme"</span>)
+        .version(<span class="st">"v1"</span>)            <span class="cm">// 文档版本，默认 "v1"</span>
+        .text(readmeText)
+        .chunkSize(<span class="nu">500</span>)           <span class="cm">// 每块字符数，默认 500</span>
+        .chunkOverlap(<span class="nu">80</span>)         <span class="cm">// 相邻块重叠字符数，默认 80</span>
+        .deduplicate(<span class="kw">true</span>)        <span class="cm">// 内容相同的块自动跳过，默认 true</span>
+        .metadata(<span class="st">"category"</span>, <span class="st">"docs"</span>)
 );
+<span class="ty">System</span>.out.println(<span class="st">"写入 "</span> + result.getInsertedChunks() + <span class="st">" 块"</span>);
+<span class="ty">System</span>.out.println(<span class="st">"跳过 "</span> + result.getSkippedDuplicateChunks() + <span class="st">" 重复块"</span>);
 
 <span class="cm">// 2. RAG 查询</span>
 <span class="ty">VKAiRagResponse</span> ragRes = <span class="ty">Vostok</span>.AI.rag(
-    <span class="ty">VKAiRagRequest</span>.builder()
-        .model(<span class="st">"gpt4"</span>)
-        .embeddingModel(<span class="st">"text-embedding-ada-002"</span>)
+    <span class="kw">new</span> <span class="ty">VKAiRagRequest</span>()
+        .chatModel(<span class="st">"gpt4o"</span>)
+        .embeddingModel(<span class="st">"embed"</span>)
+        .rerankModel(<span class="st">"rerank"</span>)      <span class="cm">// 可选，不设则跳过 Rerank</span>
         .query(<span class="st">"Vostok 支持哪些缓存后端？"</span>)
-        .topK(<span class="nu">3</span>)
-        .build()
+        .topK(<span class="nu">3</span>)                    <span class="cm">// 最终送入 Chat 的 chunks 数，默认 4</span>
+        .vectorTopK(<span class="nu">8</span>)              <span class="cm">// 向量检索候选数，默认 8</span>
+        .keywordTopK(<span class="nu">8</span>)             <span class="cm">// 关键词检索候选数，默认 8</span>
+        .vectorWeight(<span class="nu">0.65</span>)         <span class="cm">// 向量检索权重，默认 0.65</span>
+        .keywordWeight(<span class="nu">0.35</span>)        <span class="cm">// 关键词检索权重，默认 0.35</span>
+        .rerankEnabled(<span class="kw">true</span>)
+        .queryRewriteEnabled(<span class="kw">true</span>)  <span class="cm">// 查询改写增强召回，默认 true</span>
+        .contextCompressionEnabled(<span class="kw">true</span>)
+        .contextMaxChars(<span class="nu">1800</span>)      <span class="cm">// Context 最大字符数，默认 1800</span>
+        .systemPrompt(<span class="st">"你是 Vostok 框架专家"</span>)
 );
-<span class="ty">System</span>.out.println(ragRes.answer());
-<span class="ty">System</span>.out.println(ragRes.sources());</code></pre>
+
+<span class="ty">String</span> answer = ragRes.getAnswer().getText(); <span class="cm">// Chat 模型生成的答案</span>
+<span class="ty">List</span>&lt;<span class="ty">VKAiVectorHit</span>&gt; sources = ragRes.getHits(); <span class="cm">// 检索命中的文档列表</span>
+<span class="ty">System</span>.out.println(answer);
+sources.forEach(h -> <span class="ty">System</span>.out.println(<span class="st">"[</span>" + h.getId() + <span class="st">"]</span> " + h.getScore()));
+
+<span class="cm">// Metadata 过滤（AND 语义，只检索符合条件的文档）</span>
+<span class="ty">VKAiRagResponse</span> filtered = <span class="ty">Vostok</span>.AI.rag(
+    <span class="kw">new</span> <span class="ty">VKAiRagRequest</span>()
+        .chatModel(<span class="st">"gpt4o"</span>)
+        .embeddingModel(<span class="st">"embed"</span>)
+        .query(<span class="st">"缓存策略"</span>)
+        .metadataFilter(<span class="st">"category"</span>, <span class="st">"docs"</span>)  <span class="cm">// 仅检索 category=docs 的文档</span>
+);</code></pre>
+
+<h3>VKAiRagIngestResult 字段</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>getDocumentId()</code></td><td>文档 ID</td></tr>
+    <tr><td><code>getVersion()</code></td><td>文档版本</td></tr>
+    <tr><td><code>getTotalChunks()</code></td><td>总分块数</td></tr>
+    <tr><td><code>getInsertedChunks()</code></td><td>实际写入块数</td></tr>
+    <tr><td><code>getSkippedDuplicateChunks()</code></td><td>跳过的重复块数</td></tr>
+    <tr><td><code>getChunkIds()</code></td><td>所有写入块的 ID 列表</td></tr>
+  </tbody>
+</table>
 
 <h2>重排序（Rerank）</h2>
 <pre><code><span class="ty">VKAiRerankResponse</span> reranked = <span class="ty">Vostok</span>.AI.rerank(
-    <span class="ty">VKAiRerankRequest</span>.builder()
-        .model(<span class="st">"rerank-multilingual-v2.0"</span>)
+    <span class="kw">new</span> <span class="ty">VKAiRerankRequest</span>()
+        .model(<span class="st">"rerank"</span>)
         .query(<span class="st">"Java 框架"</span>)
-        .documents(candidateDocs)
-        .topN(<span class="nu">5</span>)
-        .build()
-);</code></pre>
+        .documents(<span class="ty">List</span>.of(<span class="st">"Vostok 是 Java 框架"</span>, <span class="st">"Spring Boot 是..."</span>, <span class="st">"..."</span>))
+        .topK(<span class="nu">2</span>)
+);
+<span class="kw">for</span> (<span class="ty">VKAiRerankResult</span> r : reranked.getResults()) {
+    <span class="ty">System</span>.out.println(<span class="st">"原始索引: "</span> + r.getIndex() + <span class="st">" 分数: "</span> + r.getScore());
+    <span class="ty">System</span>.out.println(r.getDocument());
+}
+<span class="ty">System</span>.out.println(<span class="st">"耗时: "</span> + reranked.getLatencyMs() + <span class="st">"ms"</span>);</code></pre>
 
 <h2>Tool Call（函数调用）</h2>
-<pre><code><span class="cm">// 注册工具函数</span>
-<span class="ty">Vostok</span>.AI.registerTool(<span class="ty">VKAiTool</span>.builder()
-    .name(<span class="st">"get_weather"</span>)
-    .description(<span class="st">"获取指定城市的实时天气"</span>)
-    .parameter(<span class="st">"city"</span>, <span class="st">"string"</span>, <span class="st">"城市名称"</span>, <span class="kw">true</span>)
-    .handler(args -&gt; fetchWeather(args.get(<span class="st">"city"</span>)))
-    .build());
+<p>实现 <code>VKAiTool</code> 接口注册工具。当 Chat 请求包含该工具的白名单时，框架自动执行工具并将结果回传给模型（Agentic 循环）。</p>
+<pre><code><span class="cm">// 实现 VKAiTool 接口</span>
+<span class="ty">Vostok</span>.AI.registerTool(<span class="kw">new</span> <span class="ty">VKAiTool</span>() {
+    <span class="kw">public</span> <span class="ty">String</span> name() { <span class="kw">return</span> <span class="st">"get_weather"</span>; }
+    <span class="kw">public</span> <span class="ty">String</span> description() { <span class="kw">return</span> <span class="st">"获取指定城市的实时天气"</span>; }
+    <span class="kw">public</span> <span class="ty">String</span> inputJsonSchema() {
+        <span class="kw">return</span> <span class="st">"""
+            {"type":"object","properties":{"city":{"type":"string","description":"城市名称"}},"required":["city"]}
+            """</span>;
+    }
+    <span class="kw">public</span> <span class="ty">String</span> outputJsonSchema() {
+        <span class="kw">return</span> <span class="st">"""
+            {"type":"object","properties":{"temp":{"type":"number"},"desc":{"type":"string"}}}
+            """</span>;
+    }
+    <span class="kw">public</span> <span class="ty">VKAiToolResult</span> invoke(<span class="ty">String</span> inputJson) {
+        <span class="cm">// inputJson 为 LLM 传入的参数 JSON</span>
+        <span class="ty">String</span> result = fetchWeather(inputJson);
+        <span class="kw">return new</span> <span class="ty">VKAiToolResult</span>(result); <span class="cm">// 返回 JSON 字符串</span>
+    }
+});
 
-<span class="cm">// 发起支持工具调用的对话</span>
-<span class="ty">VKAiChatResponse</span> res = <span class="ty">Vostok</span>.AI.chat(
-    <span class="ty">VKAiChatRequest</span>.builder()
-        .model(<span class="st">"gpt4"</span>)
-        .userMessage(<span class="st">"北京今天天气怎么样？"</span>)
-        .enableTools(<span class="kw">true</span>)
-        .build()
-);</code></pre>
+<span class="cm">// 发起支持工具调用的对话（allowTool 设白名单）</span>
+<span class="ty">VKAiChatResponse</span> res = <span class="ty">Vostok</span>.AI.chat(<span class="kw">new</span> <span class="ty">VKAiChatRequest</span>()
+    .model(<span class="st">"gpt4o"</span>)
+    .message(<span class="st">"user"</span>, <span class="st">"北京今天天气怎么样？"</span>)
+    .allowTool(<span class="st">"get_weather"</span>)
+);
+<span class="ty">System</span>.out.println(res.getText());
+
+<span class="cm">// 查看触发的 Tool Call 结果</span>
+<span class="kw">for</span> (<span class="ty">VKAiToolCallResult</span> r : res.getToolResults()) {
+    <span class="ty">System</span>.out.println(r.getToolName() + <span class="st">" success="</span> + r.isSuccess());
+    <span class="ty">System</span>.out.println(r.getOutputJson());
+}
+
+<span class="cm">// 手动执行工具</span>
+<span class="ty">VKAiToolCallResult</span> manual = <span class="ty">Vostok</span>.AI.callTool(
+    <span class="kw">new</span> <span class="ty">VKAiToolCall</span>(<span class="st">"call-1"</span>, <span class="st">"get_weather"</span>, <span class="st">"{\"city\":\"上海\"}"</span>)
+);
+
+<span class="cm">// 工具管理</span>
+<span class="ty">Set</span>&lt;<span class="ty">String</span>&gt; names = <span class="ty">Vostok</span>.AI.toolNames(); <span class="cm">// 已注册工具名称集合</span>
+<span class="ty">Vostok</span>.AI.clearTools();                     <span class="cm">// 清除所有已注册工具</span></code></pre>
+
+<h2>Prompt 模板</h2>
+<p>使用 <code>${变量名}</code> 语法定义模板，注册后通过名称渲染。</p>
+<pre><code><span class="cm">// 注册模板</span>
+<span class="ty">Vostok</span>.AI.registerPrompt(<span class="kw">new</span> <span class="ty">VKAiPromptTemplate</span>(
+    <span class="st">"sentiment"</span>,
+    <span class="st">"你是一位情感分析专家，请用 JSON 返回分析结果"</span>,
+    <span class="st">"分析以下评论的情感：${comment}"</span>
+));
+
+<span class="cm">// 渲染模板，获得 {"system": "...", "user": "..."}</span>
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">String</span>&gt; rendered = <span class="ty">Vostok</span>.AI.renderPrompt(
+    <span class="st">"sentiment"</span>,
+    <span class="ty">Map</span>.of(<span class="st">"comment"</span>, <span class="st">"这个产品很好用！"</span>)
+);
+
+<span class="cm">// 将渲染结果用于构建 Chat 请求</span>
+<span class="ty">VKAiChatResponse</span> res = <span class="ty">Vostok</span>.AI.chat(<span class="kw">new</span> <span class="ty">VKAiChatRequest</span>()
+    .model(<span class="st">"gpt4o"</span>)
+    .system(rendered.get(<span class="st">"system"</span>))
+    .message(<span class="st">"user"</span>, rendered.get(<span class="st">"user"</span>))
+    .responseFormat(<span class="st">"json_object"</span>)
+);
+
+<span class="cm">// 查看所有已注册模板名称</span>
+<span class="ty">Set</span>&lt;<span class="ty">String</span>&gt; names = <span class="ty">Vostok</span>.AI.promptNames();</code></pre>
+
+<h2>审计与指标</h2>
+<pre><code><span class="cm">// 获取最近 50 条审计记录</span>
+<span class="ty">List</span>&lt;<span class="ty">VKAiAuditRecord</span>&gt; records = <span class="ty">Vostok</span>.AI.audits(<span class="nu">50</span>);
+<span class="kw">for</span> (<span class="ty">VKAiAuditRecord</span> r : records) {
+    <span class="ty">System</span>.out.println(r.getTimestampMs() + <span class="st">" "</span> + r.getType()
+        + <span class="st">" "</span> + r.getClientName() + <span class="st">" "</span> + r.getDetail());
+}
+<span class="ty">Vostok</span>.AI.clearAudits(); <span class="cm">// 清空审计记录</span>
+
+<span class="cm">// 获取累计指标</span>
+<span class="ty">VKAiMetrics</span> m = <span class="ty">Vostok</span>.AI.metrics();
+<span class="ty">System</span>.out.println(<span class="st">"总调用: "</span>      + m.totalCalls());
+<span class="ty">System</span>.out.println(<span class="st">"成功: "</span>        + m.successCalls());
+<span class="ty">System</span>.out.println(<span class="st">"失败: "</span>        + m.failedCalls());
+<span class="ty">System</span>.out.println(<span class="st">"重试: "</span>        + m.retriedCalls());
+<span class="ty">System</span>.out.println(<span class="st">"超时: "</span>        + m.timeoutCalls());
+<span class="ty">System</span>.out.println(<span class="st">"总耗时(ms): "</span>  + m.totalCostMs());
+<span class="ty">System</span>.out.println(<span class="st">"总 Tokens: "</span>  + m.totalTokens());
+<span class="ty">Vostok</span>.AI.resetMetrics(); <span class="cm">// 重置指标</span></code></pre>
+
+<h2>RAG 健康检查</h2>
+<pre><code><span class="cm">// 检查 Embedding 和 Rerank 模型连通性</span>
+<span class="ty">Vostok</span>.AI.healthCheckRag(<span class="st">"embed"</span>, <span class="st">"rerank"</span>);
+
+<span class="cm">// 仅检查 Embedding 模型</span>
+<span class="ty">Vostok</span>.AI.healthCheckRag(<span class="st">"embed"</span>, <span class="kw">null</span>, <span class="kw">false</span>);</code></pre>
+
+<h2>生命周期</h2>
+<pre><code><span class="ty">Vostok</span>.AI.started();         <span class="cm">// 是否已初始化</span>
+<span class="ty">Vostok</span>.AI.config();          <span class="cm">// 获取当前 VKAiConfig</span>
+<span class="ty">Vostok</span>.AI.reinit(newConfig);  <span class="cm">// 重新初始化（重置所有状态）</span>
+<span class="ty">Vostok</span>.AI.close();           <span class="cm">// 关闭模块，释放资源</span></code></pre>
+
+<h2>异常处理</h2>
+<p>所有异常均为 <code>VKAiException</code>（RuntimeException），包含 <code>VKAiErrorCode</code> 错误码。</p>
+<pre><code><span class="kw">try</span> {
+    <span class="ty">VKAiChatResponse</span> res = <span class="ty">Vostok</span>.AI.chat(req);
+} <span class="kw">catch</span> (<span class="ty">VKAiException</span> e) {
+    <span class="kw">switch</span> (e.getCode()) {
+        <span class="kw">case</span> <span class="ty">VKAiErrorCode</span>.TIMEOUT           -> <span class="cm">/* 超时重试 */</span>
+        <span class="kw">case</span> <span class="ty">VKAiErrorCode</span>.SECURITY_BLOCKED  -> <span class="cm">/* 安全拦截 */</span>
+        <span class="kw">case</span> <span class="ty">VKAiErrorCode</span>.TOKEN_BUDGET_EXCEEDED -> <span class="cm">/* 超出 Token 预算 */</span>
+        <span class="kw">case</span> <span class="ty">VKAiErrorCode</span>.HTTP_STATUS       -> <span class="cm">/* HTTP 错误，e.getHttpStatus() 获取状态码 */</span>
+        <span class="kw">default</span>                              -> <span class="cm">/* 其他错误 */</span>
+    }
+}</code></pre>
+
+<h3>错误码列表</h3>
+<table class="api-table">
+  <thead><tr><th>错误码</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>INVALID_ARGUMENT</code></td><td>参数非法（空值、格式错误等）</td></tr>
+    <tr><td><code>CONFIG_ERROR</code></td><td>配置错误（模型未注册、向量存储未设置等）</td></tr>
+    <tr><td><code>STATE_ERROR</code></td><td>状态错误（模块未初始化、会话不存在等）</td></tr>
+    <tr><td><code>NETWORK_ERROR</code></td><td>网络连接失败</td></tr>
+    <tr><td><code>TIMEOUT</code></td><td>请求超时</td></tr>
+    <tr><td><code>HTTP_STATUS</code></td><td>HTTP 非 2xx 响应</td></tr>
+    <tr><td><code>SERIALIZATION_ERROR</code></td><td>请求序列化失败</td></tr>
+    <tr><td><code>JSON_PARSE_ERROR</code></td><td>响应 JSON 解析失败</td></tr>
+    <tr><td><code>TOOL_NOT_FOUND</code></td><td>工具名称未注册</td></tr>
+    <tr><td><code>TOOL_DENIED</code></td><td>工具不在请求的白名单内</td></tr>
+    <tr><td><code>TOOL_EXECUTION_ERROR</code></td><td>工具执行抛出异常</td></tr>
+    <tr><td><code>SECURITY_BLOCKED</code></td><td>安全扫描拦截（XSS / 命令注入 / 路径遍历）</td></tr>
+    <tr><td><code>TOKEN_BUDGET_EXCEEDED</code></td><td>实际消耗 Token 超过预算上限</td></tr>
+  </tbody>
+</table>
 
 <h2>API 速查</h2>
 <table class="api-table">
   <thead><tr><th>方法</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>registerModel(name, config)</code></td><td>注册命名 AI 模型</td></tr>
-    <tr><td><code>chat(request)</code></td><td>同步单轮对话</td></tr>
-    <tr><td><code>chatAsync(request)</code></td><td>异步单轮对话</td></tr>
-    <tr><td><code>chatJson(request, Class)</code></td><td>对话并解析 JSON 结构</td></tr>
-    <tr><td><code>chatJsonAsync(request, Class)</code></td><td>异步对话解析 JSON</td></tr>
-    <tr><td><code>createSession(model)</code></td><td>创建多轮对话 Session</td></tr>
+    <tr><td><code>init()</code></td><td>使用默认配置初始化模块</td></tr>
+    <tr><td><code>init(VKAiConfig)</code></td><td>使用自定义配置初始化模块</td></tr>
+    <tr><td><code>reinit(VKAiConfig)</code></td><td>重新初始化（重置所有状态）</td></tr>
+    <tr><td><code>started()</code></td><td>返回模块是否已初始化</td></tr>
+    <tr><td><code>config()</code></td><td>获取当前 VKAiConfig</td></tr>
+    <tr><td><code>close()</code></td><td>关闭模块，释放资源</td></tr>
+    <tr><td><code>registerModel(name, VKAiModelConfig)</code></td><td>注册命名 AI 模型</td></tr>
+    <tr><td><code>chat(VKAiChatRequest)</code></td><td>同步单轮对话，返回 VKAiChatResponse</td></tr>
+    <tr><td><code>chatAsync(VKAiChatRequest)</code></td><td>异步单轮对话，返回 CompletableFuture&lt;VKAiChatResponse&gt;</td></tr>
+    <tr><td><code>chatJson(VKAiChatRequest, Class&lt;T&gt;)</code></td><td>同步对话并反序列化为指定类型</td></tr>
+    <tr><td><code>chatJsonAsync(VKAiChatRequest, Class&lt;T&gt;)</code></td><td>异步对话并反序列化，返回 CompletableFuture&lt;T&gt;</td></tr>
+    <tr><td><code>setMemoryStore(VKAiMemoryStore)</code></td><td>设置自定义会话持久化存储</td></tr>
+    <tr><td><code>createSession(model)</code></td><td>创建多轮对话 Session，返回 VKAiSession</td></tr>
+    <tr><td><code>session(sessionId)</code></td><td>获取指定会话信息</td></tr>
     <tr><td><code>chatSession(sessionId, text)</code></td><td>基于 Session 的对话，返回 VKAiChatResponse</td></tr>
-    <tr><td><code>sessionMessages(sessionId)</code></td><td>获取会话历史消息</td></tr>
-    <tr><td><code>switchSessionModel(sessionId, model)</code></td><td>切换会话使用的模型</td></tr>
-    <tr><td><code>deleteSession(sessionId)</code></td><td>删除会话</td></tr>
-    <tr><td><code>embed(request)</code></td><td>生成文本 Embedding 向量</td></tr>
-    <tr><td><code>rerank(request)</code></td><td>文档重排序</td></tr>
-    <tr><td><code>setVectorStore(store)</code></td><td>设置向量数据库后端</td></tr>
-    <tr><td><code>upsertVectorDocs(docs)</code></td><td>写入向量文档</td></tr>
-    <tr><td><code>searchVector(vector, topK)</code></td><td>向量相似度检索，返回 List&lt;VKAiVectorHit&gt;</td></tr>
-    <tr><td><code>searchKeywords(query, topK)</code></td><td>关键词检索，返回 List&lt;VKAiVectorHit&gt;</td></tr>
-    <tr><td><code>ingestRagDocument(request)</code></td><td>向 RAG 知识库写入文档</td></tr>
-    <tr><td><code>rag(request)</code></td><td>RAG 检索增强对话</td></tr>
-    <tr><td><code>registerTool(tool)</code></td><td>注册 Tool Call 函数</td></tr>
-    <tr><td><code>clearTools()</code></td><td>清除所有注册工具</td></tr>
-    <tr><td><code>setMemoryStore(store)</code></td><td>自定义 Session 持久化存储</td></tr>
+    <tr><td><code>sessionMessages(sessionId)</code></td><td>获取会话历史消息列表</td></tr>
+    <tr><td><code>switchSessionModel(sessionId, model)</code></td><td>切换会话使用的模型，返回更新后的 VKAiSession</td></tr>
+    <tr><td><code>updateSessionMetadata(sessionId, Map)</code></td><td>更新会话 metadata，返回更新后的 VKAiSession</td></tr>
+    <tr><td><code>deleteSession(sessionId)</code></td><td>删除会话及全部历史消息</td></tr>
+    <tr><td><code>embed(VKAiEmbeddingRequest)</code></td><td>生成文本 Embedding 向量，返回 List&lt;VKAiEmbedding&gt;</td></tr>
+    <tr><td><code>rerank(VKAiRerankRequest)</code></td><td>文档重排序，返回 VKAiRerankResponse</td></tr>
+    <tr><td><code>setVectorStore(VKAiVectorStore)</code></td><td>设置向量数据库后端</td></tr>
+    <tr><td><code>upsertVectorDocs(List&lt;VKAiVectorDoc&gt;)</code></td><td>写入/更新向量文档</td></tr>
+    <tr><td><code>searchVector(List&lt;Double&gt;, int topK)</code></td><td>向量相似度检索，返回 List&lt;VKAiVectorHit&gt;</td></tr>
+    <tr><td><code>searchKeywords(String, int topK)</code></td><td>BM25 关键词检索，返回 List&lt;VKAiVectorHit&gt;</td></tr>
+    <tr><td><code>clearVectorStore()</code></td><td>清空向量存储中的所有文档</td></tr>
+    <tr><td><code>ingestRagDocument(VKAiRagIngestRequest)</code></td><td>向 RAG 知识库写入并分片文档，返回 VKAiRagIngestResult</td></tr>
+    <tr><td><code>rag(VKAiRagRequest)</code></td><td>RAG 检索增强生成，返回 VKAiRagResponse</td></tr>
+    <tr><td><code>healthCheckRag(embeddingModel, rerankModel)</code></td><td>检查 Embedding 和 Rerank 模型连通性</td></tr>
+    <tr><td><code>healthCheckRag(embeddingModel, rerankModel, includeRerank)</code></td><td>健康检查，includeRerank=false 时仅检查 Embedding</td></tr>
+    <tr><td><code>registerTool(VKAiTool)</code></td><td>注册 Tool Call 工具</td></tr>
+    <tr><td><code>clearTools()</code></td><td>清除所有已注册工具</td></tr>
+    <tr><td><code>toolNames()</code></td><td>返回所有已注册工具名称集合</td></tr>
+    <tr><td><code>callTool(VKAiToolCall)</code></td><td>手动执行已注册的工具，返回 VKAiToolCallResult</td></tr>
+    <tr><td><code>registerPrompt(VKAiPromptTemplate)</code></td><td>注册 Prompt 模板</td></tr>
+    <tr><td><code>renderPrompt(name, Map)</code></td><td>渲染 Prompt 模板，返回 {"system": "...", "user": "..."}</td></tr>
+    <tr><td><code>promptNames()</code></td><td>返回所有已注册模板名称集合</td></tr>
+    <tr><td><code>audits(int limit)</code></td><td>获取最近 N 条审计记录</td></tr>
+    <tr><td><code>clearAudits()</code></td><td>清空审计记录</td></tr>
+    <tr><td><code>metrics()</code></td><td>获取累计指标（VKAiMetrics record）</td></tr>
+    <tr><td><code>resetMetrics()</code></td><td>重置所有指标计数器</td></tr>
   </tbody>
 </table>
 
