@@ -1,73 +1,93 @@
 # Vostok
 
-面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合十二个模块能力，各模块按需独立初始化，可使用数据访问、Web 服务、缓存、日志、配置、安全、事件、HTTP 客户端、AI 等全部功能。
+面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合多个模块能力。
+各模块可独立初始化、按需使用。
 
-> 当前版本定位为实验与技术验证，不建议直接用于生产环境。
+**当前版本：`1.9.1.0`**
 
-**详细文档**：[docs/index.html](https://yueeeeeeyang.github.io/vostok/)
+**详细文档**：[Vostok Docs](https://yueeeeeeyang.github.io/vostok/)
 
 ---
 
-## 模块
+## Maven 依赖
+
+```xml
+<dependency>
+  <groupId>yueyang</groupId>
+  <artifactId>vostok</artifactId>
+  <version>1.9.1.0</version>
+</dependency>
+```
+
+---
+
+## 模块概览（11 个）
 
 | 模块 | 门面类 | 说明 |
 |------|--------|------|
-| `Vostok.Data` | `VostokData` | JDBC CRUD、事务、查询构建器、连接池、多数据源 |
-| `Vostok.Web` | `VostokWeb` | NIO Reactor Web 服务器、路由、WebSocket、SSE、自动 CRUD |
-| `Vostok.Cache` | `VostokCache` | Redis / 内存 / 分层缓存、布隆过滤器、Pipeline 批量 |
-| `Vostok.File` | `VostokFile` | 本地文件读写、压缩解压、目录管理、文件监听 |
-| `Vostok.Log` | `VostokLog` | 异步日志、滚动归档、MDC 上下文、命名 Logger |
-| `Vostok.Config` | `VostokConfig` | 自动扫描配置文件、热监听、插值、多优先级覆盖 |
-| `Vostok.Security` | `VostokSecurity` | SQL 注入、XSS、路径穿越等检测，AES/RSA 加密 |
-| `Vostok.Event` | `VostokEvent` | 进程内事件总线、同步/异步监听器、优先级 |
-| `Vostok.Http` | `VostokHttp` | HTTP 客户端、命名 Client、重试、SSE 流 |
-| `Vostok.AI` | `VostokAI` | 多模型 Chat、Session、RAG、向量检索、Tool Call |
-| `Vostok.Util` | `VostokUtil` | JSON、字符串、ID 生成、时间工具 |
+| `Vostok.Data` | `VostokData` | JDBC CRUD、事务、查询构建器、多数据源 |
+| `Vostok.Web` | `VostokWeb` | NIO Web 服务、路由、中间件、WebSocket、SSE、自动 CRUD |
+| `Vostok.Cache` | `VostokCache` | Memory / Redis / 两级缓存、Pipeline、统计 |
+| `Vostok.File` | `VostokFile` | 文件读写、压缩解压、目录操作、监听、文件加解密 |
+| `Vostok.Log` | `VostokLog` | 异步日志、滚动压缩、命名 logger、MDC |
+| `Vostok.Config` | `VostokConfig` | 配置加载、热更新、变更监听、类型绑定 |
+| `Vostok.Security` | `VostokSecurity` | SQL/XSS/路径等安全检测、加解密、签名验签 |
+| `Vostok.Event` | `VostokEvent` | 事件总线（同步/异步、优先级、一次性监听） |
+| `Vostok.Http` | `VostokHttp` | HTTP 客户端、命名 client、重试、SSE/流式 |
+| `Vostok.AI` | `VostokAI` | Chat、Session、Embedding、Rerank、RAG、Tool |
+| `Vostok.Util` | `VostokUtil` | JSON、字符串、集合、时间、编码等工具 |
+
+---
+
+## 构建
+
+```bash
+mvn compile
+mvn test
+mvn package
+```
 
 ---
 
 ## 快速开始
 
-### 构建
-
-```bash
-mvn compile        # 编译
-mvn test           # 运行测试
-mvn package        # 打包
-```
-
-### 按需初始化各模块
-
-各模块通过 `Vostok.<Module>.init(...)` 独立初始化，仅启动实际需要的模块。
-
 ```java
 import yueyang.vostok.Vostok;
 import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.web.VKWebConfig;
-import yueyang.vostok.log.VKLogConfig;
 import yueyang.vostok.cache.VKCacheConfig;
+import yueyang.vostok.cache.VKCacheProviderType;
+import yueyang.vostok.log.VKLogConfig;
 
-// 日志
-Vostok.Log.init(new VKLogConfig().outputDir("logs").consoleEnabled(true));
+// Log
+Vostok.Log.init(new VKLogConfig()
+    .outputDir("logs")
+    .consoleEnabled(true));
 
-// 数据库
+// Data
 Vostok.Data.init(
     new VKDataConfig()
         .url("jdbc:mysql://127.0.0.1:3306/demo")
-        .username("root").password("123456")
+        .username("root")
+        .password("123456")
+        .driver("com.mysql.cj.jdbc.Driver")
         .maxActive(20),
-    "com.example.entity");
+    "com.example.entity"
+);
 
-// 缓存（内存）
+// Cache
 Vostok.Cache.init(new VKCacheConfig()
-    .providerType("MEMORY").maxEntries(10000));
+    .providerType(VKCacheProviderType.MEMORY)
+    .maxEntries(10_000));
 
-// Web 服务器
-Vostok.Web.init(new VKWebConfig().port(8080));
-Vostok.Web.get("/hello", (req, res) -> res.ok("Hello, Vostok!"));
+// Web
+Vostok.Web.init(new VKWebConfig().port(8080))
+    .get("/hello", (req, res) -> res.text("Hello, Vostok!"))
+    .health()
+    .cors();
 Vostok.Web.start();
 
-// 关闭各模块
+// shutdown
 Vostok.Web.stop();
 Vostok.Cache.close();
 Vostok.Data.close();
@@ -76,161 +96,229 @@ Vostok.Log.close();
 
 ---
 
-## 模块简单示例
+## 模块示例
 
-### Data — 数据访问
+### Data
 
 ```java
-// 实体定义
+import yueyang.vostok.Vostok;
+import yueyang.vostok.data.annotation.VKId;
+import yueyang.vostok.data.query.VKCondition;
+import yueyang.vostok.data.query.VKOperator;
+import yueyang.vostok.data.query.VKQuery;
+import yueyang.vostok.util.annotation.VKEntity;
+
 @VKEntity(table = "users")
 public class User {
+    @VKId(auto = true)
     private Long id;
     private String name;
     private String email;
+    // getter/setter
 }
 
-// CRUD
 Vostok.Data.insert(user);
 User u = Vostok.Data.findById(User.class, 1L);
 
-// 条件查询
-List<User> list = Vostok.Data.query(User.class,
-    VKQuery.where("status", "active").limit(10));
+VKQuery q = VKQuery.create()
+    .where(VKCondition.of("email", VKOperator.EQ, "alice@example.com"))
+    .limit(10)
+    .offset(0);
 
-// 事务
+var list = Vostok.Data.query(User.class, q);
+
 Vostok.Data.tx(() -> {
-    Vostok.Data.insert(order);
-    Vostok.Data.update(inventory);
+    Vostok.Data.insert(user);
+    Vostok.Data.update(user);
 });
 ```
 
-### Web — HTTP 服务
+### Web
 
 ```java
-Vostok.Web.init(new VKWebConfig().port(8080));
+import yueyang.vostok.Vostok;
 
-Vostok.Web.get("/users/{id}", (req, res) -> {
-    String id = req.pathParam("id");
-    res.json("{\"id\":" + id + "}");
-});
-
-Vostok.Web.cors();   // 允许跨域
-Vostok.Web.gzip();   // 启用压缩
-Vostok.Web.health(); // GET /health
+Vostok.Web.init(8080)
+    .get("/users/{id}", (req, res) -> {
+        String id = req.param("id");
+        res.json("{\"id\":\"" + id + "\"}");
+    })
+    .post("/echo", (req, res) -> res.text(req.bodyText()))
+    .gzip()
+    .cors()
+    .health();
 
 Vostok.Web.start();
 ```
 
-### Cache — 缓存
+### Cache
 
 ```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.cache.VKCacheConfig;
+import yueyang.vostok.cache.VKCacheProviderType;
+
 Vostok.Cache.init(new VKCacheConfig()
-    .providerType("REDIS").endpoints("127.0.0.1:6379"));
+    .providerType(VKCacheProviderType.REDIS)
+    .endpoints("127.0.0.1:6379"));
 
-Vostok.Cache.set("user:1", user, 3600_000L);
-User u = Vostok.Cache.get("user:1", User.class);
+Vostok.Cache.set("user:1", "tom", 60_000);
+String name = Vostok.Cache.get("user:1");
 
-// 懒加载
-User u = Vostok.Cache.getOrLoad("user:1", User.class, 3600_000L, () ->
-    Vostok.Data.findById(User.class, 1L));
+long n = Vostok.Cache.incr("counter");
 ```
 
-### Log — 日志
+### File
 
 ```java
-Vostok.Log.info("server started on port {}", 8080);
-Vostok.Log.warn("slow query: {} ms", elapsed);
-Vostok.Log.error("unexpected error", exception);
+import yueyang.vostok.Vostok;
+import yueyang.vostok.file.VKFileConfig;
 
-// MDC
-Vostok.Log.mdc("requestId", requestId);
-Vostok.Log.info("handling request");
+Vostok.File.init(new VKFileConfig().baseDir("./data"));
+Vostok.File.write("notes/a.txt", "hello");
+String text = Vostok.File.read("notes/a.txt");
+
+Vostok.File.gzip("notes/a.txt", "notes/a.txt.gz");
+Vostok.File.gunzip("notes/a.txt.gz", "notes/a.copy.txt");
+```
+
+### Log
+
+```java
+import yueyang.vostok.Vostok;
+
+Vostok.Log.info("server started, port={}", 8080);
+Vostok.Log.warn("slow query: {}ms", 123);
+
+Vostok.Log.mdcPut("traceId", "t-001");
+Vostok.Log.info("processing request");
 Vostok.Log.mdcClear();
+
+Vostok.Log.logger("sql").info("select * from t_user where id=?");
 ```
 
-### Config — 配置
+### Config
 
 ```java
-// 自动扫描 classpath 下 *.properties / *.yml
-Vostok.Config.init(new VKConfigOptions().watchEnabled(true));
+import yueyang.vostok.Vostok;
+import yueyang.vostok.config.VKConfigOptions;
 
-String host = Vostok.Config.getString("db.host", "localhost");
-int    port = Vostok.Config.getInt("db.port", 3306);
+Vostok.Config.init(new VKConfigOptions()
+    .watchEnabled(true)
+    .scanUserDir(true)
+    .scanClasspath(true));
+
+String host = Vostok.Config.getString("app.host", "127.0.0.1");
+int port = Vostok.Config.getInt("app.port", 8080);
+boolean enabled = Vostok.Config.getBool("feature.demo", false);
+
+Vostok.Config.onChange("app.port", (oldV, newV) ->
+    System.out.println("app.port changed: " + oldV + " -> " + newV));
 ```
 
-### Security — 安全检测
+### Security
 
 ```java
-if (!Vostok.Security.checkSql(userInput)) {
-    throw new SecurityException("SQL injection detected");
+import yueyang.vostok.Vostok;
+
+var sqlCheck = Vostok.Security.checkSql("SELECT * FROM user WHERE id = ?", 1L);
+if (!sqlCheck.isSafe()) {
+    throw new IllegalArgumentException(sqlCheck.getReasons().toString());
 }
-String clean = Vostok.Security.sanitizeHtml(userHtml);
 
-// AES 加密
-String cipher = Vostok.Security.AesCrypto.encrypt(plaintext, keyBase64);
-String plain  = Vostok.Security.AesCrypto.decrypt(cipher, keyBase64);
+String safeHtml = Vostok.Security.sanitizeXss("<script>alert(1)</script>");
+
+String key = Vostok.Security.generateAesKey();
+String cipher = Vostok.Security.encrypt("hello", key);
+String plain = Vostok.Security.decrypt(cipher, key);
 ```
 
-### Event — 事件总线
+### Event
 
 ```java
-// 订阅
+import yueyang.vostok.Vostok;
+import yueyang.vostok.event.VKListenerMode;
+
+record OrderCreatedEvent(Long orderId) {}
+
+Vostok.Event.init();
+
 Vostok.Event.on(OrderCreatedEvent.class, event -> {
-    System.out.println("order: " + event.orderId());
+    System.out.println("sync: " + event.orderId());
 });
 
-// 异步订阅
 Vostok.Event.on(OrderCreatedEvent.class, VKListenerMode.ASYNC, event -> {
-    sendEmail(event.userId(), "Order confirmed");
+    System.out.println("async: " + event.orderId());
 });
 
-// 发布
-Vostok.Event.publish(new OrderCreatedEvent(42L, "user-1", amount));
+Vostok.Event.publish(new OrderCreatedEvent(1001L));
 ```
 
-### Http — HTTP 客户端
+### Http
 
 ```java
-// GET
-User user = Vostok.Http.get("https://api.example.com/users/1")
+import yueyang.vostok.Vostok;
+import yueyang.vostok.http.VKHttpClientConfig;
+import yueyang.vostok.http.VKHttpConfig;
+import yueyang.vostok.http.VKHttpResponse;
+
+Vostok.Http.init(new VKHttpConfig().maxRetries(1));
+Vostok.Http.registerClient("demo", new VKHttpClientConfig().baseUrl("https://api.example.com"));
+
+User user = Vostok.Http.get("/users/{id}")
+    .client("demo")
+    .path("id", 1)
     .executeJson(User.class);
 
-// POST JSON
-VKHttpResponse res = Vostok.Http.post("https://api.example.com/users")
-    .body(Vostok.Util.toJson(newUser))
-    .header("Content-Type", "application/json")
+VKHttpResponse res = Vostok.Http.post("/users")
+    .client("demo")
+    .bodyJson(newUser)
+    .failOnNon2xx(false)
     .execute();
+
+String body = res.bodyText();
 ```
 
-### AI — AI 集成
+### AI
 
 ```java
-Vostok.AI.registerModel("gpt4", new VKAiModelConfig()
-    .modelType(VKAiModelType.GPT4)
-    .apiKey(System.getenv("OPENAI_KEY")));
+import yueyang.vostok.Vostok;
+import yueyang.vostok.ai.VKAiChatRequest;
+import yueyang.vostok.ai.provider.VKAiModelConfig;
+import yueyang.vostok.ai.provider.VKAiModelType;
 
-// 单轮对话
-VKAiChatResponse res = Vostok.AI.chat(VKAiChatRequest.builder()
-    .model("gpt4").userMessage("用一句话解释量子纠缠").build());
-System.out.println(res.content());
+Vostok.AI.registerModel("chat-model", new VKAiModelConfig()
+    .type(VKAiModelType.CHAT)
+    .baseUrl("https://api.openai.com")
+    .apiKey(System.getenv("OPENAI_API_KEY"))
+    .model("gpt-4o-mini"));
 
-// 多轮会话
-VKAiSession session = Vostok.AI.createSession("gpt4");
-String reply = Vostok.AI.chatSession(session.sessionId(), "Java 有哪些特性？");
+var chatRes = Vostok.AI.chat(new VKAiChatRequest()
+    .model("chat-model")
+    .message("user", "用一句话解释量子纠缠"));
+
+System.out.println(chatRes.getText());
+
+var session = Vostok.AI.createSession("chat-model");
+var sessionRes = Vostok.AI.chatSession(session.getSessionId(), "继续展开讲讲");
+System.out.println(sessionRes.getText());
 ```
 
-### Util — 工具
+### Util
 
 ```java
-// JSON
-String json = Vostok.Util.toJson(user);
-User u = Vostok.Util.fromJson(json, User.class);
+import yueyang.vostok.Vostok;
 
-// ID 生成
-String uuid = VKIds.uuid();
-long   sid  = VKIds.snowflakeId();
+String json = Vostok.Util.toJson(Map.of("name", "Tom", "age", 20));
+Map<?, ?> m = Vostok.Util.fromJson(json, Map.class);
 
-// 字符串
-VKStrings.camelToSnake("userName");  // "user_name"
-VKStrings.isBlank("  ");             // true
+String snake = Vostok.Util.camelToSnake("userName"); // user_name
+String traceId = Vostok.Util.traceId();
 ```
+
+---
+
+## 说明
+
+- README 仅给出最小可用示例，完整能力请查看在线文档。
+- 所有示例方法名均与当前源码门面类保持一致（`Vostok.*`）。
