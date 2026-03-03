@@ -43,10 +43,10 @@
 <div class="page-header">
   <div class="module-tag">🛠️ Vostok.Util</div>
   <h1>Util 工具集模块</h1>
-  <p class="desc">通用工具门面，提供 JSON 序列化（可切换 Provider）、字符串处理、分布式 ID 生成、时间格式化、集合工具等常用能力。无需 init，开箱即用。</p>
+  <p class="desc">通用工具门面，提供 JSON 序列化（可切换 Provider）、字符串处理、分布式 ID 生成、时间格式化、集合操作、编解码等常用能力。无需 init，开箱即用。</p>
 </div>
 
-<h2>JSON</h2>
+<h2>JSON（Vostok.Util / VKJsonProvider）</h2>
 
 <h3>序列化 / 反序列化</h3>
 <pre><code><span class="ty">User</span> user = <span class="kw">new</span> <span class="ty">User</span>(<span class="nu">1L</span>, <span class="st">"Alice"</span>);
@@ -57,11 +57,18 @@
 <span class="cm">// JSON 字符串 → 对象</span>
 <span class="ty">User</span> u = <span class="ty">Vostok</span>.Util.fromJson(json, <span class="ty">User</span>.class);
 
-<span class="cm">// 泛型（List）</span>
-<span class="ty">List</span>&lt;<span class="ty">User</span>&gt; list = <span class="ty">Vostok</span>.Util.fromJson(json, <span class="kw">new</span> <span class="ty">TypeReference</span>&lt;<span class="ty">List</span>&lt;<span class="ty">User</span>&gt;&gt;(){});</code></pre>
+<span class="cm">// JSON 字符串 → Map（通用结构）</span>
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">Object</span>&gt; map = <span class="ty">Vostok</span>.Util.fromJson(json, <span class="ty">Map</span>.class);</code></pre>
+
+<div class="callout info">
+  <div class="callout-title">内置 JSON Provider 能力范围</div>
+  内置 Provider 支持 POJO（反射）、<code>Map</code>、<code>List</code>、数组、基本类型、枚举的序列化与反序列化。
+  泛型容器（如 <code>List&lt;User&gt;</code>）请使用 Jackson 等外部 Provider，或通过 <code>fromJson(json, Map.class)</code>
+  先解析为 <code>Map</code> 再手动转换。
+</div>
 
 <h3>切换 JSON Provider</h3>
-<pre><code><span class="cm">// 注册 Jackson Provider</span>
+<pre><code><span class="cm">// 注册并切换到 Jackson Provider</span>
 <span class="ty">Vostok</span>.Util.registerJsonProvider(<span class="kw">new</span> <span class="ty">JacksonVKJsonProvider</span>());
 <span class="ty">Vostok</span>.Util.useJsonProvider(<span class="st">"jackson"</span>);
 
@@ -75,93 +82,242 @@
 <h2>字符串工具（VKStrings）</h2>
 
 <h3>空值检查</h3>
-<pre><code><span class="ty">VKStrings</span>.isEmpty(<span class="kw">null</span>);          <span class="cm">// true</span>
-<span class="ty">VKStrings</span>.isBlank(<span class="st">"  "</span>);         <span class="cm">// true</span>
-<span class="ty">VKStrings</span>.trimToNull(<span class="st">"  "</span>);      <span class="cm">// null</span>
-<span class="ty">VKStrings</span>.trimToEmpty(<span class="kw">null</span>);      <span class="cm">// ""</span>
-<span class="ty">VKStrings</span>.defaultIfBlank(<span class="st">"  "</span>, <span class="st">"default"</span>);  <span class="cm">// "default"</span></code></pre>
-
-<h3>命名转换</h3>
-<pre><code><span class="ty">VKStrings</span>.camelToSnake(<span class="st">"userName"</span>);    <span class="cm">// "user_name"</span>
-<span class="ty">VKStrings</span>.snakeToCamel(<span class="st">"user_name"</span>);   <span class="cm">// "userName"</span>
-<span class="ty">VKStrings</span>.kebabToCamel(<span class="st">"user-name"</span>);   <span class="cm">// "userName"</span></code></pre>
+<pre><code><span class="ty">VKStrings</span>.isEmpty(<span class="kw">null</span>);                       <span class="cm">// true</span>
+<span class="ty">VKStrings</span>.isEmpty(<span class="st">""</span>);                          <span class="cm">// true</span>
+<span class="ty">VKStrings</span>.isBlank(<span class="st">"  "</span>);                        <span class="cm">// true</span>
+<span class="ty">VKStrings</span>.trimToNull(<span class="st">"  "</span>);                     <span class="cm">// null</span>
+<span class="ty">VKStrings</span>.trimToEmpty(<span class="kw">null</span>);                    <span class="cm">// ""</span>
+<span class="ty">VKStrings</span>.defaultIfBlank(<span class="st">"  "</span>, <span class="st">"default"</span>);     <span class="cm">// "default"</span></code></pre>
 
 <h3>分割与拼接</h3>
-<pre><code><span class="ty">List</span>&lt;<span class="ty">String</span>&gt; parts = <span class="ty">VKStrings</span>.fastSplit(<span class="st">"a,b,c"</span>, <span class="st">','</span>);
-<span class="ty">String</span> joined = <span class="ty">VKStrings</span>.join(<span class="st">','</span>, <span class="st">"a"</span>, <span class="st">"b"</span>, <span class="st">"c"</span>);  <span class="cm">// "a,b,c"</span></code></pre>
+<pre><code><span class="cm">// 快速字符分割，返回 String[]（两遍扫描，无正则开销）</span>
+<span class="ty">String</span>[] parts = <span class="ty">VKStrings</span>.fastSplit(<span class="st">"a,b,c"</span>, <span class="st">','</span>);   <span class="cm">// ["a", "b", "c"]</span>
 
-<h3>URL 编解码</h3>
+<span class="cm">// 分割并返回 List</span>
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; list = <span class="ty">VKStrings</span>.splitToList(<span class="st">"a,b,c"</span>, <span class="st">','</span>);
+
+<span class="cm">// 拼接（ThreadLocal StringBuilder，无额外分配）</span>
+<span class="ty">String</span> s1 = <span class="ty">VKStrings</span>.join(<span class="st">','</span>, <span class="st">"a"</span>, <span class="st">"b"</span>, <span class="st">"c"</span>);       <span class="cm">// "a,b,c"</span>
+<span class="ty">String</span> s2 = <span class="ty">VKStrings</span>.join(<span class="st">','</span>, myList);               <span class="cm">// Iterable 重载</span></code></pre>
+
+<h3>命名风格转换</h3>
+<pre><code><span class="ty">VKStrings</span>.camelToSnake(<span class="st">"userName"</span>);   <span class="cm">// "user_name"</span>
+<span class="ty">VKStrings</span>.snakeToCamel(<span class="st">"user_name"</span>);  <span class="cm">// "userName"</span>
+<span class="ty">VKStrings</span>.kebabToCamel(<span class="st">"user-name"</span>);  <span class="cm">// "userName"</span></code></pre>
+
+<h3>大小写无关比较（ASCII 优化）</h3>
+<pre><code><span class="ty">VKStrings</span>.equalsIgnoreCaseAscii(<span class="st">"GET"</span>, <span class="st">"get"</span>);             <span class="cm">// true</span>
+<span class="ty">VKStrings</span>.startsWithIgnoreCaseAscii(<span class="st">"Content-Type"</span>, <span class="st">"content"</span>); <span class="cm">// true</span>
+<span class="ty">VKStrings</span>.containsIgnoreCaseAscii(<span class="st">"Hello World"</span>, <span class="st">"world"</span>);   <span class="cm">// true</span>
+<span class="ty">VKStrings</span>.wildcardMatch(<span class="st">"user.json"</span>, <span class="st">"*.json"</span>);             <span class="cm">// true（* 和 ? 通配）</span></code></pre>
+
+<h3>截断与清理</h3>
+<pre><code><span class="cm">// 按 Unicode 码点截断，正确处理中文/emoji（不会截断代理对）</span>
+<span class="ty">VKStrings</span>.truncateByCodePoint(<span class="st">"Hello 世界"</span>, <span class="nu">8</span>);
+
+<span class="cm">// 截断并添加省略号</span>
+<span class="ty">VKStrings</span>.ellipsis(<span class="st">"很长的标题文字"</span>, <span class="nu">5</span>);   <span class="cm">// "很长的标…"（最多 5 个码点）</span>
+
+<span class="cm">// 越界安全的 substring</span>
+<span class="ty">VKStrings</span>.safeSubstring(<span class="st">"Hello"</span>, <span class="nu">0</span>, <span class="nu">100</span>);  <span class="cm">// "Hello"，不抛异常</span>
+
+<span class="ty">VKStrings</span>.removeWhitespace(<span class="st">"a b  c"</span>);      <span class="cm">// "abc"</span>
+<span class="ty">VKStrings</span>.collapseSpaces(<span class="st">"a  b   c"</span>);      <span class="cm">// "a b c"</span>
+<span class="ty">VKStrings</span>.stripControlChars(input);          <span class="cm">// 移除 ASCII 控制字符（保留 \n \r \t）</span>
+<span class="ty">VKStrings</span>.replaceChar(<span class="st">"a/b/c"</span>, <span class="st">'/'</span>, <span class="st">'.'</span>);  <span class="cm">// "a.b.c"</span></code></pre>
+
+<h3>URL 编解码 / 字节转换</h3>
 <pre><code><span class="ty">String</span> enc = <span class="ty">VKStrings</span>.urlEncodeUtf8(<span class="st">"hello world"</span>);  <span class="cm">// "hello+world"</span>
-<span class="ty">String</span> dec = <span class="ty">VKStrings</span>.urlDecodeUtf8(<span class="st">"hello+world"</span>);  <span class="cm">// "hello world"</span></code></pre>
+<span class="ty">String</span> dec = <span class="ty">VKStrings</span>.urlDecodeUtf8(<span class="st">"hello+world"</span>);  <span class="cm">// "hello world"</span>
 
-<h3>匹配与截断</h3>
-<pre><code><span class="ty">VKStrings</span>.wildcardMatch(<span class="st">"user.json"</span>, <span class="st">"*.json"</span>);   <span class="cm">// true（glob 匹配）</span>
-<span class="ty">VKStrings</span>.truncateByCodePoint(<span class="st">"Hello 世界"</span>, <span class="nu">8</span>);    <span class="cm">// 安全按字符截断</span>
-<span class="ty">VKStrings</span>.ellipsis(<span class="st">"很长的标题文字"</span>, <span class="nu">5</span>);           <span class="cm">// "很长的标题…"</span>
-<span class="ty">VKStrings</span>.safeSubstring(<span class="st">"Hello"</span>, <span class="nu">0</span>, <span class="nu">100</span>);          <span class="cm">// 不抛越界异常</span></code></pre>
+<span class="ty">byte</span>[] bytes = <span class="ty">VKStrings</span>.toUtf8Bytes(<span class="st">"你好"</span>);
+<span class="ty">String</span> str   = <span class="ty">VKStrings</span>.fromUtf8Bytes(bytes);</code></pre>
 
-<h3>清理</h3>
-<pre><code><span class="ty">VKStrings</span>.removeWhitespace(<span class="st">"a b  c"</span>);      <span class="cm">// "abc"</span>
-<span class="ty">VKStrings</span>.collapseSpaces(<span class="st">"a  b   c"</span>);     <span class="cm">// "a b c"</span>
-<span class="ty">VKStrings</span>.stripControlChars(input);         <span class="cm">// 移除控制字符</span></code></pre>
-
-<h3>大小写无关比较</h3>
-<pre><code><span class="ty">VKStrings</span>.equalsIgnoreCaseAscii(<span class="st">"GET"</span>, <span class="st">"get"</span>);       <span class="cm">// true</span>
-<span class="ty">VKStrings</span>.containsIgnoreCaseAscii(<span class="st">"Hello World"</span>, <span class="st">"world"</span>); <span class="cm">// true</span></code></pre>
+<h3>类型解析（带默认值）</h3>
+<pre><code><span class="kw">int</span>     n = <span class="ty">VKStrings</span>.toIntOrDefault(<span class="st">"42"</span>, <span class="nu">0</span>);         <span class="cm">// 42</span>
+<span class="kw">long</span>    l = <span class="ty">VKStrings</span>.toLongOrDefault(<span class="st">"abc"</span>, <span class="nu">-1L</span>);    <span class="cm">// -1（解析失败返回默认值）</span>
+<span class="kw">boolean</span> b = <span class="ty">VKStrings</span>.toBoolOrDefault(<span class="st">"yes"</span>, <span class="kw">false</span>);  <span class="cm">// true（支持 true/1/yes/on）</span></code></pre>
 
 <h2>ID 生成（VKIds）</h2>
-<pre><code><span class="cm">// UUID（带连字符）</span>
-<span class="ty">String</span> id = <span class="ty">VKIds</span>.uuid();          <span class="cm">// "550e8400-e29b-41d4-a716-446655440000"</span>
+<pre><code><span class="cm">// UUID（带连字符，标准格式）</span>
+<span class="ty">String</span> id = <span class="ty">VKIds</span>.uuid();   <span class="cm">// "550e8400-e29b-41d4-a716-446655440000"</span>
 
-<span class="cm">// UUID（无连字符）</span>
-<span class="ty">String</span> id = <span class="ty">VKIds</span>.uuid(<span class="kw">false</span>);    <span class="cm">// "550e8400e29b41d4a716446655440000"</span>
+<span class="cm">// 随机字母数字字符串（大小写字母 + 数字，使用 SecureRandom）</span>
+<span class="ty">String</span> token = <span class="ty">VKIds</span>.randomAlphaNum(<span class="nu">32</span>);
 
-<span class="cm">// Snowflake 分布式 ID（long，趋势递增）</span>
-<span class="kw">long</span> id = <span class="ty">VKIds</span>.snowflakeId();
+<span class="cm">// 固定长度 Trace ID：13位时间戳 + "-" + 16位随机数，总长 30 字符</span>
+<span class="ty">String</span> traceId = <span class="ty">VKIds</span>.traceId();   <span class="cm">// 如 "019c075c4abc-3f8a2b1c4e5d6f7a"</span></code></pre>
 
-<span class="cm">// ObjectId（类 MongoDB，12字节十六进制）</span>
-<span class="ty">String</span> id = <span class="ty">VKIds</span>.objectId();</code></pre>
+<div class="callout info">
+  <div class="callout-title">traceId 格式说明</div>
+  <code>VKIds.traceId()</code> 返回固定 30 字符，格式为 <code>&lt;13位十六进制时间戳&gt;-&lt;16位十六进制随机数&gt;</code>。
+  时间戳部分高位补零，在 2527 年前始终为 13 位。随机部分按 64 位无符号十六进制输出，始终为 16 位。
+  Trace ID 仅用于可观测性，使用 <code>ThreadLocalRandom</code> 而非 <code>SecureRandom</code>，高并发下无竞争。
+  <code>randomAlphaNum</code> 用于 token/密钥场景，仍使用 <code>SecureRandom</code>。
+</div>
 
 <h2>时间工具（VKTimes）</h2>
-<pre><code><span class="cm">// 当前时间</span>
-<span class="ty">Instant</span> now = <span class="ty">VKTimes</span>.now();
+<pre><code><span class="cm">// 当前时间戳</span>
+<span class="kw">long</span> ms  = <span class="ty">VKTimes</span>.nowEpochMs();   <span class="cm">// System.currentTimeMillis()</span>
+<span class="kw">long</span> sec = <span class="ty">VKTimes</span>.nowEpochSec();  <span class="cm">// epoch 秒</span>
 
-<span class="cm">// 格式化</span>
-<span class="ty">String</span> str = <span class="ty">VKTimes</span>.format(now, <span class="ty">ZoneId</span>.of(<span class="st">"Asia/Shanghai"</span>), <span class="st">"yyyy-MM-dd HH:mm:ss"</span>);
+<span class="cm">// 格式化（DateTimeFormatter 按 pattern+zone 缓存，高频调用无重复构造开销）</span>
+<span class="ty">String</span> str = <span class="ty">VKTimes</span>.formatInstant(
+    <span class="ty">Instant</span>.now(),
+    <span class="ty">ZoneId</span>.of(<span class="st">"Asia/Shanghai"</span>),
+    <span class="st">"yyyy-MM-dd HH:mm:ss"</span>
+);
 
-<span class="cm">// 解析</span>
-<span class="ty">Instant</span> t = <span class="ty">VKTimes</span>.parse(<span class="st">"2024-01-01 12:00:00"</span>, <span class="st">"yyyy-MM-dd HH:mm:ss"</span>,
-                           <span class="ty">ZoneId</span>.of(<span class="st">"Asia/Shanghai"</span>));</code></pre>
+<span class="cm">// 解析（pattern 为空时默认 "yyyy-MM-dd HH:mm:ss"）</span>
+<span class="ty">Instant</span> t = <span class="ty">VKTimes</span>.parseInstant(
+    <span class="st">"2024-01-01 12:00:00"</span>,
+    <span class="ty">ZoneId</span>.of(<span class="st">"Asia/Shanghai"</span>),
+    <span class="st">"yyyy-MM-dd HH:mm:ss"</span>
+);
+
+<span class="cm">// 纯日期 pattern 也支持（自动降级为 LocalDate.parse，补零时）</span>
+<span class="ty">Instant</span> t2 = <span class="ty">VKTimes</span>.parseInstant(<span class="st">"2024-01-01"</span>, <span class="ty">ZoneId</span>.of(<span class="st">"UTC"</span>), <span class="st">"yyyy-MM-dd"</span>);
+
+<span class="cm">// 当天起止时间（精确到纳秒）</span>
+<span class="ty">Instant</span> start = <span class="ty">VKTimes</span>.startOfDay(<span class="ty">Instant</span>.now(), <span class="ty">ZoneId</span>.of(<span class="st">"Asia/Shanghai"</span>));
+<span class="ty">Instant</span> end   = <span class="ty">VKTimes</span>.endOfDay(<span class="ty">Instant</span>.now(), <span class="ty">ZoneId</span>.of(<span class="st">"Asia/Shanghai"</span>));</code></pre>
+
+<div class="callout tip">
+  <div class="callout-title">ZoneId 传 null</div>
+  所有接受 <code>ZoneId</code> 参数的方法，传入 <code>null</code> 时自动使用 <code>ZoneId.systemDefault()</code>。
+</div>
 
 <h2>集合工具（VKCollections）</h2>
-<pre><code><span class="ty">List</span>&lt;<span class="ty">String</span>&gt; list = <span class="ty">VKCollections</span>.newList(<span class="st">"a"</span>, <span class="st">"b"</span>, <span class="st">"c"</span>);
-<span class="ty">Set</span>&lt;<span class="ty">String</span>&gt; set  = <span class="ty">VKCollections</span>.newSet(<span class="st">"a"</span>, <span class="st">"b"</span>);
-<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">Integer</span>&gt; map = <span class="ty">VKCollections</span>.newMap(<span class="st">"a"</span>, <span class="nu">1</span>, <span class="st">"b"</span>, <span class="nu">2</span>);
 
-<span class="kw">boolean</span> empty = <span class="ty">VKCollections</span>.isEmpty(list);
-<span class="ty">String</span>  first = <span class="ty">VKCollections</span>.first(list);   <span class="cm">// 安全，空时返回 null</span>
-<span class="ty">String</span>  last  = <span class="ty">VKCollections</span>.last(list);
+<h3>工厂方法（预设容量，避免扩容）</h3>
+<pre><code><span class="cm">// 按预期元素数分配初始容量（自动计算 HashMap loadFactor 补偿）</span>
+<span class="ty">HashMap</span>&lt;<span class="ty">String</span>, <span class="ty">Integer</span>&gt; map  = <span class="ty">VKCollections</span>.newHashMapWithExpectedSize(<span class="nu">100</span>);
+<span class="ty">LinkedHashMap</span>&lt;<span class="ty">K</span>, <span class="ty">V</span>&gt;    lmap = <span class="ty">VKCollections</span>.newLinkedHashMapWithExpectedSize(<span class="nu">50</span>);
+<span class="ty">HashSet</span>&lt;<span class="ty">String</span>&gt;        set  = <span class="ty">VKCollections</span>.newHashSetWithExpectedSize(<span class="nu">50</span>);
+<span class="ty">ConcurrentHashMap</span>&lt;<span class="ty">K</span>,<span class="ty">V</span>&gt; chm = <span class="ty">VKCollections</span>.newConcurrentHashMapWithExpectedSize(<span class="nu">200</span>);
+<span class="ty">ArrayList</span>&lt;<span class="ty">String</span>&gt;      list = <span class="ty">VKCollections</span>.newArrayListWithExpectedSize(<span class="nu">64</span>);</code></pre>
 
-<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; unique = <span class="ty">VKCollections</span>.distinct(list);  <span class="cm">// 去重</span></code></pre>
+<h3>安全访问（不抛越界异常）</h3>
+<pre><code><span class="ty">String</span> v = <span class="ty">VKCollections</span>.safeGet(list, <span class="nu">5</span>, <span class="st">"default"</span>);  <span class="cm">// 越界返回默认值</span>
+<span class="ty">String</span> f = <span class="ty">VKCollections</span>.safeFirst(list, <span class="kw">null</span>);
+<span class="ty">String</span> l = <span class="ty">VKCollections</span>.safeLast(list, <span class="kw">null</span>);
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; sub = <span class="ty">VKCollections</span>.safeSubList(list, <span class="nu">2</span>, <span class="nu">10</span>);  <span class="cm">// 自动裁剪边界</span>
+
+<span class="ty">String</span> val = <span class="ty">VKCollections</span>.getOrDefault(map, <span class="st">"key"</span>, <span class="st">"fallback"</span>);  <span class="cm">// map 为 null 安全</span></code></pre>
+
+<h3>集合运算</h3>
+<pre><code><span class="cm">// 去重（保持首次出现顺序）</span>
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; unique = <span class="ty">VKCollections</span>.distinctPreserveOrder(list);
+
+<span class="cm">// 按 key 函数去重（保留首次出现）</span>
+<span class="ty">List</span>&lt;<span class="ty">User</span>&gt; deduped = <span class="ty">VKCollections</span>.distinctBy(users, <span class="ty">User</span>::getId);
+
+<span class="cm">// 集合运算（均保持顺序，返回新 List）</span>
+<span class="ty">List</span>&lt;<span class="ty">T</span>&gt; union  = <span class="ty">VKCollections</span>.union(a, b);       <span class="cm">// 并集，去重</span>
+<span class="ty">List</span>&lt;<span class="ty">T</span>&gt; inter  = <span class="ty">VKCollections</span>.intersect(a, b);   <span class="cm">// 交集</span>
+<span class="ty">List</span>&lt;<span class="ty">T</span>&gt; diff   = <span class="ty">VKCollections</span>.difference(a, b);  <span class="cm">// 差集（a 中有、b 中没有）</span></code></pre>
+
+<h3>函数式操作</h3>
+<pre><code><span class="ty">List</span>&lt;<span class="ty">User</span>&gt; adults  = <span class="ty">VKCollections</span>.filter(users, u -&gt; u.getAge() &gt;= <span class="nu">18</span>);
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; names = <span class="ty">VKCollections</span>.map(users, <span class="ty">User</span>::getName);
+<span class="ty">List</span>&lt;<span class="ty">Tag</span>&gt; tags     = <span class="ty">VKCollections</span>.flatMap(posts, <span class="ty">Post</span>::getTags);
+<span class="ty">List</span>&lt;<span class="ty">User</span>&gt; noNulls = <span class="ty">VKCollections</span>.compact(users);  <span class="cm">// 移除 null 元素</span>
+
+<span class="cm">// 统计</span>
+<span class="kw">long</span>    cnt = <span class="ty">VKCollections</span>.count(users, u -&gt; u.getAge() &gt; <span class="nu">18</span>);
+<span class="kw">boolean</span> any = <span class="ty">VKCollections</span>.anyMatch(users, u -&gt; u.isAdmin());
+<span class="kw">boolean</span> all = <span class="ty">VKCollections</span>.allMatch(users, u -&gt; u.isActive());</code></pre>
+
+<h3>索引与分组</h3>
+<pre><code><span class="cm">// 按 key 建立索引（重复 key 取后者）</span>
+<span class="ty">Map</span>&lt;<span class="ty">Long</span>, <span class="ty">User</span>&gt; byId = <span class="ty">VKCollections</span>.indexBy(users, <span class="ty">User</span>::getId);
+
+<span class="cm">// 按 key 分组</span>
+<span class="ty">Map</span>&lt;<span class="ty">String</span>, <span class="ty">List</span>&lt;<span class="ty">User</span>&gt;&gt; byDept = <span class="ty">VKCollections</span>.groupBy(users, <span class="ty">User</span>::getDept);
+
+<span class="cm">// 转为 Map（支持重复 key 合并）</span>
+<span class="ty">Map</span>&lt;<span class="ty">Long</span>, <span class="ty">String</span>&gt; nameById = <span class="ty">VKCollections</span>.toMap(
+    users, <span class="ty">User</span>::getId, <span class="ty">User</span>::getName, (a, b) -&gt; a  <span class="cm">// 重复 key 时保留旧值</span>
+);</code></pre>
+
+<h3>分页与分块</h3>
+<pre><code><span class="cm">// 按固定大小分块（chunked 和 partition 等价）</span>
+<span class="ty">List</span>&lt;<span class="ty">List</span>&lt;<span class="ty">User</span>&gt;&gt; batches = <span class="ty">VKCollections</span>.chunked(users, <span class="nu">100</span>);
+
+<span class="cm">// 按页码取数据（pageNo 从 1 开始）</span>
+<span class="ty">List</span>&lt;<span class="ty">User</span>&gt; page = <span class="ty">VKCollections</span>.page(users, <span class="nu">2</span>, <span class="nu">20</span>);  <span class="cm">// 第2页，每页20条</span></code></pre>
+
+<h3>其他工具</h3>
+<pre><code><span class="kw">boolean</span> hit = <span class="ty">VKCollections</span>.containsAny(setA, setB);  <span class="cm">// 是否有交集（自动小集合嵌套大集合）</span>
+
+<span class="ty">List</span>&lt;<span class="ty">String</span>&gt; rev  = <span class="ty">VKCollections</span>.reverseNew(list);        <span class="cm">// 返回倒序副本（不修改原列表）</span>
+<span class="ty">List</span>&lt;<span class="ty">Integer</span>&gt; rep = <span class="ty">VKCollections</span>.repeat(<span class="nu">0</span>, <span class="nu">5</span>);           <span class="cm">// [0, 0, 0, 0, 0]</span>
+<span class="ty">VKCollections</span>.swap(list, <span class="nu">0</span>, <span class="nu">3</span>);                           <span class="cm">// 原地交换两个元素</span>
+
+<span class="cm">// 不可变副本（底层 List.copyOf / Set.copyOf / Map.copyOf）</span>
+<span class="ty">List</span>&lt;<span class="ty">T</span>&gt; immList = <span class="ty">VKCollections</span>.immutableCopy(list);
+<span class="ty">Set</span>&lt;<span class="ty">T</span>&gt;  immSet  = <span class="ty">VKCollections</span>.immutableCopy(set);
+<span class="ty">Map</span>&lt;<span class="ty">K</span>,<span class="ty">V</span>&gt; immMap = <span class="ty">VKCollections</span>.immutableCopy(map);</code></pre>
+
+<h2>编解码（VKCodecs）</h2>
+
+<h3>Base64</h3>
+<pre><code><span class="cm">// 编码</span>
+<span class="ty">String</span> b64 = <span class="ty">VKCodecs</span>.base64Encode(someBytes);       <span class="cm">// byte[] → Base64 字符串</span>
+<span class="ty">String</span> b64 = <span class="ty">VKCodecs</span>.base64Encode(<span class="st">"hello"</span>);         <span class="cm">// String → Base64 字符串</span>
+
+<span class="cm">// 解码</span>
+<span class="ty">byte</span>[] raw = <span class="ty">VKCodecs</span>.base64DecodeToBytes(b64);
+<span class="ty">String</span> str = <span class="ty">VKCodecs</span>.base64DecodeToString(b64);</code></pre>
+
+<h3>十六进制</h3>
+<pre><code><span class="ty">String</span> hex   = <span class="ty">VKCodecs</span>.hexEncode(<span class="kw">new</span> <span class="ty">byte</span>[]{<span class="nu">0x0f</span>, <span class="nu">0xff</span>});  <span class="cm">// "0fff"（小写）</span>
+<span class="ty">byte</span>[] bytes = <span class="ty">VKCodecs</span>.hexDecode(<span class="st">"0fff"</span>);</code></pre>
+
+<h3>摘要 / 校验和</h3>
+<pre><code><span class="cm">// MD5 和 SHA-256 使用 ThreadLocal MessageDigest，高频调用无实例构造开销</span>
+<span class="ty">String</span> md5    = <span class="ty">VKCodecs</span>.md5Hex(<span class="st">"hello"</span>);     <span class="cm">// 32 位小写十六进制</span>
+<span class="ty">String</span> sha256 = <span class="ty">VKCodecs</span>.sha256Hex(<span class="st">"hello"</span>);  <span class="cm">// 64 位小写十六进制</span>
+
+<span class="cm">// CRC32 校验和（非加密用途，如数据完整性校验）</span>
+<span class="kw">long</span> crc = <span class="ty">VKCodecs</span>.crc32(someBytes);</code></pre>
 
 <h2>API 速查</h2>
 <table class="api-table">
   <thead><tr><th>类</th><th>方法</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td rowspan="3"><code>Vostok.Util</code></td><td><code>toJson(obj)</code></td><td>对象序列化为 JSON</td></tr>
+    <tr><td rowspan="4"><code>Vostok.Util</code></td><td><code>toJson(obj)</code></td><td>对象序列化为 JSON</td></tr>
     <tr><td><code>fromJson(json, Class)</code></td><td>JSON 反序列化</td></tr>
-    <tr><td><code>useJsonProvider(name)</code></td><td>切换 JSON Provider</td></tr>
-    <tr><td rowspan="4"><code>VKStrings</code></td><td><code>isEmpty / isBlank</code></td><td>空/空白检查</td></tr>
-    <tr><td><code>camelToSnake / snakeToCamel</code></td><td>命名风格转换</td></tr>
-    <tr><td><code>wildcardMatch(val, pattern)</code></td><td>Glob 通配匹配</td></tr>
-    <tr><td><code>ellipsis(str, maxLen)</code></td><td>安全截断并加省略号</td></tr>
-    <tr><td rowspan="3"><code>VKIds</code></td><td><code>uuid()</code></td><td>UUID 生成</td></tr>
-    <tr><td><code>snowflakeId()</code></td><td>Snowflake 分布式 ID</td></tr>
-    <tr><td><code>objectId()</code></td><td>MongoDB 风格 ObjectId</td></tr>
-    <tr><td rowspan="2"><code>VKTimes</code></td><td><code>format(instant, zone, pattern)</code></td><td>时间格式化</td></tr>
-    <tr><td><code>parse(str, pattern, zone)</code></td><td>时间解析</td></tr>
-    <tr><td rowspan="2"><code>VKCollections</code></td><td><code>first(list) / last(list)</code></td><td>安全取首尾元素</td></tr>
-    <tr><td><code>distinct(list)</code></td><td>去重</td></tr>
+    <tr><td><code>registerJsonProvider(provider)</code></td><td>注册自定义 JSON Provider</td></tr>
+    <tr><td><code>useJsonProvider(name)</code></td><td>切换当前 JSON Provider</td></tr>
+    <tr><td rowspan="9"><code>VKStrings</code></td><td><code>isEmpty / isBlank</code></td><td>空/空白检查</td></tr>
+    <tr><td><code>trimToNull / trimToEmpty / defaultIfBlank</code></td><td>空值转换</td></tr>
+    <tr><td><code>fastSplit(str, char) → String[]</code></td><td>快速字符分割</td></tr>
+    <tr><td><code>splitToList(str, char) → List</code></td><td>分割并返回 List</td></tr>
+    <tr><td><code>join(char, Object...)</code></td><td>拼接（ThreadLocal 复用）</td></tr>
+    <tr><td><code>camelToSnake / snakeToCamel / kebabToCamel</code></td><td>命名风格转换</td></tr>
+    <tr><td><code>wildcardMatch(val, pattern)</code></td><td>Glob 通配匹配（* 和 ?）</td></tr>
+    <tr><td><code>ellipsis(str, maxCodePoints)</code></td><td>安全截断并加省略号</td></tr>
+    <tr><td><code>toIntOrDefault / toLongOrDefault / toBoolOrDefault</code></td><td>字符串解析（带默认值）</td></tr>
+    <tr><td rowspan="3"><code>VKIds</code></td><td><code>uuid()</code></td><td>随机 UUID（带连字符）</td></tr>
+    <tr><td><code>randomAlphaNum(len)</code></td><td>随机字母数字串（SecureRandom）</td></tr>
+    <tr><td><code>traceId()</code></td><td>固定长度 trace ID，共 30 字符</td></tr>
+    <tr><td rowspan="4"><code>VKTimes</code></td><td><code>nowEpochMs() / nowEpochSec()</code></td><td>当前时间戳</td></tr>
+    <tr><td><code>formatInstant(instant, zone, pattern)</code></td><td>Instant 格式化（formatter 缓存）</td></tr>
+    <tr><td><code>parseInstant(str, zone, pattern)</code></td><td>字符串解析为 Instant（支持纯日期 pattern）</td></tr>
+    <tr><td><code>startOfDay / endOfDay(instant, zone)</code></td><td>当天起止 Instant</td></tr>
+    <tr><td rowspan="8"><code>VKCollections</code></td><td><code>newHashMapWithExpectedSize(n)</code></td><td>预设容量，避免 rehash</td></tr>
+    <tr><td><code>safeGet / safeFirst / safeLast(list, ...)</code></td><td>越界安全访问</td></tr>
+    <tr><td><code>distinctPreserveOrder / distinctBy</code></td><td>去重（保持顺序）</td></tr>
+    <tr><td><code>union / intersect / difference</code></td><td>集合运算</td></tr>
+    <tr><td><code>filter / map / flatMap / compact</code></td><td>函数式操作</td></tr>
+    <tr><td><code>indexBy / groupBy / toMap</code></td><td>索引与分组</td></tr>
+    <tr><td><code>chunked / page</code></td><td>分块与分页</td></tr>
+    <tr><td><code>containsAny / anyMatch / allMatch / count</code></td><td>条件检查与统计</td></tr>
+    <tr><td rowspan="4"><code>VKCodecs</code></td><td><code>base64Encode / base64DecodeToBytes / base64DecodeToString</code></td><td>Base64 编解码</td></tr>
+    <tr><td><code>hexEncode / hexDecode</code></td><td>十六进制编解码</td></tr>
+    <tr><td><code>md5Hex / sha256Hex</code></td><td>摘要（ThreadLocal 复用，低延迟）</td></tr>
+    <tr><td><code>crc32(bytes)</code></td><td>CRC32 校验和</td></tr>
   </tbody>
 </table>
 
