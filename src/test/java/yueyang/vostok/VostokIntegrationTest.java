@@ -1017,7 +1017,10 @@ public class VostokIntegrationTest {
                     assertTrue(rs.next());
                     String dbValue = rs.getString(1);
                     assertNotEquals("alice", dbValue);
-                    assertTrue(dbValue.startsWith("vk1:aes:enc-k1:"));
+                    // vkf3 格式：Base64 编码，首字节 0x03，不含 vk1: 前缀
+                    assertFalse(dbValue.startsWith("vk1:"), "Should be vkf3 not vk1 format");
+                    byte[] raw = java.util.Base64.getDecoder().decode(dbValue);
+                    assertTrue(raw.length >= 37 && (raw[0] & 0xFF) == 0x03, "Should be vkf3 cipher");
                 }
             }
         } finally {
@@ -1166,7 +1169,9 @@ public class VostokIntegrationTest {
             int count = 0;
             while (rs.next()) {
                 String value = rs.getString(1);
-                assertTrue(value.startsWith("vk1:aes:m-key:"));
+                // vkf3 格式：Base64 编码首字节 0x03，不含 vk1: 前缀
+                byte[] raw = java.util.Base64.getDecoder().decode(value);
+                assertTrue(raw.length >= 37 && (raw[0] & 0xFF) == 0x03, "Should be vkf3 cipher: " + value);
                 count++;
             }
             assertEquals(3, count);
@@ -1251,7 +1256,7 @@ public class VostokIntegrationTest {
                 .baseDir(Files.createTempDirectory("vostok-ks-migrate-plain").toString())
                 .masterKey("vostok-test-master-key-migrate-plain"));
 
-        String cipher = Vostok.Security.encryptWithKeyId("c-1", "m-key");
+        String cipher = Vostok.Security.encryptField("c-1", "m-key");
         try (var conn = java.sql.DriverManager.getConnection(JDBC_URL, "sa", "");
              var stmt = conn.createStatement()) {
             stmt.execute("INSERT INTO t_crypto_migrate(secret_val, tag) VALUES ('p-raw','A')");

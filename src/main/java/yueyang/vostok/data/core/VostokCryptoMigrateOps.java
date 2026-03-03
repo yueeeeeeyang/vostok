@@ -18,9 +18,11 @@ import java.util.List;
 
 /**
  * 字段加解密迁移能力。
+ *
+ * <p>迁移操作使用 vkf3 格式（AES-256-GCM + DEK/KEK 双层密钥）。
+ * 已是 vkf3 密文的行在加密时自动跳过；非 vkf3 内容在解密时按 allowPlaintextRead 决定是否跳过。
  */
 public final class VostokCryptoMigrateOps {
-    private static final String CIPHER_PREFIX = "vk1:aes:";
     private static final int ERROR_TOP_N = 20;
 
     private VostokCryptoMigrateOps() {
@@ -216,18 +218,20 @@ public final class VostokCryptoMigrateOps {
         }
         String text = (String) value;
         if (encrypt) {
-            if (text.startsWith(CIPHER_PREFIX)) {
+            // 已是 vkf3 密文则跳过（幂等）
+            if (VKFieldCrypto.isVkf3Cipher(text)) {
                 return null;
             }
-            return Vostok.Security.encryptWithKeyId(text, options.getEncryptKeyId());
+            return Vostok.Security.encryptField(text, options.getEncryptKeyId());
         }
-        if (!text.startsWith(CIPHER_PREFIX)) {
+        // 解密：非 vkf3 内容按 allowPlaintextRead 决定是否跳过
+        if (!VKFieldCrypto.isVkf3Cipher(text)) {
             if (options.isAllowPlaintextRead()) {
                 return null;
             }
             throw new VKArgumentException("Plaintext found but allowPlaintextRead=false");
         }
-        return Vostok.Security.decryptWithKeyId(text);
+        return Vostok.Security.decryptField(text);
     }
 
     private static List<Row> fetchPage(VKCryptoMigrateOptions options, Object lastId, int pageSize) throws Exception {

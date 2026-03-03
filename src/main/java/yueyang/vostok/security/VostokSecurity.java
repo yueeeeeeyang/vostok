@@ -8,6 +8,11 @@ import yueyang.vostok.security.crypto.VKHashCrypto;
 import yueyang.vostok.security.crypto.VKRsaCrypto;
 import yueyang.vostok.security.crypto.VKRsaKeyPair;
 import yueyang.vostok.security.crlf.VKCrlfScanner;
+import yueyang.vostok.security.field.VKFieldCrypto;
+import yueyang.vostok.security.field.VKFieldEncryptConfig;
+import yueyang.vostok.security.field.VKFieldSession;
+import yueyang.vostok.security.field.VKFieldType;
+import yueyang.vostok.security.field.VKTableDekCache;
 import yueyang.vostok.security.file.VKFileSecurityScanner;
 import yueyang.vostok.security.file.VKFileType;
 import yueyang.vostok.security.keystore.LocalFileKeyStore;
@@ -25,6 +30,7 @@ import yueyang.vostok.security.xss.VKXssScanner;
 import yueyang.vostok.security.command.VKCommandInjectionScanner;
 import yueyang.vostok.security.xml.VKXxeScanner;
 
+import javax.crypto.SecretKey;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -32,6 +38,8 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -57,6 +65,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class VostokSecurity {
     private static final Object LOCK = new Object();
     private static final Object KEY_STORE_LOCK = new Object();
+    /** 字段加密模块专用锁（与 keyStore 锁分离，避免交叉持锁） */
+    private static final Object FIELD_LOCK = new Object();
     private static final CopyOnWriteArrayList<VKSecurityRule> CUSTOM_RULES = new CopyOnWriteArrayList<>();
 
     private static volatile boolean initialized;
@@ -64,6 +74,11 @@ public class VostokSecurity {
     private static volatile VKSqlSecurityScanner scanner;
     private static volatile VKKeyStoreConfig keyStoreConfig = new VKKeyStoreConfig();
     private static volatile VKKeyStore keyStore;
+
+    /** 字段加密配置（懒加载，默认 new VKFieldEncryptConfig()） */
+    private static volatile VKFieldEncryptConfig fieldConfig;
+    /** DEK/Blind Key 缓存实例（懒加载） */
+    private static volatile VKTableDekCache dekCache;
 
     protected VostokSecurity() {
     }
@@ -101,6 +116,11 @@ public class VostokSecurity {
         synchronized (LOCK) {
             scanner = null;
             initialized = false;
+        }
+        // 同时清理字段加密模块状态
+        synchronized (FIELD_LOCK) {
+            dekCache = null;
+            fieldConfig = null;
         }
     }
 
@@ -634,6 +654,235 @@ public class VostokSecurity {
         }
     }
 
+    // ---------------------------------------------------------------- 数据库字段级加密（vkf3）
+
+    /**
+     * 配置字段加密参数，并（重新）初始化 DEK 缓存。
+     *
+     * <p>可选调用：未调用时使用默认配置（TTL=300s，NULL_PASSTHROUGH，suffix=".blind"）。
+     * 重复调用会重建缓存（会清除所有已缓存的 DEK）。
+     *
+     * @param config 字段加密配置；null 时使用默认配置
+     */
+    public static void configureFieldEncrypt(VKFieldEncryptConfig config) {
+        synchronized (FIELD_LOCK) {
+            fieldConfig = (config == null ? new VKFieldEncryptConfig() : config.copy());
+            dekCache = new VKTableDekCache(currentKeyStore(), fieldConfig);
+        }
+    }
+
+    /**
+     * 注册 tableKeyId，建立 keyIdHash → tableKeyId 映射，用于自描述解密。
+     *
+     * <p>幂等操作，多次注册同一 tableKeyId 无副作用。
+     * 应在首次使用字段加密前调用（或通过 {@link #fieldSession(String)} 自动完成）。
+     *
+     * @param tableKeyId 表级密钥 ID（[A-Za-z0-9._-]+）
+     */
+    public static void registerTableKey(String tableKeyId) {
+        currentDekCache().registerTableKey(tableKeyId);
+    }
+
+    /**
+     * 创建并返回绑定到 tableKeyId 的 {@link VKFieldSession}。
+     *
+     * <p>Session 构建时自动注册 tableKeyId（幂等）。
+     * 建议在 try-with-resources 中使用：
+     * <pre>{@code
+     * try (VKFieldSession session = VostokSecurity.fieldSession("users")) {
+     *     String cipher = session.encrypt(plain);
+     * }
+     * }</pre>
+     *
+     * @param tableKeyId 表级密钥 ID
+     * @return 已初始化的 VKFieldSession
+     */
+    public static VKFieldSession fieldSession(String tableKeyId) {
+        VKFieldEncryptConfig cfg = fieldConfig;
+        if (cfg == null) {
+            cfg = new VKFieldEncryptConfig();
+        }
+        return new VKFieldSession(tableKeyId, currentDekCache(), cfg.getNullPolicy());
+    }
+
+    /**
+     * 加密字符串字段（UTF-8），返回 vkf3 格式 Base64 密文。
+     *
+     * <p>null 输入时按默认策略（NULL_PASSTHROUGH）返回 null。
+     * 若需严格空值检查，使用 {@link #fieldSession(String)} 配合 {@link yueyang.vostok.security.field.VKNullPolicy#REJECT}。
+     *
+     * @param plain      明文字符串
+     * @param tableKeyId 表级密钥 ID
+     * @return vkf3 Base64 密文，或 null（入参为 null）
+     */
+    public static String encryptField(String plain, String tableKeyId) {
+        VKTableDekCache cache = currentDekCache();
+        cache.registerTableKey(tableKeyId);
+        if (plain == null) {
+            return null;
+        }
+        VKTableDekCache.DekHandle handle = cache.currentDek(tableKeyId);
+        int keyIdHash = VKFieldCrypto.computeKeyIdHash(tableKeyId);
+        return VKFieldCrypto.encryptString(plain, handle.dek(), keyIdHash, handle.version());
+    }
+
+    /**
+     * 自描述解密：从 vkf3 密文头部提取 keyIdHash，自动查找对应 tableKeyId 并解密。
+     *
+     * <p>调用前须通过 {@link #registerTableKey(String)} 或 {@link #encryptField} 注册 tableKeyId。
+     *
+     * @param cipher vkf3 Base64 密文；null 返回 null
+     * @return 明文字符串
+     * @throws VKSecurityException 若密文格式非法、keyIdHash 未注册、或 GCM 验证失败
+     */
+    public static String decryptField(String cipher) {
+        if (cipher == null) {
+            return null;
+        }
+        VKTableDekCache cache = currentDekCache();
+        byte[] raw = decodeAndValidateVkf3(cipher);
+        // 自描述解密：从头部提取 keyIdHash，反查 tableKeyId
+        int keyIdHash = VKFieldCrypto.parseKeyIdHash(raw);
+        String tableKeyId = cache.resolveTableKeyId(keyIdHash);
+        int dekVersion = VKFieldCrypto.parseDekVersion(raw);
+        SecretKey dek = cache.getDekForVersion(tableKeyId, dekVersion);
+        return VKFieldCrypto.decryptString(cipher, dek);
+    }
+
+    /**
+     * 计算字段的可搜索 Blind Index（HMAC-SHA256，64 字符十六进制）。
+     *
+     * @param plain      明文字符串；null 返回 null
+     * @param tableKeyId 表级密钥 ID
+     * @return 64 字符十六进制 Blind Index，或 null
+     */
+    public static String blindIndex(String plain, String tableKeyId) {
+        if (plain == null) {
+            return null;
+        }
+        VKTableDekCache cache = currentDekCache();
+        cache.registerTableKey(tableKeyId);
+        SecretKey blindKey = cache.getBlindKey(tableKeyId);
+        return VKFieldCrypto.computeBlindIndex(plain, blindKey);
+    }
+
+    /**
+     * 类型安全加密：将 Java 对象序列化后加密，返回 vkf3 Base64 密文。
+     *
+     * @param value      待加密的 Java 对象；null 返回 null
+     * @param tableKeyId 表级密钥 ID
+     * @param type       字段类型
+     * @return vkf3 Base64 密文，或 null
+     */
+    public static String encryptTyped(Object value, String tableKeyId, VKFieldType type) {
+        VKTableDekCache cache = currentDekCache();
+        cache.registerTableKey(tableKeyId);
+        if (value == null) {
+            return null;
+        }
+        byte[] bytes = type.toBytes(value);
+        VKTableDekCache.DekHandle handle = cache.currentDek(tableKeyId);
+        int keyIdHash = VKFieldCrypto.computeKeyIdHash(tableKeyId);
+        return VKFieldCrypto.encryptBytes(bytes, handle.dek(), keyIdHash, handle.version());
+    }
+
+    /**
+     * 类型安全解密（自描述）：从 vkf3 密文自动解析 tableKeyId，解密后反序列化为指定类型。
+     *
+     * @param cipher vkf3 Base64 密文；null 返回 null
+     * @param type   字段类型
+     * @return 反序列化后的 Java 对象，或 null
+     */
+    public static Object decryptTyped(String cipher, VKFieldType type) {
+        if (cipher == null) {
+            return null;
+        }
+        VKTableDekCache cache = currentDekCache();
+        byte[] raw = decodeAndValidateVkf3(cipher);
+        int keyIdHash = VKFieldCrypto.parseKeyIdHash(raw);
+        String tableKeyId = cache.resolveTableKeyId(keyIdHash);
+        int dekVersion = VKFieldCrypto.parseDekVersion(raw);
+        SecretKey dek = cache.getDekForVersion(tableKeyId, dekVersion);
+        byte[] plainBytes = VKFieldCrypto.decryptBytes(cipher, dek);
+        return type.fromBytes(plainBytes);
+    }
+
+    /**
+     * 轮换 tableKeyId 的 Field DEK：创建新版本 DEK，后续加密自动使用新版本。
+     * 旧密文仍可用旧版本 DEK 解密（历史版本不删除）。
+     *
+     * @param tableKeyId 表级密钥 ID
+     */
+    public static void rotateDek(String tableKeyId) {
+        VKTableDekCache cache = currentDekCache();
+        cache.registerTableKey(tableKeyId);
+        // 在 keyStore 中原子性创建新版本 DEK（版本号文件更新后，currentDek() 自动切换到新版本）
+        currentKeyStore().createNextFieldDek(tableKeyId);
+    }
+
+    /**
+     * 批量重新加密字段列表（fail-fast）：用每个密文对应的旧版本 DEK 解密后，
+     * 立即用当前最新 DEK 重新加密，返回新密文列表（1:1 映射，位置对应）。
+     *
+     * <p>fail-fast 策略：遇到第一个非法密文或解密失败立即抛 {@link VKSecurityException}，
+     * 已处理的结果不返回。
+     *
+     * @param ciphers    旧密文列表（null 元素保留为 null）
+     * @param tableKeyId 表级密钥 ID
+     * @return 新密文列表（与 ciphers 等长，位置对应）
+     */
+    public static List<String> reEncryptFields(List<String> ciphers, String tableKeyId) {
+        VKTableDekCache cache = currentDekCache();
+        cache.registerTableKey(tableKeyId);
+        int keyIdHash = VKFieldCrypto.computeKeyIdHash(tableKeyId);
+        // 预取当前 DEK，避免每次循环都重新查询版本
+        VKTableDekCache.DekHandle currentHandle = cache.currentDek(tableKeyId);
+
+        List<String> result = new ArrayList<>(ciphers.size());
+        for (String cipher : ciphers) {
+            if (cipher == null) {
+                result.add(null);
+                continue;
+            }
+            // fail-fast：任何解析或解密失败立即抛异常
+            byte[] raw = decodeAndValidateVkf3(cipher);
+            int cipherKeyIdHash = VKFieldCrypto.parseKeyIdHash(raw);
+            if (cipherKeyIdHash != keyIdHash) {
+                throw new VKSecurityException(
+                        "Cross-table cipher in batch reEncryptFields: expected tableKeyId=" + tableKeyId);
+            }
+            int oldDekVersion = VKFieldCrypto.parseDekVersion(raw);
+            SecretKey oldDek = cache.getDekForVersion(tableKeyId, oldDekVersion);
+            // 字节级路径：解密 → 重新加密，不经 String 中转
+            byte[] plainBytes = VKFieldCrypto.decryptBytes(cipher, oldDek);
+            result.add(VKFieldCrypto.encryptBytes(plainBytes, currentHandle.dek(), keyIdHash, currentHandle.version()));
+        }
+        return result;
+    }
+
+    /**
+     * 清除指定 tableKeyId 的 DEK 缓存（所有版本）和 Blind Key 缓存。
+     * 下次访问时从 keyStore 重新加载。
+     *
+     * @param tableKeyId 表级密钥 ID
+     */
+    public static void invalidateDekCache(String tableKeyId) {
+        VKTableDekCache c = dekCache;
+        if (c != null) {
+            c.invalidate(tableKeyId);
+        }
+    }
+
+    /**
+     * 清除所有 DEK 缓存和 Blind Key 缓存（含 hashRegistry）。
+     */
+    public static void invalidateAllDekCache() {
+        VKTableDekCache c = dekCache;
+        if (c != null) {
+            c.invalidateAll();
+        }
+    }
+
     // ---------------------------------------------------------------- 内部工具
 
     private static void assertSafe(String message, VKSecurityCheckResult result) {
@@ -705,5 +954,50 @@ public class VostokSecurity {
             }
             return keyStore;
         }
+    }
+
+    /**
+     * 懒加载 DEK 缓存：若尚未初始化，以默认 config 和当前 keyStore 创建。
+     * 双重检查锁确保线程安全且仅初始化一次。
+     */
+    private static VKTableDekCache currentDekCache() {
+        VKTableDekCache c = dekCache;
+        if (c != null) {
+            return c;
+        }
+        synchronized (FIELD_LOCK) {
+            if (dekCache == null) {
+                VKFieldEncryptConfig cfg = fieldConfig == null ? new VKFieldEncryptConfig() : fieldConfig;
+                dekCache = new VKTableDekCache(currentKeyStore(), cfg);
+            }
+            return dekCache;
+        }
+    }
+
+    /**
+     * Base64 解码 vkf3 密文并校验版本和最小长度。
+     *
+     * @param cipher vkf3 Base64 密文
+     * @return 解码后的原始字节数组
+     * @throws VKSecurityException 若 Base64 非法、长度不足或版本字节不是 0x03
+     */
+    private static byte[] decodeAndValidateVkf3(String cipher) {
+        byte[] raw;
+        try {
+            raw = Base64.getDecoder().decode(cipher);
+        } catch (Exception e) {
+            throw new VKSecurityException("Invalid vkf3 cipher: not valid Base64");
+        }
+        if (raw.length < VKFieldCrypto.MIN_CIPHER_BYTES) {
+            throw new VKSecurityException(
+                    "Invalid vkf3 cipher: too short (length=" + raw.length
+                    + ", min=" + VKFieldCrypto.MIN_CIPHER_BYTES + ")");
+        }
+        if ((raw[0] & 0xFF) != VKFieldCrypto.VERSION) {
+            throw new VKSecurityException(
+                    "Invalid vkf3 cipher: wrong version byte 0x"
+                    + Integer.toHexString(raw[0] & 0xFF) + " (expected 0x03)");
+        }
+        return raw;
     }
 }
