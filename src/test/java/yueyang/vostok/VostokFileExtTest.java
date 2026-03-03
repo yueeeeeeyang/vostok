@@ -9,10 +9,13 @@ import yueyang.vostok.file.VKFileConfig;
 import yueyang.vostok.file.VKFileMigrateOptions;
 import yueyang.vostok.file.exception.VKFileErrorCode;
 import yueyang.vostok.file.exception.VKFileException;
+import yueyang.vostok.security.keystore.VKKeyStoreConfig;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Random;
 
@@ -30,10 +33,19 @@ public class VostokFileExtTest {
     @AfterEach
     void tearDown() {
         Vostok.File.close();
+        Vostok.Security.close();
     }
 
     private void init() {
         Vostok.File.init(new VKFileConfig().baseDir(tempDir.toString()));
+    }
+
+    /** 初始化 File 模块 + Security 模块（加解密测试使用）。 */
+    private void initWithSecurity() {
+        init();
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(tempDir.resolve("ks").toString())
+                .masterKey("test-master-key"));
     }
 
     // =========================================================================
@@ -236,47 +248,76 @@ public class VostokFileExtTest {
     }
 
     // =========================================================================
-    // Ext 4：文件加密 / 解密（AES-256-GCM via VostokSecurity）
+    // Ext 4：文件加密 / 解密（AES-256-GCM vkf2 分块流式格式，委托安全模块）
     // =========================================================================
 
     @Test
     void testEncryptDecryptRoundTrip() {
-        init();
+        initWithSecurity();
         String content = "secret-text-content-plain";
         Vostok.File.write("plain.txt", content);
-        Vostok.File.encryptFile("plain.txt", "enc.dat", "my-secret-key");
+        Vostok.File.encryptFile("plain.txt", "enc.dat", "file-enc-key");
 
-        // 加密后内容应与原文不同
-        assertNotEquals(content, Vostok.File.read("enc.dat"), "加密文件内容应与明文不同");
+        // 加密文件为二进制 vkf2 格式，与原文字节完全不同
+        byte[] encBytes = Vostok.File.readBytes("enc.dat");
+        assertFalse(Arrays.equals(content.getBytes(StandardCharsets.UTF_8), encBytes),
+                "加密文件内容应与明文字节不同");
+        // 验证 vkf2 魔数 VKFC
+        assertEquals('V', encBytes[0] & 0xFF, "加密文件应以 VKFC 魔数开头");
+        assertEquals('K', encBytes[1] & 0xFF);
+        assertEquals('F', encBytes[2] & 0xFF);
+        assertEquals('C', encBytes[3] & 0xFF);
 
-        Vostok.File.decryptFile("enc.dat", "out.txt", "my-secret-key");
+        Vostok.File.decryptFile("enc.dat", "out.txt");
         assertEquals(content, Vostok.File.read("out.txt"), "解密后内容应与原文一致");
     }
 
     @Test
     void testEncryptDecryptBinaryRoundTrip() {
-        init();
+        initWithSecurity();
         byte[] bytes = new byte[256];
         new Random(42).nextBytes(bytes);
         Vostok.File.writeBytes("bin.dat", bytes);
 
-        Vostok.File.encryptFile("bin.dat", "bin.enc", "bin-secret");
-        Vostok.File.decryptFile("bin.enc", "bin.out", "bin-secret");
+        Vostok.File.encryptFile("bin.dat", "bin.enc", "bin-key");
+        Vostok.File.decryptFile("bin.enc", "bin.out");
 
         assertArrayEquals(bytes, Vostok.File.readBytes("bin.out"), "二进制文件加解密后内容应一致");
     }
 
     @Test
-    void testDecryptWrongSecretThrows() {
-        init();
+    void testDecryptWrongMasterKeyThrows() {
+        initWithSecurity();
         Vostok.File.write("secret.txt", "data");
-        Vostok.File.encryptFile("secret.txt", "secret.enc", "correct-key");
+        Vostok.File.encryptFile("secret.txt", "secret.enc", "my-kek");
 
-        // 错误密钥解密应包装为 ENCRYPT_ERROR
+        // 换用错误主密钥重新初始化 Security，DEK 解包应失败
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(tempDir.resolve("ks").toString())
+                .masterKey("wrong-master-key"));
         VKFileException ex = assertThrows(VKFileException.class,
-                () -> Vostok.File.decryptFile("secret.enc", "out.txt", "wrong-key"));
+                () -> Vostok.File.decryptFile("secret.enc", "out.txt"));
         assertEquals(VKFileErrorCode.ENCRYPT_ERROR, ex.getErrorCode(),
-                "错误密钥解密应抛 ENCRYPT_ERROR");
+                "错误主密钥解密应抛 ENCRYPT_ERROR");
+    }
+
+    @Test
+    void testDecryptTamperedFileThrows() {
+        initWithSecurity();
+        Vostok.File.write("data.txt", "tamper-test-data");
+        Vostok.File.encryptFile("data.txt", "data.enc", "tamper-kek");
+
+        // 篡改密文末尾字节（影响 GCM 认证标签或终止符），解密应失败
+        byte[] enc = Vostok.File.readBytes("data.enc");
+        enc[enc.length - 1] ^= 0xFF;
+        Vostok.File.writeBytes("data.enc", enc);
+
+        VKFileException ex = assertThrows(VKFileException.class,
+                () -> Vostok.File.decryptFile("data.enc", "out.txt"));
+        assertEquals(VKFileErrorCode.ENCRYPT_ERROR, ex.getErrorCode(),
+                "篡改密文应抛 ENCRYPT_ERROR");
+        // 临时文件机制保证：目标文件不应包含任何字节
+        assertFalse(Vostok.File.exists("out.txt"), "解密失败时不应创建目标文件");
     }
 
     // =========================================================================

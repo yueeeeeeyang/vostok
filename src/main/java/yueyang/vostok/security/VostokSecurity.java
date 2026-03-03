@@ -3,6 +3,7 @@ package yueyang.vostok.security;
 import yueyang.vostok.Vostok;
 import yueyang.vostok.security.exception.VKSecurityException;
 import yueyang.vostok.security.crypto.VKAesCrypto;
+import yueyang.vostok.security.crypto.VKFileCrypto;
 import yueyang.vostok.security.crypto.VKHashCrypto;
 import yueyang.vostok.security.crypto.VKRsaCrypto;
 import yueyang.vostok.security.crypto.VKRsaKeyPair;
@@ -24,6 +25,13 @@ import yueyang.vostok.security.xss.VKXssScanner;
 import yueyang.vostok.security.command.VKCommandInjectionScanner;
 import yueyang.vostok.security.xml.VKXxeScanner;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.io.UncheckedIOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -512,6 +520,118 @@ public class VostokSecurity {
      */
     public static void rotateKek(String keyId) {
         currentKeyStore().rotateKek(keyId);
+    }
+
+    // ---------------------------------------------------------------- 文件加解密（vkf1 格式）
+
+    /**
+     * 加密文件（Path 版本）：将 {@code src} 以 vkf2 分块格式加密写入 {@code dst}。
+     *
+     * <p>使用 AES-256-GCM + Key Wrapping（DEK/KEK 双层密钥），每次加密随机生成一次性 DEK。
+     * 加密过程按 1 MB 分块流式进行，适合任意大小文件，内存消耗 O(分块大小)。
+     * 二进制安全：直接操作字节流，图片、PDF、ZIP 等任意类型文件均可加密。
+     *
+     * @param src   明文源文件路径
+     * @param dst   加密目标文件路径（若已存在则覆盖）
+     * @param keyId KEK 标识符（[A-Za-z0-9._-]+），对应 KeyStore 中的 KEK；不存在时自动创建
+     * @throws VKSecurityException   keyId 非法、密钥操作失败或加密异常
+     * @throws UncheckedIOException  IO 读写异常
+     */
+    public static void encryptFile(Path src, Path dst, String keyId) {
+        try (InputStream in = Files.newInputStream(src);
+             OutputStream out = Files.newOutputStream(dst)) {
+            VKFileCrypto.encrypt(in, out, keyId, currentKeyStore());
+        } catch (VKSecurityException e) {
+            throw e;
+        } catch (IOException e) {
+            throw new UncheckedIOException("File encrypt IO error: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 解密文件（Path 版本）：将 vkf1/vkf2 格式的 {@code src} 解密写入 {@code dst}。
+     *
+     * <p>自动从文件头提取 keyId 和 KEK 版本，无需调用方传入密钥信息，
+     * 支持跨 KEK 轮换后的历史文件解密。
+     *
+     * <p>v2 格式（当前默认）按分块流式解密，内存占用 O(1 MB)，不受文件大小限制。
+     * v1 遗留格式需将全部密文读入内存，建议对大型 v1 文件迁移到 v2。
+     *
+     * <p>原子写保护：解密先写入同目录临时文件，成功后替换 {@code dst}；
+     * 若解密任意分块失败，临时文件被删除，{@code dst} 不受影响。
+     *
+     * @param src 加密源文件路径（vkf1 或 vkf2 格式）
+     * @param dst 明文目标文件路径（若已存在则覆盖）
+     * @throws VKSecurityException   格式非法、密钥不存在、认证标签验证失败（密文被篡改）
+     * @throws UncheckedIOException  IO 读写异常
+     */
+    public static void decryptFile(Path src, Path dst) {
+        // 先写入临时文件，解密全部成功后才替换目标路径；
+        // 保证任意分块验证失败时不向 dst 写入任何字节（不产生部分解密文件）
+        Path tmp = dst.resolveSibling(dst.getFileName() + ".vktmp." + System.nanoTime());
+        try {
+            try (InputStream in = Files.newInputStream(src);
+                 OutputStream out = Files.newOutputStream(tmp)) {
+                VKFileCrypto.decrypt(in, out, currentKeyStore());
+            }
+            // 解密完全成功，原子替换目标路径（同目录 rename，通常为单次系统调用）
+            Files.move(tmp, dst, StandardCopyOption.REPLACE_EXISTING);
+        } catch (VKSecurityException e) {
+            deleteSilently(tmp);
+            throw e;
+        } catch (IOException e) {
+            deleteSilently(tmp);
+            throw new UncheckedIOException("File decrypt IO error: " + e.getMessage(), e);
+        }
+    }
+
+    /** 静默删除文件，忽略所有异常，用于清理解密失败时产生的临时文件。 */
+    private static void deleteSilently(Path path) {
+        try {
+            Files.deleteIfExists(path);
+        } catch (IOException ignored) {
+        }
+    }
+
+    /**
+     * 加密流（Stream 版本）：从 {@code in} 读取明文，以 vkf1 格式写入 {@code out}。
+     *
+     * <p>{@code in} 和 {@code out} 均不会被此方法关闭，由调用方管理生命周期。
+     *
+     * @param in    明文输入流
+     * @param out   密文输出流（将写入 vkf1 格式）
+     * @param keyId KEK 标识符
+     * @throws VKSecurityException  keyId 非法、密钥操作失败或加密异常
+     * @throws UncheckedIOException IO 异常
+     */
+    public static void encryptStream(InputStream in, OutputStream out, String keyId) {
+        try {
+            VKFileCrypto.encrypt(in, out, keyId, currentKeyStore());
+        } catch (VKSecurityException e) {
+            throw e;
+        } catch (IOException e) {
+            throw new UncheckedIOException("Stream encrypt IO error: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 解密流（Stream 版本）：从 {@code in} 读取 vkf1 格式密文，解密后写入 {@code out}。
+     *
+     * <p>{@code in} 和 {@code out} 均不会被此方法关闭，由调用方管理生命周期。
+     *
+     * @param in  密文输入流（vkf1 格式）
+     * @param out 明文输出流
+     * @throws VKSecurityException  格式非法、密钥不存在、认证标签验证失败
+     * @throws UncheckedIOException IO 异常
+     */
+    public static void decryptStream(InputStream in, OutputStream out) {
+        try {
+            VKFileCrypto.decrypt(in, out, currentKeyStore());
+        } catch (VKSecurityException e) {
+            throw e;
+        } catch (IOException e) {
+            throw new UncheckedIOException("Stream decrypt IO error: " + e.getMessage(), e);
+        }
     }
 
     // ---------------------------------------------------------------- 内部工具

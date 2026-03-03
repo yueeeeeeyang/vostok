@@ -309,6 +309,70 @@
   适合需要频繁轮转密钥、同时要求旧密文依然可解密的场景。
 </div>
 
+<h2>文件加解密</h2>
+<p>基于 AES-256-GCM + DEK/KEK 双层密钥（Key Wrapping），支持任意类型文件（文本、图片、PDF、ZIP 等二进制文件）的流式加解密。每次加密随机生成一次性 DEK，由 KeyStore 中的 KEK 包裹后写入文件头，KEK 轮换后历史文件无需重加密即可继续解密。</p>
+
+<div class="callout info">
+  <div class="callout-title">与 encryptWithKeyId 的区别</div>
+  <code>encryptWithKeyId</code> / <code>decryptWithKeyId</code> 仅适用于<b>短文本字段</b>（数据库字段、Token、配置项等），内部以 <code>String</code> 传递明文，不适合二进制文件。文件加解密专用接口直接操作字节流，二进制安全，加密过程内存消耗恒定（约 64 KB 缓冲区），不受文件大小限制。
+</div>
+
+<h3>vkf1 文件格式</h3>
+<p>加密文件以 <code>VKFC</code> 魔数开头，文件头携带解密所需的全部元数据：</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│  4 bytes  Magic: 'V','K','F','C'                               │
+│  1 byte   版本号: 0x01                                         │
+│  1 byte   keyId 字节长度（uint8，max 255）                     │
+│  N bytes  keyId（UTF-8）                                       │
+│  8 bytes  kekVersion（int64 big-endian）                       │
+│  2 bytes  wrappedDek 字节长度（uint16 big-endian）             │
+│  M bytes  wrappedDek（AES-256-GCM 加密后的 DEK，Base64）      │
+│ 12 bytes  GCM IV（SecureRandom 每次随机生成）                  │
+├─────────────────────────────────────────────────────────────────┤
+│  rest     AES-256-GCM 密文（末尾含 16 字节 GCM 认证标签）     │
+└─────────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3>Path 接口（推荐）</h3>
+<pre><code><span class="cm">// 初始化 KeyStore（首次调用前，或与 encryptWithKeyId 共享同一 KeyStore）</span>
+<span class="ty">Vostok</span>.Security.initKeyStore(<span class="kw">new</span> <span class="ty">VKKeyStoreConfig</span>()
+    .baseDir(<span class="st">"./keys"</span>)
+    .masterKey(<span class="st">"my-master-secret"</span>));
+
+<span class="cm">// 加密文件（任意类型：文本、图片、PDF 等）</span>
+<span class="ty">Vostok</span>.Security.encryptFile(
+    <span class="ty">Path</span>.of(<span class="st">"report.pdf"</span>),   <span class="cm">// 明文源文件</span>
+    <span class="ty">Path</span>.of(<span class="st">"report.vkf"</span>),   <span class="cm">// 加密目标文件（自动创建或覆盖）</span>
+    <span class="st">"file-key-v1"</span>          <span class="cm">// keyId：对应 KeyStore 中的 KEK</span>
+);
+
+<span class="cm">// 解密文件（自动从文件头提取 keyId 和 KEK 版本，无需传入密钥）</span>
+<span class="ty">Vostok</span>.Security.decryptFile(
+    <span class="ty">Path</span>.of(<span class="st">"report.vkf"</span>),   <span class="cm">// 加密源文件（vkf1 格式）</span>
+    <span class="ty">Path</span>.of(<span class="st">"report_dec.pdf"</span>) <span class="cm">// 明文目标文件</span>
+);
+
+<span class="cm">// KEK 轮换后，旧文件仍可直接解密（无需重加密）</span>
+<span class="ty">Vostok</span>.Security.rotateKek(<span class="st">"file-key-v1"</span>);
+<span class="ty">Vostok</span>.Security.decryptFile(<span class="ty">Path</span>.of(<span class="st">"report.vkf"</span>), <span class="ty">Path</span>.of(<span class="st">"report_dec.pdf"</span>));</code></pre>
+
+<h3>Stream 接口</h3>
+<pre><code><span class="cm">// 流式加密（适合从网络流、MultipartFile 等非文件来源加密）</span>
+<span class="kw">try</span> (<span class="ty">InputStream</span> in = request.getInputStream();
+     <span class="ty">OutputStream</span> out = <span class="ty">Files</span>.newOutputStream(encryptedPath)) {
+    <span class="ty">Vostok</span>.Security.encryptStream(in, out, <span class="st">"upload-key"</span>);
+}
+
+<span class="cm">// 流式解密（in/out 均不会被方法内部关闭）</span>
+<span class="kw">try</span> (<span class="ty">InputStream</span> in = <span class="ty">Files</span>.newInputStream(encryptedPath);
+     <span class="ty">OutputStream</span> out = response.getOutputStream()) {
+    <span class="ty">Vostok</span>.Security.decryptStream(in, out);
+}</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">解密内存说明</div>
+  AES-GCM 的安全属性要求认证标签（16 字节）验证通过后才能输出明文，因此 <code>decryptFile</code> / <code>decryptStream</code> 需将密文全部读入内存后一次性解密。解密时所需内存约等于密文文件大小，对超大文件（数 GB）需确保 JVM 堆充裕。
+</div>
+
 <h2>检测结果类型</h2>
 
 <h3>VKSecurityCheckResult（通用检测结果）</h3>
@@ -457,6 +521,17 @@
     <tr><td><code>encryptWithKeyId(plain, keyId)</code></td><td>String</td><td>Key Wrapping 加密（vk2 格式，含 keyId + KEK 版本）</td></tr>
     <tr><td><code>decryptWithKeyId(cipherPayload)</code></td><td>String</td><td>Key Wrapping 解密（自动提取 keyId 和 KEK 版本）</td></tr>
     <tr><td><code>rotateKek(keyId)</code></td><td>void</td><td>轮转 KEK（追加新版本，历史版本保留以解密旧密文）</td></tr>
+  </tbody>
+</table>
+
+<h3>文件加解密</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>encryptFile(src, dst, keyId)</code></td><td>void</td><td>加密文件（Path → Path），流式 AES-256-GCM + Key Wrapping，二进制安全，适合任意类型文件</td></tr>
+    <tr><td><code>decryptFile(src, dst)</code></td><td>void</td><td>解密 vkf1 格式文件（Path → Path），自动从文件头提取 keyId 和 KEK 版本</td></tr>
+    <tr><td><code>encryptStream(in, out, keyId)</code></td><td>void</td><td>流式加密（InputStream → OutputStream），in/out 不会被关闭</td></tr>
+    <tr><td><code>decryptStream(in, out)</code></td><td>void</td><td>流式解密（InputStream → OutputStream），in/out 不会被关闭</td></tr>
   </tbody>
 </table>
 

@@ -2,7 +2,6 @@ package yueyang.vostok.file;
 
 import yueyang.vostok.file.exception.VKFileErrorCode;
 import yueyang.vostok.file.exception.VKFileException;
-import yueyang.vostok.security.VostokSecurity;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -10,7 +9,6 @@ import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
-import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -494,50 +492,44 @@ public class VostokFile {
     }
 
     // -------------------------------------------------------------------------
-    // Ext 4：文件加密 / 解密（委托给 VostokSecurity AES-256-GCM）
+    // Ext 4：文件加密 / 解密（委托安全模块 AES-256-GCM vkf2 分块流式格式）
     // -------------------------------------------------------------------------
 
     /**
-     * 读取 sourcePath 的原始字节，Base64 编码后用 secret 加密（AES-256-GCM），
-     * 将密文文本写入 targetPath。
-     * 加密格式：明文字节 → Base64 → AES-GCM → Base64 密文文本文件。
+     * 使用安全模块（AES-256-GCM vkf2）流式加密 sourcePath 并写入 targetPath。
      *
-     * @throws VKFileException ENCRYPT_ERROR 加密过程出错
+     * <p>加密以 1 MB 为单位分块，每块独立 GCM 认证，内存占用 O(1 MB)，适合任意大小文件。
+     * 加密格式为二进制 vkf2，不可直接作为文本读取。
+     *
+     * <p>调用前须确保 {@code Vostok.Security} 已通过 {@code initKeyStore()} 完成初始化；
+     * {@code keyId} 标识 KeyStore 中的 KEK，不存在时自动创建。
+     *
+     * @param sourcePath 明文源文件路径（相对于 Store 根目录）
+     * @param targetPath 加密目标文件路径（相对于 Store 根目录）
+     * @param keyId      KEK 标识符，用于 DEK 包裹与后续解密时的 KEK 查找
+     * @throws VKFileException ENCRYPT_ERROR   加密失败（含密钥操作异常）
      * @throws VKFileException READ_ONLY_ERROR 只读模式下写入被拒绝
      */
-    public static void encryptFile(String sourcePath, String targetPath, String secret) {
+    public static void encryptFile(String sourcePath, String targetPath, String keyId) {
         checkWritable();
-        try {
-            byte[] bytes = store().readBytes(sourcePath);
-            String b64 = Base64.getEncoder().encodeToString(bytes);
-            String encrypted = VostokSecurity.encrypt(b64, secret);
-            store().write(targetPath, encrypted);
-        } catch (VKFileException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new VKFileException(VKFileErrorCode.ENCRYPT_ERROR, "File encrypt failed: " + sourcePath, e);
-        }
+        store().encryptFile(sourcePath, targetPath, keyId);
     }
 
     /**
-     * 读取 sourcePath 的密文文本，用 secret 解密并 Base64 解码，
-     * 将原始字节写入 targetPath。
+     * 解密 vkf2（或 vkf1 遗留）格式的 sourcePath 并写入 targetPath。
      *
-     * @throws VKFileException ENCRYPT_ERROR 解密过程出错（含密钥错误）
+     * <p>keyId 和 KEK 版本号从文件头自动读取，无需调用方传入。
+     * 支持跨 KEK 轮换后的历史文件解密。
+     * 解密任意分块失败时 targetPath 不产生任何内容。
+     *
+     * @param sourcePath 加密源文件路径（vkf2 或 vkf1 格式，相对于 Store 根目录）
+     * @param targetPath 明文目标文件路径（相对于 Store 根目录）
+     * @throws VKFileException ENCRYPT_ERROR   解密失败（含篡改检测、密钥不存在）
      * @throws VKFileException READ_ONLY_ERROR 只读模式下写入被拒绝
      */
-    public static void decryptFile(String sourcePath, String targetPath, String secret) {
+    public static void decryptFile(String sourcePath, String targetPath) {
         checkWritable();
-        try {
-            String encrypted = store().read(sourcePath);
-            String b64 = VostokSecurity.decrypt(encrypted, secret);
-            byte[] bytes = Base64.getDecoder().decode(b64);
-            store().writeBytes(targetPath, bytes);
-        } catch (VKFileException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new VKFileException(VKFileErrorCode.ENCRYPT_ERROR, "File decrypt failed: " + sourcePath, e);
-        }
+        store().decryptFile(sourcePath, targetPath);
     }
 
     private static VKFileStore store() {

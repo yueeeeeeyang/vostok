@@ -61,6 +61,7 @@ import java.util.zip.GZIPOutputStream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 import java.util.zip.ZipOutputStream;
+import yueyang.vostok.security.VostokSecurity;
 import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
 import javax.imageio.ImageReadParam;
@@ -1190,6 +1191,70 @@ public final class LocalFileStore implements VKFileStore {
             }
         } catch (IOException e) {
             throw new VKFileException(VKFileErrorCode.GZIP_ERROR, "GZip decompress failed: " + gzPath, e);
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // 文件加密 / 解密（委托安全模块 AES-256-GCM vkf2 分块流式格式）
+    // -------------------------------------------------------------------------
+
+    /**
+     * 使用安全模块（AES-256-GCM vkf2）流式加密 sourcePath 并写入 targetPath。
+     *
+     * <p>路径经 {@code resolve()} 规范化，防止路径逃逸；源文件须存在；
+     * 实际加密委托给 {@link VostokSecurity#encryptFile}，调用前须确保 Security 模块已初始化。
+     *
+     * @throws VKFileException ENCRYPT_ERROR  加密失败（含密钥操作异常）
+     * @throws VKFileException NOT_FOUND      源文件不存在
+     * @throws VKFileException INVALID_ARGUMENT 路径相同或路径为空
+     */
+    @Override
+    public void encryptFile(String sourcePath, String targetPath, String keyId) {
+        Path source = resolve(sourcePath);
+        Path target = resolve(targetPath);
+        requireExists(source, sourcePath);
+        if (source.equals(target)) {
+            throw arg("Source path and target path cannot be the same");
+        }
+        try {
+            ensureParent(target);
+            // 委托 VostokSecurity.encryptFile 处理 DEK 生成、KEK 包裹、vkf2 格式写入
+            VostokSecurity.encryptFile(source, target, keyId);
+        } catch (VKFileException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new VKFileException(VKFileErrorCode.ENCRYPT_ERROR,
+                    "File encrypt failed: " + sourcePath, e);
+        }
+    }
+
+    /**
+     * 解密 vkf2（或 vkf1 遗留）格式的 sourcePath 并写入 targetPath。
+     *
+     * <p>路径经 {@code resolve()} 规范化，防止路径逃逸；解密失败时临时文件被自动清除，
+     * targetPath 不产生任何部分写入内容。委托给 {@link VostokSecurity#decryptFile}。
+     *
+     * @throws VKFileException ENCRYPT_ERROR  解密失败（含篡改检测、密钥不存在）
+     * @throws VKFileException NOT_FOUND      源文件不存在
+     * @throws VKFileException INVALID_ARGUMENT 路径相同或路径为空
+     */
+    @Override
+    public void decryptFile(String sourcePath, String targetPath) {
+        Path source = resolve(sourcePath);
+        Path target = resolve(targetPath);
+        requireExists(source, sourcePath);
+        if (source.equals(target)) {
+            throw arg("Source path and target path cannot be the same");
+        }
+        try {
+            ensureParent(target);
+            // VostokSecurity.decryptFile 内置临时文件机制：解密失败时不向 target 写入任何字节
+            VostokSecurity.decryptFile(source, target);
+        } catch (VKFileException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new VKFileException(VKFileErrorCode.ENCRYPT_ERROR,
+                    "File decrypt failed: " + sourcePath, e);
         }
     }
 

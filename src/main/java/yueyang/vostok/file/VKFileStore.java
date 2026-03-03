@@ -135,6 +135,34 @@ public interface VKFileStore {
         throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "gunzip not supported by this store");
     }
 
+    /**
+     * 使用安全模块（AES-256-GCM vkf2 分块流式格式）加密 sourcePath 并写入 targetPath。
+     *
+     * <p>调用前须确保 {@code Vostok.Security} 已通过 {@code initKeyStore()} 初始化；
+     * {@code keyId} 对应 KeyStore 中的 KEK，不存在时自动创建。
+     * source 与 target 路径不可相同。
+     *
+     * @throws VKFileException ENCRYPT_ERROR   加密失败（含密钥操作异常）
+     * @throws VKFileException UNSUPPORTED     当前 Store 不支持此操作
+     */
+    default void encryptFile(String sourcePath, String targetPath, String keyId) {
+        throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "encryptFile not supported by this store");
+    }
+
+    /**
+     * 解密 vkf2（或 vkf1 遗留）格式的 sourcePath 并写入 targetPath。
+     *
+     * <p>keyId 和 KEK 版本号均从文件头自动读取，支持跨 KEK 轮换后的历史文件解密。
+     * 解密失败（认证标签不匹配、文件截断、密钥错误）时不向 targetPath 写入任何字节。
+     * source 与 target 路径不可相同。
+     *
+     * @throws VKFileException ENCRYPT_ERROR   解密失败（含篡改检测、密钥不存在）
+     * @throws VKFileException UNSUPPORTED     当前 Store 不支持此操作
+     */
+    default void decryptFile(String sourcePath, String targetPath) {
+        throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "decryptFile not supported by this store");
+    }
+
     default void close() {
     }
 }

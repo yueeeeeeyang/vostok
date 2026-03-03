@@ -12,8 +12,15 @@ import yueyang.vostok.security.rule.VKSecurityContext;
 import yueyang.vostok.security.rule.VKSecurityFinding;
 import yueyang.vostok.security.rule.VKSecurityRule;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -669,6 +676,311 @@ public class VostokSecurityTest {
 
         // 正常 JSON，无操作符
         assertTrue(Vostok.Security.checkNoSqlInjection("{\"name\":\"Alice\",\"age\":30}").isSafe());
+    }
+
+    // ---------------------------------------------------------------- 文件加解密测试
+
+    /**
+     * 正常路径：文本文件 round-trip，验证 Unicode 内容完全还原。
+     */
+    @Test
+    void testEncryptDecryptFileTextRoundTrip() throws Exception {
+        var dir = Files.createTempDirectory("vostok-file-enc");
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-file-enc"));
+
+        String plaintext = "Hello, Vostok file encryption! 中文内容 \uD83D\uDE00";
+        Path src = dir.resolve("plain.txt");
+        Path enc = dir.resolve("encrypted.vkf");
+        Path dec = dir.resolve("decrypted.txt");
+
+        Files.writeString(src, plaintext, StandardCharsets.UTF_8);
+        Vostok.Security.encryptFile(src, enc, "file-key");
+        Vostok.Security.decryptFile(enc, dec);
+
+        assertEquals(plaintext, Files.readString(dec, StandardCharsets.UTF_8));
+        // 密文文件应以 VKFC 魔数开头
+        byte[] head = new byte[4];
+        try (var is = Files.newInputStream(enc)) {
+            //noinspection ResultOfMethodCallIgnored
+            is.read(head);
+        }
+        assertArrayEquals(new byte[]{'V', 'K', 'F', 'C'}, head, "Encrypted file should start with VKFC magic");
+    }
+
+    /**
+     * 二进制文件 round-trip：含 PNG 魔数 + 随机字节，验证不受 String/UTF-8 转换影响。
+     */
+    @Test
+    void testEncryptDecryptFileBinaryData() throws Exception {
+        var dir = Files.createTempDirectory("vostok-file-binary");
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-binary"));
+
+        // 构造含 PNG 魔数 + 随机字节（含 0x00、0xFF 等特殊值）的二进制内容
+        byte[] binaryData = new byte[4096];
+        new java.util.Random(42).nextBytes(binaryData);
+        binaryData[0] = (byte) 0x89;
+        binaryData[1] = 'P';
+        binaryData[2] = 'N';
+        binaryData[3] = 'G';
+
+        Path src = dir.resolve("image.bin");
+        Path enc = dir.resolve("image.vkf");
+        Path dec = dir.resolve("image_dec.bin");
+
+        Files.write(src, binaryData);
+        Vostok.Security.encryptFile(src, enc, "bin-key");
+        Vostok.Security.decryptFile(enc, dec);
+
+        assertArrayEquals(binaryData, Files.readAllBytes(dec), "Binary file should round-trip without corruption");
+    }
+
+    /**
+     * 边界：空文件加解密不抛异常，解密结果仍为空。
+     */
+    @Test
+    void testEncryptDecryptEmptyFile() throws Exception {
+        var dir = Files.createTempDirectory("vostok-file-empty");
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-empty"));
+
+        Path src = dir.resolve("empty.dat");
+        Path enc = dir.resolve("empty.vkf");
+        Path dec = dir.resolve("empty_dec.dat");
+
+        Files.write(src, new byte[0]);
+        Vostok.Security.encryptFile(src, enc, "empty-key");
+        Vostok.Security.decryptFile(enc, dec);
+
+        assertArrayEquals(new byte[0], Files.readAllBytes(dec), "Empty file should decrypt to empty");
+    }
+
+    /**
+     * Stream API：encryptStream/decryptStream 使用内存流，验证流接口正确性。
+     */
+    @Test
+    void testEncryptDecryptStream() throws Exception {
+        var dir = Files.createTempDirectory("vostok-stream-enc");
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-stream"));
+
+        byte[] original = "stream-encrypt-test \uD83D\uDD11".getBytes(StandardCharsets.UTF_8);
+
+        ByteArrayOutputStream encryptedOut = new ByteArrayOutputStream();
+        Vostok.Security.encryptStream(new ByteArrayInputStream(original), encryptedOut, "stream-key");
+
+        ByteArrayOutputStream decryptedOut = new ByteArrayOutputStream();
+        Vostok.Security.decryptStream(new ByteArrayInputStream(encryptedOut.toByteArray()), decryptedOut);
+
+        assertArrayEquals(original, decryptedOut.toByteArray(), "Stream round-trip should restore original bytes");
+    }
+
+    /**
+     * 跨 KEK 轮换：kek-v1 加密 → rotateKek → kek-v2 加密，两个文件均可解密。
+     * 验证历史 KEK 版本保留，旧文件不受轮换影响。
+     */
+    @Test
+    void testEncryptDecryptFileCrossKekRotation() throws Exception {
+        var dir = Files.createTempDirectory("vostok-file-kek-rotate");
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-file-kek"));
+
+        byte[] msg1 = "message-encrypted-with-kek-v1".getBytes(StandardCharsets.UTF_8);
+        byte[] msg2 = "message-encrypted-with-kek-v2".getBytes(StandardCharsets.UTF_8);
+        Path src1 = dir.resolve("msg1.bin");
+        Path src2 = dir.resolve("msg2.bin");
+        Path enc1 = dir.resolve("msg1.vkf");
+        Path enc2 = dir.resolve("msg2.vkf");
+        Path dec1 = dir.resolve("msg1_dec.bin");
+        Path dec2 = dir.resolve("msg2_dec.bin");
+
+        // 用 kek-v1 加密 msg1
+        Files.write(src1, msg1);
+        Vostok.Security.encryptFile(src1, enc1, "file-kek");
+
+        // 轮换 KEK（v1 → v2），v1 文件保留
+        Vostok.Security.rotateKek("file-kek");
+
+        // 用 kek-v2 加密 msg2
+        Files.write(src2, msg2);
+        Vostok.Security.encryptFile(src2, enc2, "file-kek");
+
+        // 两个文件均可解密
+        Vostok.Security.decryptFile(enc1, dec1);
+        Vostok.Security.decryptFile(enc2, dec2);
+
+        assertArrayEquals(msg1, Files.readAllBytes(dec1), "v1 kek file should decrypt after rotation");
+        assertArrayEquals(msg2, Files.readAllBytes(dec2), "v2 kek file should decrypt normally");
+    }
+
+    /**
+     * 异常路径：用 masterKey-A 加密，用 masterKey-B 解密应失败。
+     */
+    @Test
+    void testDecryptFileWithWrongMasterKeyFails() throws Exception {
+        var dir = Files.createTempDirectory("vostok-file-wrongkey");
+        Path src = dir.resolve("secret.bin");
+        Path enc = dir.resolve("secret.vkf");
+        Path dec = dir.resolve("secret_dec.bin");
+
+        Files.write(src, "secret-content".getBytes(StandardCharsets.UTF_8));
+
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-correct"));
+        Vostok.Security.encryptFile(src, enc, "wrong-key-test");
+
+        // 换用错误主密钥，解包 DEK 应失败
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-wrong"));
+        assertThrows(VKSecurityException.class, () -> Vostok.Security.decryptFile(enc, dec),
+                "Decryption with wrong master key should throw VKSecurityException");
+    }
+
+    /**
+     * 异常路径：非 vkf1 格式文件（魔数不匹配）应抛 VKSecurityException。
+     */
+    @Test
+    void testDecryptFileInvalidFormatFails() throws Exception {
+        var dir = Files.createTempDirectory("vostok-file-invalid");
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig().baseDir(dir.toString()));
+
+        Path notEncrypted = dir.resolve("plain.txt");
+        Path out = dir.resolve("out.bin");
+        Files.write(notEncrypted, "this is not a vkf1 file".getBytes(StandardCharsets.UTF_8));
+
+        assertThrows(VKSecurityException.class, () -> Vostok.Security.decryptFile(notEncrypted, out),
+                "Non-vkf1 file should throw VKSecurityException");
+    }
+
+    /**
+     * 异常路径：密文中一个字节被翻转，GCM 认证标签验证失败应抛异常，不输出任何明文。
+     */
+    @Test
+    void testDecryptFileTamperedCiphertextFails() throws Exception {
+        var dir = Files.createTempDirectory("vostok-file-tamper");
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-tamper"));
+
+        Path src = dir.resolve("original.bin");
+        Path enc = dir.resolve("original.vkf");
+        Path dec = dir.resolve("original_dec.bin");
+
+        Files.write(src, "tamper-test-content".getBytes(StandardCharsets.UTF_8));
+        Vostok.Security.encryptFile(src, enc, "tamper-key");
+
+        // 篡改密文：翻转最后一个字节（GCM 认证标签区域）
+        byte[] encBytes = Files.readAllBytes(enc);
+        encBytes[encBytes.length - 1] ^= 0xFF;
+        Files.write(enc, encBytes);
+
+        assertThrows(VKSecurityException.class, () -> Vostok.Security.decryptFile(enc, dec),
+                "Tampered ciphertext should fail GCM tag verification");
+        // 解密失败时不应产生输出文件内容（文件已创建但应为空或不存在）
+        if (Files.exists(dec)) {
+            assertEquals(0, Files.size(dec), "No plaintext bytes should be written on tamper detection");
+        }
+    }
+
+    /**
+     * 并发：多线程同时加解密不同文件，验证静态 KeyStore 和 Cipher 操作线程安全。
+     */
+    @Test
+    void testEncryptDecryptFileConcurrent() throws Exception {
+        var dir = Files.createTempDirectory("vostok-file-concurrent");
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-concurrent"));
+
+        int threadCount = 8;
+        CountDownLatch latch = new CountDownLatch(threadCount);
+        AtomicInteger failCount = new AtomicInteger(0);
+
+        for (int i = 0; i < threadCount; i++) {
+            final int idx = i;
+            new Thread(() -> {
+                try {
+                    byte[] data = ("concurrent-thread-" + idx + "-payload").getBytes(StandardCharsets.UTF_8);
+                    Path srcFile = dir.resolve("src-" + idx + ".bin");
+                    Path encFile = dir.resolve("enc-" + idx + ".vkf");
+                    Path decFile = dir.resolve("dec-" + idx + ".bin");
+
+                    Files.write(srcFile, data);
+                    Vostok.Security.encryptFile(srcFile, encFile, "concurrent-key");
+                    Vostok.Security.decryptFile(encFile, decFile);
+
+                    byte[] decrypted = Files.readAllBytes(decFile);
+                    if (!Arrays.equals(data, decrypted)) {
+                        failCount.incrementAndGet();
+                    }
+                } catch (Exception e) {
+                    failCount.incrementAndGet();
+                } finally {
+                    latch.countDown();
+                }
+            }).start();
+        }
+
+        assertTrue(latch.await(15, TimeUnit.SECONDS), "Concurrent file encrypt/decrypt timed out");
+        assertEquals(0, failCount.get(), "All concurrent encrypt/decrypt operations should succeed");
+    }
+
+    /**
+     * 大文件多分块：3 MB 文件触发 3 个 1 MB 分块，验证 v2 流式分块加解密端到端正确性。
+     * 解密期间堆内存峰值约 2 MB，远小于文件大小，验证内存控制目标。
+     */
+    @Test
+    void testEncryptDecryptFileLargeMultiChunk() throws Exception {
+        var dir = Files.createTempDirectory("vostok-file-large");
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-large"));
+
+        // 构造 3 MB 随机二进制数据，横跨 3 个 1 MB 分块边界
+        byte[] data = new byte[3 * 1024 * 1024];
+        new java.util.Random(99999).nextBytes(data);
+
+        Path src = dir.resolve("large.bin");
+        Path enc = dir.resolve("large.vkf");
+        Path dec = dir.resolve("large_dec.bin");
+
+        Files.write(src, data);
+        Vostok.Security.encryptFile(src, enc, "large-key");
+        Vostok.Security.decryptFile(enc, dec);
+
+        assertArrayEquals(data, Files.readAllBytes(dec),
+                "3 MB multi-chunk file should round-trip without corruption");
+    }
+
+    /**
+     * 大文件篡改：3 MB 文件的第 2 块密文被翻转，解密应抛出 VKSecurityException，
+     * 且目标文件不存在或为空（临时文件机制保护）。
+     */
+    @Test
+    void testDecryptFileLargeFileMidChunkTamperFails() throws Exception {
+        var dir = Files.createTempDirectory("vostok-file-large-tamper");
+        Vostok.Security.initKeyStore(new VKKeyStoreConfig()
+                .baseDir(dir.toString()).masterKey("master-large-tamper"));
+
+        byte[] data = new byte[3 * 1024 * 1024];
+        new java.util.Random(77777).nextBytes(data);
+
+        Path src = dir.resolve("large.bin");
+        Path enc = dir.resolve("large.vkf");
+        Path dec = dir.resolve("large_dec.bin");
+
+        Files.write(src, data);
+        Vostok.Security.encryptFile(src, enc, "large-tamper-key");
+
+        // 篡改密文中部（第 2 个分块区域）的一个字节
+        byte[] encBytes = Files.readAllBytes(enc);
+        encBytes[encBytes.length / 2] ^= 0xAA;
+        Files.write(enc, encBytes);
+
+        assertThrows(VKSecurityException.class, () -> Vostok.Security.decryptFile(enc, dec),
+                "Mid-chunk tamper should throw VKSecurityException");
+        // 临时文件机制保证：目标文件不应包含任何字节
+        if (Files.exists(dec)) {
+            assertEquals(0, Files.size(dec), "No plaintext bytes should be written on tamper detection");
+        }
     }
 
     // ---------------------------------------------------------------- Key Wrapping 测试
