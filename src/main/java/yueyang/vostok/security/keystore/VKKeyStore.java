@@ -110,57 +110,57 @@ public interface VKKeyStore {
     // ---------------------------------------------------------------- 字段级加密（vkf3）
 
     /**
-     * 读取 tableKeyId 的当前 Field DEK 版本号（来自 {@code {id}.fdek.ver} 文件）。
+     * 读取 columnKeyId 的当前 Field DEK 版本号（来自 {@code {id}.fdek.ver} 文件）。
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @return 当前版本号；{@code 0} 表示尚未创建任何 DEK
      * @throws UnsupportedOperationException 若实现不支持字段级加密
      */
-    default int getFieldDekVersion(String tableKeyId) {
+    default int getFieldDekVersion(String columnKeyId) {
         throw new UnsupportedOperationException("Field DEK not supported");
     }
 
     /**
-     * 加载 tableKeyId 指定版本的 wrapped DEK，返回 {@code "{kekVersion}:{wrappedDekBase64}"}。
+     * 加载 columnKeyId 指定版本的 wrapped DEK，返回 {@code "{kekVersion}:{wrappedDekBase64}"}。
      *
      * <p>由 {@link yueyang.vostok.security.field.VKTableDekCache} 在缓存 miss 时调用，
      * 加载后解包并缓存 DEK。
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @param dekVersion DEK 版本号（正整数）
      * @return {@code "{kekVersion}:{wrappedDekBase64}"}
      * @throws yueyang.vostok.security.exception.VKSecurityException 若指定版本不存在
      * @throws UnsupportedOperationException 若实现不支持字段级加密
      */
-    default String loadFieldWrappedDek(String tableKeyId, int dekVersion) {
+    default String loadFieldWrappedDek(String columnKeyId, int dekVersion) {
         throw new UnsupportedOperationException("Field DEK not supported");
     }
 
     /**
      * 原子性创建下一版 Field DEK：在 per-keyId 锁内生成新 DEK、包裹、写文件、更新版本号。
      *
-     * <p>操作原子性保证：同一 tableKeyId 的并发调用串行化，不会创建重复版本。
+     * <p>操作原子性保证：同一 columnKeyId 的并发调用串行化，不会创建重复版本。
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @return 新创建的 DEK 版本号（= 旧版本号 + 1，从 1 开始）
      * @throws UnsupportedOperationException 若实现不支持字段级加密
      */
-    default int createNextFieldDek(String tableKeyId) {
+    default int createNextFieldDek(String columnKeyId) {
         throw new UnsupportedOperationException("Field DEK not supported");
     }
 
     /**
-     * 获取或创建 tableKeyId 的 Blind Key，返回 {@code "{kekVersion}:{wrappedBlindKeyBase64}"}。
+     * 获取或创建 columnKeyId 的 Blind Key，返回 {@code "{kekVersion}:{wrappedBlindKeyBase64}"}。
      *
      * <p>Blind Key 终身不轮换（与 KEK 轮换无关），保证历史 Blind Index 持续有效。
      * 文件已存在时直接读取，不存在时生成新密钥并持久化。
      *
-     * @param tableKeyId  表级密钥 ID
-     * @param blindSuffix Blind Key 文件名后缀（如 {@code ".blind"}，追加到 tableKeyId 后）
+     * @param columnKeyId  表级密钥 ID
+     * @param blindSuffix Blind Key 文件名后缀（如 {@code ".blind"}，追加到 columnKeyId 后）
      * @return {@code "{kekVersion}:{wrappedBlindKeyBase64}"}
      * @throws UnsupportedOperationException 若实现不支持字段级加密
      */
-    default String getOrCreateFieldBlindKey(String tableKeyId, String blindSuffix) {
+    default String getOrCreateFieldBlindKey(String columnKeyId, String blindSuffix) {
         throw new UnsupportedOperationException("Field DEK not supported");
     }
 }

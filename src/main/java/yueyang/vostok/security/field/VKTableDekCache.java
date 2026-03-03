@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>职责：
  * <ul>
- *   <li>维护 tableKeyId → keyIdHash 的注册表，支持自描述解密（无需调用方传入 tableKeyId）。</li>
+ *   <li>维护 columnKeyId → keyIdHash 的注册表，支持自描述解密（无需调用方传入 columnKeyId）。</li>
  *   <li>缓存从 keyStore 加载的 DEK 和 Blind Key，减少重复的密钥解包开销。</li>
  *   <li>通过雷群防护（Thundering Herd）机制确保并发缓存 miss 时只有一个线程去 keyStore 加载。</li>
  * </ul>
@@ -28,20 +28,20 @@ public final class VKTableDekCache {
     private final VKFieldEncryptConfig config;
 
     /**
-     * DEK 缓存：key = "tableKeyId:dekVersion" → CachedEntry。
-     * 同一 tableKeyId 可能存在多个版本（当前版本 + 历史版本，均可用于解密）。
+     * DEK 缓存：key = "columnKeyId:dekVersion" → CachedEntry。
+     * 同一 columnKeyId 可能存在多个版本（当前版本 + 历史版本，均可用于解密）。
      */
     private final ConcurrentHashMap<String, CachedEntry> dekCache = new ConcurrentHashMap<>();
 
     /**
-     * Blind Key 缓存：key = "tableKeyId{blindSuffix}" → CachedEntry。
+     * Blind Key 缓存：key = "columnKeyId{blindSuffix}" → CachedEntry。
      * Blind Key 终身不轮换，通常永久缓存。
      */
     private final ConcurrentHashMap<String, CachedEntry> blindCache = new ConcurrentHashMap<>();
 
     /**
-     * keyIdHash → tableKeyId 映射（JVM 进程内）。
-     * 用于自描述解密：从密文头部读出 keyIdHash 后反查 tableKeyId。
+     * keyIdHash → columnKeyId 映射（JVM 进程内）。
+     * 用于自描述解密：从密文头部读出 keyIdHash 后反查 columnKeyId。
      * 注意：此映射仅保证进程内唯一，不防跨进程碰撞。
      */
     private final ConcurrentHashMap<Integer, String> hashRegistry = new ConcurrentHashMap<>();
@@ -58,63 +58,63 @@ public final class VKTableDekCache {
     }
 
     /**
-     * 注册 tableKeyId，建立 keyIdHash → tableKeyId 映射。
+     * 注册 columnKeyId，建立 keyIdHash → columnKeyId 映射。
      *
-     * <p>幂等操作：同一 tableKeyId 重复注册不报错。
-     * 若不同 tableKeyId 产生相同 keyIdHash（SHA-256 前 4 字节碰撞），抛 {@link VKSecurityException}。
+     * <p>幂等操作：同一 columnKeyId 重复注册不报错。
+     * 若不同 columnKeyId 产生相同 keyIdHash（SHA-256 前 4 字节碰撞），抛 {@link VKSecurityException}。
      * 碰撞检测范围：当前 JVM 进程内，不跨进程。
      *
-     * @param tableKeyId 表级密钥 ID
-     * @throws VKSecurityException 若不同 tableKeyId 产生 keyIdHash 碰撞
+     * @param columnKeyId 列级密钥 ID
+     * @throws VKSecurityException 若不同 columnKeyId 产生 keyIdHash 碰撞
      */
-    public void registerTableKey(String tableKeyId) {
-        int hash = VKFieldCrypto.computeKeyIdHash(tableKeyId);
-        // putIfAbsent 原子操作：若该 hash 已有其他 tableKeyId 注册则返回现有值
-        String existing = hashRegistry.putIfAbsent(hash, tableKeyId);
-        if (existing != null && !existing.equals(tableKeyId)) {
+    public void registerColumnKey(String columnKeyId) {
+        int hash = VKFieldCrypto.computeKeyIdHash(columnKeyId);
+        // putIfAbsent 原子操作：若该 hash 已有其他 columnKeyId 注册则返回现有值
+        String existing = hashRegistry.putIfAbsent(hash, columnKeyId);
+        if (existing != null && !existing.equals(columnKeyId)) {
             throw new VKSecurityException(
-                    "keyIdHash collision detected: tableKeyId='" + tableKeyId
+                    "keyIdHash collision detected: columnKeyId='" + columnKeyId
                     + "' collides with already registered '" + existing + "'");
         }
     }
 
     /**
-     * 自描述解密查表：通过 keyIdHash 查找对应的 tableKeyId。
+     * 自描述解密查表：通过 keyIdHash 查找对应的 columnKeyId。
      *
      * @param keyIdHash 密文头部中的 keyIdHash（SHA-256 前 4 字节大端 int32）
-     * @return 对应的 tableKeyId
-     * @throws VKSecurityException 若 keyIdHash 未注册（tableKeyId 从未 registerTableKey）
+     * @return 对应的 columnKeyId
+     * @throws VKSecurityException 若 keyIdHash 未注册（columnKeyId 从未 registerColumnKey）
      */
-    public String resolveTableKeyId(int keyIdHash) {
-        String tableKeyId = hashRegistry.get(keyIdHash);
-        if (tableKeyId == null) {
+    public String resolveColumnKeyId(int keyIdHash) {
+        String columnKeyId = hashRegistry.get(keyIdHash);
+        if (columnKeyId == null) {
             throw new VKSecurityException(
                     "Unknown keyIdHash=0x" + Integer.toHexString(keyIdHash)
-                    + "; call registerTableKey(tableKeyId) before decryptField");
+                    + "; call registerColumnKey(columnKeyId) before decryptField");
         }
-        return tableKeyId;
+        return columnKeyId;
     }
 
     /**
-     * 加密路径：获取 tableKeyId 的当前版本 DEK。
+     * 加密路径：获取 columnKeyId 的当前版本 DEK。
      * 若 keyStore 中尚未创建任何 DEK，自动创建第一个版本。
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @return 当前 DEK 句柄（含版本号和 SecretKey）
      */
-    public DekHandle currentDek(String tableKeyId) {
+    public DekHandle currentDek(String columnKeyId) {
         // 每次读取最新版本号（文件读），确保 DEK 轮换后自动切换到新版本
-        int version = keyStore.getFieldDekVersion(tableKeyId);
+        int version = keyStore.getFieldDekVersion(columnKeyId);
         if (version == 0) {
             // 尚未创建 DEK，原子性创建第一个版本
-            version = keyStore.createNextFieldDek(tableKeyId);
+            version = keyStore.createNextFieldDek(columnKeyId);
         }
-        SecretKey dek = getDekForVersion(tableKeyId, version);
+        SecretKey dek = getDekForVersion(columnKeyId, version);
         return new DekHandle(version, dek);
     }
 
     /**
-     * 解密路径：获取 tableKeyId 指定版本的 DEK（优先从缓存读取）。
+     * 解密路径：获取 columnKeyId 指定版本的 DEK（优先从缓存读取）。
      *
      * <p>雷群防护流程：
      * <ol>
@@ -124,19 +124,19 @@ public final class VKTableDekCache {
      *   <li>仅一个线程执行 keyStore 加载，其余线程等待并复用结果</li>
      * </ol>
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @param dekVersion DEK 版本号
      * @return 对应版本的 AES SecretKey
      */
-    public SecretKey getDekForVersion(String tableKeyId, int dekVersion) {
+    public SecretKey getDekForVersion(String columnKeyId, int dekVersion) {
         int ttl = config.getDekCacheTtlSeconds();
 
         // TTL == 0 表示禁用缓存，每次直接从 keyStore 加载
         if (ttl == 0) {
-            return loadDek(tableKeyId, dekVersion);
+            return loadDek(columnKeyId, dekVersion);
         }
 
-        String cacheKey = tableKeyId + ":" + dekVersion;
+        String cacheKey = columnKeyId + ":" + dekVersion;
 
         // 快速路径：无锁读 ConcurrentHashMap（大多数情况命中，避免锁竞争）
         CachedEntry entry = dekCache.get(cacheKey);
@@ -152,7 +152,7 @@ public final class VKTableDekCache {
             if (entry != null && !entry.isExpired()) {
                 return entry.key;
             }
-            SecretKey dek = loadDek(tableKeyId, dekVersion);
+            SecretKey dek = loadDek(columnKeyId, dekVersion);
             long expireAt = System.currentTimeMillis() + (long) ttl * 1000;
             dekCache.put(cacheKey, new CachedEntry(dek, expireAt));
             return dek;
@@ -160,21 +160,21 @@ public final class VKTableDekCache {
     }
 
     /**
-     * 获取 tableKeyId 的 Blind Key（优先从缓存读取）。
+     * 获取 columnKeyId 的 Blind Key（优先从缓存读取）。
      * Blind Key 终身不轮换，通常长期有效。
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @return Blind Key 的 AES SecretKey（用于 HMAC-SHA256 计算）
      */
-    public SecretKey getBlindKey(String tableKeyId) {
+    public SecretKey getBlindKey(String columnKeyId) {
         int ttl = config.getDekCacheTtlSeconds();
 
         // TTL == 0 表示禁用缓存
         if (ttl == 0) {
-            return loadBlindKey(tableKeyId);
+            return loadBlindKey(columnKeyId);
         }
 
-        String cacheKey = tableKeyId + config.getBlindKeyIdSuffix();
+        String cacheKey = columnKeyId + config.getBlindKeyIdSuffix();
 
         // 快速路径
         CachedEntry entry = blindCache.get(cacheKey);
@@ -190,7 +190,7 @@ public final class VKTableDekCache {
             if (entry != null && !entry.isExpired()) {
                 return entry.key;
             }
-            SecretKey blindKey = loadBlindKey(tableKeyId);
+            SecretKey blindKey = loadBlindKey(columnKeyId);
             long expireAt = System.currentTimeMillis() + (long) ttl * 1000;
             blindCache.put(cacheKey, new CachedEntry(blindKey, expireAt));
             return blindKey;
@@ -198,21 +198,21 @@ public final class VKTableDekCache {
     }
 
     /**
-     * 清除指定 tableKeyId 的所有 DEK + Blind Key 缓存条目，以及 hashRegistry 中的对应条目。
+     * 清除指定 columnKeyId 的所有 DEK + Blind Key 缓存条目，以及 hashRegistry 中的对应条目。
      *
      * <p>调用场景：DEK 轮换后主动使缓存失效，迫使下次访问时重新加载新 DEK。
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      */
-    public void invalidate(String tableKeyId) {
-        // 清除该 tableKeyId 所有版本的 DEK 缓存
-        dekCache.keySet().removeIf(k -> k.startsWith(tableKeyId + ":"));
+    public void invalidate(String columnKeyId) {
+        // 清除该 columnKeyId 所有版本的 DEK 缓存
+        dekCache.keySet().removeIf(k -> k.startsWith(columnKeyId + ":"));
         // 清除 blind key 缓存
-        String blindCacheKey = tableKeyId + config.getBlindKeyIdSuffix();
+        String blindCacheKey = columnKeyId + config.getBlindKeyIdSuffix();
         blindCache.remove(blindCacheKey);
-        // 从 hashRegistry 移除（以 tableKeyId 为条件精确删除，避免误删碰撞注册的其他 key）
-        int hash = VKFieldCrypto.computeKeyIdHash(tableKeyId);
-        hashRegistry.remove(hash, tableKeyId);
+        // 从 hashRegistry 移除（以 columnKeyId 为条件精确删除，避免误删碰撞注册的其他 key）
+        int hash = VKFieldCrypto.computeKeyIdHash(columnKeyId);
+        hashRegistry.remove(hash, columnKeyId);
     }
 
     /**
@@ -233,30 +233,30 @@ public final class VKTableDekCache {
      *
      * <p>流程：
      * <ol>
-     *   <li>{@code keyStore.loadFieldWrappedDek(tableKeyId, version)} → {@code "{kekVersion}:{wrappedDek}"}</li>
+     *   <li>{@code keyStore.loadFieldWrappedDek(columnKeyId, version)} → {@code "{kekVersion}:{wrappedDek}"}</li>
      *   <li>解析 kekVersion 和 wrappedDek</li>
-     *   <li>{@code keyStore.unwrapDek(tableKeyId, kekVersion, wrappedDek)} → dekBase64</li>
+     *   <li>{@code keyStore.unwrapDek(columnKeyId, kekVersion, wrappedDek)} → dekBase64</li>
      *   <li>Base64 解码 → new SecretKeySpec(bytes, "AES")</li>
      * </ol>
      */
-    private SecretKey loadDek(String tableKeyId, int dekVersion) {
+    private SecretKey loadDek(String columnKeyId, int dekVersion) {
         // 加载 "{kekVersion}:{wrappedDekBase64}"
-        String wrapped = keyStore.loadFieldWrappedDek(tableKeyId, dekVersion);
+        String wrapped = keyStore.loadFieldWrappedDek(columnKeyId, dekVersion);
         int idx = wrapped.indexOf(':');
         if (idx < 0) {
             throw new VKSecurityException(
-                    "Invalid wrapped DEK format for tableKeyId=" + tableKeyId + " version=" + dekVersion);
+                    "Invalid wrapped DEK format for columnKeyId=" + columnKeyId + " version=" + dekVersion);
         }
         long kekVersion;
         try {
             kekVersion = Long.parseLong(wrapped.substring(0, idx));
         } catch (NumberFormatException e) {
             throw new VKSecurityException(
-                    "Invalid kekVersion in wrapped DEK for tableKeyId=" + tableKeyId);
+                    "Invalid kekVersion in wrapped DEK for columnKeyId=" + columnKeyId);
         }
         String wrappedDek = wrapped.substring(idx + 1);
         // 用历史 KEK（kekVersion 版本）解包 DEK
-        String dekBase64 = keyStore.unwrapDek(tableKeyId, kekVersion, wrappedDek);
+        String dekBase64 = keyStore.unwrapDek(columnKeyId, kekVersion, wrappedDek);
         byte[] keyBytes = Base64.getDecoder().decode(dekBase64);
         return new SecretKeySpec(keyBytes, "AES");
     }
@@ -266,24 +266,24 @@ public final class VKTableDekCache {
      *
      * <p>流程与 loadDek 类似，但调用 {@code keyStore.getOrCreateFieldBlindKey}。
      */
-    private SecretKey loadBlindKey(String tableKeyId) {
+    private SecretKey loadBlindKey(String columnKeyId) {
         // 获取或创建 "{kekVersion}:{wrappedBlindKeyBase64}"
-        String wrapped = keyStore.getOrCreateFieldBlindKey(tableKeyId, config.getBlindKeyIdSuffix());
+        String wrapped = keyStore.getOrCreateFieldBlindKey(columnKeyId, config.getBlindKeyIdSuffix());
         int idx = wrapped.indexOf(':');
         if (idx < 0) {
             throw new VKSecurityException(
-                    "Invalid wrapped blind key format for tableKeyId=" + tableKeyId);
+                    "Invalid wrapped blind key format for columnKeyId=" + columnKeyId);
         }
         long kekVersion;
         try {
             kekVersion = Long.parseLong(wrapped.substring(0, idx));
         } catch (NumberFormatException e) {
             throw new VKSecurityException(
-                    "Invalid kekVersion in wrapped blind key for tableKeyId=" + tableKeyId);
+                    "Invalid kekVersion in wrapped blind key for columnKeyId=" + columnKeyId);
         }
         String wrappedBlindKey = wrapped.substring(idx + 1);
         // 用历史 KEK 解包 Blind Key
-        String blindKeyBase64 = keyStore.unwrapDek(tableKeyId, kekVersion, wrappedBlindKey);
+        String blindKeyBase64 = keyStore.unwrapDek(columnKeyId, kekVersion, wrappedBlindKey);
         byte[] keyBytes = Base64.getDecoder().decode(blindKeyBase64);
         return new SecretKeySpec(keyBytes, "AES");
     }

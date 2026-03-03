@@ -672,21 +672,21 @@ public class VostokSecurity {
     }
 
     /**
-     * 注册 tableKeyId，建立 keyIdHash → tableKeyId 映射，用于自描述解密。
+     * 注册 columnKeyId，建立 keyIdHash → columnKeyId 映射，用于自描述解密。
      *
-     * <p>幂等操作，多次注册同一 tableKeyId 无副作用。
+     * <p>幂等操作，多次注册同一 columnKeyId 无副作用。
      * 应在首次使用字段加密前调用（或通过 {@link #fieldSession(String)} 自动完成）。
      *
-     * @param tableKeyId 表级密钥 ID（[A-Za-z0-9._-]+）
+     * @param columnKeyId 表级密钥 ID（[A-Za-z0-9._-]+）
      */
-    public static void registerTableKey(String tableKeyId) {
-        currentDekCache().registerTableKey(tableKeyId);
+    public static void registerColumnKey(String columnKeyId) {
+        currentDekCache().registerColumnKey(columnKeyId);
     }
 
     /**
-     * 创建并返回绑定到 tableKeyId 的 {@link VKFieldSession}。
+     * 创建并返回绑定到 columnKeyId 的 {@link VKFieldSession}。
      *
-     * <p>Session 构建时自动注册 tableKeyId（幂等）。
+     * <p>Session 构建时自动注册 columnKeyId（幂等）。
      * 建议在 try-with-resources 中使用：
      * <pre>{@code
      * try (VKFieldSession session = VostokSecurity.fieldSession("users")) {
@@ -694,15 +694,15 @@ public class VostokSecurity {
      * }
      * }</pre>
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @return 已初始化的 VKFieldSession
      */
-    public static VKFieldSession fieldSession(String tableKeyId) {
+    public static VKFieldSession fieldSession(String columnKeyId) {
         VKFieldEncryptConfig cfg = fieldConfig;
         if (cfg == null) {
             cfg = new VKFieldEncryptConfig();
         }
-        return new VKFieldSession(tableKeyId, currentDekCache(), cfg.getNullPolicy());
+        return new VKFieldSession(columnKeyId, currentDekCache(), cfg.getNullPolicy());
     }
 
     /**
@@ -712,24 +712,24 @@ public class VostokSecurity {
      * 若需严格空值检查，使用 {@link #fieldSession(String)} 配合 {@link yueyang.vostok.security.field.VKNullPolicy#REJECT}。
      *
      * @param plain      明文字符串
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @return vkf3 Base64 密文，或 null（入参为 null）
      */
-    public static String encryptField(String plain, String tableKeyId) {
+    public static String encryptField(String plain, String columnKeyId) {
         VKTableDekCache cache = currentDekCache();
-        cache.registerTableKey(tableKeyId);
+        cache.registerColumnKey(columnKeyId);
         if (plain == null) {
             return null;
         }
-        VKTableDekCache.DekHandle handle = cache.currentDek(tableKeyId);
-        int keyIdHash = VKFieldCrypto.computeKeyIdHash(tableKeyId);
+        VKTableDekCache.DekHandle handle = cache.currentDek(columnKeyId);
+        int keyIdHash = VKFieldCrypto.computeKeyIdHash(columnKeyId);
         return VKFieldCrypto.encryptString(plain, handle.dek(), keyIdHash, handle.version());
     }
 
     /**
-     * 自描述解密：从 vkf3 密文头部提取 keyIdHash，自动查找对应 tableKeyId 并解密。
+     * 自描述解密：从 vkf3 密文头部提取 keyIdHash，自动查找对应 columnKeyId 并解密。
      *
-     * <p>调用前须通过 {@link #registerTableKey(String)} 或 {@link #encryptField} 注册 tableKeyId。
+     * <p>调用前须通过 {@link #registerColumnKey(String)} 或 {@link #encryptField} 注册 columnKeyId。
      *
      * @param cipher vkf3 Base64 密文；null 返回 null
      * @return 明文字符串
@@ -741,11 +741,11 @@ public class VostokSecurity {
         }
         VKTableDekCache cache = currentDekCache();
         byte[] raw = decodeAndValidateVkf3(cipher);
-        // 自描述解密：从头部提取 keyIdHash，反查 tableKeyId
+        // 自描述解密：从头部提取 keyIdHash，反查 columnKeyId
         int keyIdHash = VKFieldCrypto.parseKeyIdHash(raw);
-        String tableKeyId = cache.resolveTableKeyId(keyIdHash);
+        String columnKeyId = cache.resolveColumnKeyId(keyIdHash);
         int dekVersion = VKFieldCrypto.parseDekVersion(raw);
-        SecretKey dek = cache.getDekForVersion(tableKeyId, dekVersion);
+        SecretKey dek = cache.getDekForVersion(columnKeyId, dekVersion);
         return VKFieldCrypto.decryptString(cipher, dek);
     }
 
@@ -753,16 +753,16 @@ public class VostokSecurity {
      * 计算字段的可搜索 Blind Index（HMAC-SHA256，64 字符十六进制）。
      *
      * @param plain      明文字符串；null 返回 null
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @return 64 字符十六进制 Blind Index，或 null
      */
-    public static String blindIndex(String plain, String tableKeyId) {
+    public static String blindIndex(String plain, String columnKeyId) {
         if (plain == null) {
             return null;
         }
         VKTableDekCache cache = currentDekCache();
-        cache.registerTableKey(tableKeyId);
-        SecretKey blindKey = cache.getBlindKey(tableKeyId);
+        cache.registerColumnKey(columnKeyId);
+        SecretKey blindKey = cache.getBlindKey(columnKeyId);
         return VKFieldCrypto.computeBlindIndex(plain, blindKey);
     }
 
@@ -770,24 +770,24 @@ public class VostokSecurity {
      * 类型安全加密：将 Java 对象序列化后加密，返回 vkf3 Base64 密文。
      *
      * @param value      待加密的 Java 对象；null 返回 null
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @param type       字段类型
      * @return vkf3 Base64 密文，或 null
      */
-    public static String encryptTyped(Object value, String tableKeyId, VKFieldType type) {
+    public static String encryptTyped(Object value, String columnKeyId, VKFieldType type) {
         VKTableDekCache cache = currentDekCache();
-        cache.registerTableKey(tableKeyId);
+        cache.registerColumnKey(columnKeyId);
         if (value == null) {
             return null;
         }
         byte[] bytes = type.toBytes(value);
-        VKTableDekCache.DekHandle handle = cache.currentDek(tableKeyId);
-        int keyIdHash = VKFieldCrypto.computeKeyIdHash(tableKeyId);
+        VKTableDekCache.DekHandle handle = cache.currentDek(columnKeyId);
+        int keyIdHash = VKFieldCrypto.computeKeyIdHash(columnKeyId);
         return VKFieldCrypto.encryptBytes(bytes, handle.dek(), keyIdHash, handle.version());
     }
 
     /**
-     * 类型安全解密（自描述）：从 vkf3 密文自动解析 tableKeyId，解密后反序列化为指定类型。
+     * 类型安全解密（自描述）：从 vkf3 密文自动解析 columnKeyId，解密后反序列化为指定类型。
      *
      * @param cipher vkf3 Base64 密文；null 返回 null
      * @param type   字段类型
@@ -800,24 +800,24 @@ public class VostokSecurity {
         VKTableDekCache cache = currentDekCache();
         byte[] raw = decodeAndValidateVkf3(cipher);
         int keyIdHash = VKFieldCrypto.parseKeyIdHash(raw);
-        String tableKeyId = cache.resolveTableKeyId(keyIdHash);
+        String columnKeyId = cache.resolveColumnKeyId(keyIdHash);
         int dekVersion = VKFieldCrypto.parseDekVersion(raw);
-        SecretKey dek = cache.getDekForVersion(tableKeyId, dekVersion);
+        SecretKey dek = cache.getDekForVersion(columnKeyId, dekVersion);
         byte[] plainBytes = VKFieldCrypto.decryptBytes(cipher, dek);
         return type.fromBytes(plainBytes);
     }
 
     /**
-     * 轮换 tableKeyId 的 Field DEK：创建新版本 DEK，后续加密自动使用新版本。
+     * 轮换 columnKeyId 的 Field DEK：创建新版本 DEK，后续加密自动使用新版本。
      * 旧密文仍可用旧版本 DEK 解密（历史版本不删除）。
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      */
-    public static void rotateDek(String tableKeyId) {
+    public static void rotateDek(String columnKeyId) {
         VKTableDekCache cache = currentDekCache();
-        cache.registerTableKey(tableKeyId);
+        cache.registerColumnKey(columnKeyId);
         // 在 keyStore 中原子性创建新版本 DEK（版本号文件更新后，currentDek() 自动切换到新版本）
-        currentKeyStore().createNextFieldDek(tableKeyId);
+        currentKeyStore().createNextFieldDek(columnKeyId);
     }
 
     /**
@@ -828,15 +828,15 @@ public class VostokSecurity {
      * 已处理的结果不返回。
      *
      * @param ciphers    旧密文列表（null 元素保留为 null）
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @return 新密文列表（与 ciphers 等长，位置对应）
      */
-    public static List<String> reEncryptFields(List<String> ciphers, String tableKeyId) {
+    public static List<String> reEncryptFields(List<String> ciphers, String columnKeyId) {
         VKTableDekCache cache = currentDekCache();
-        cache.registerTableKey(tableKeyId);
-        int keyIdHash = VKFieldCrypto.computeKeyIdHash(tableKeyId);
+        cache.registerColumnKey(columnKeyId);
+        int keyIdHash = VKFieldCrypto.computeKeyIdHash(columnKeyId);
         // 预取当前 DEK，避免每次循环都重新查询版本
-        VKTableDekCache.DekHandle currentHandle = cache.currentDek(tableKeyId);
+        VKTableDekCache.DekHandle currentHandle = cache.currentDek(columnKeyId);
 
         List<String> result = new ArrayList<>(ciphers.size());
         for (String cipher : ciphers) {
@@ -849,10 +849,10 @@ public class VostokSecurity {
             int cipherKeyIdHash = VKFieldCrypto.parseKeyIdHash(raw);
             if (cipherKeyIdHash != keyIdHash) {
                 throw new VKSecurityException(
-                        "Cross-table cipher in batch reEncryptFields: expected tableKeyId=" + tableKeyId);
+                        "Cross-table cipher in batch reEncryptFields: expected columnKeyId=" + columnKeyId);
             }
             int oldDekVersion = VKFieldCrypto.parseDekVersion(raw);
-            SecretKey oldDek = cache.getDekForVersion(tableKeyId, oldDekVersion);
+            SecretKey oldDek = cache.getDekForVersion(columnKeyId, oldDekVersion);
             // 字节级路径：解密 → 重新加密，不经 String 中转
             byte[] plainBytes = VKFieldCrypto.decryptBytes(cipher, oldDek);
             result.add(VKFieldCrypto.encryptBytes(plainBytes, currentHandle.dek(), keyIdHash, currentHandle.version()));
@@ -861,15 +861,15 @@ public class VostokSecurity {
     }
 
     /**
-     * 清除指定 tableKeyId 的 DEK 缓存（所有版本）和 Blind Key 缓存。
+     * 清除指定 columnKeyId 的 DEK 缓存（所有版本）和 Blind Key 缓存。
      * 下次访问时从 keyStore 重新加载。
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      */
-    public static void invalidateDekCache(String tableKeyId) {
+    public static void invalidateDekCache(String columnKeyId) {
         VKTableDekCache c = dekCache;
         if (c != null) {
-            c.invalidate(tableKeyId);
+            c.invalidate(columnKeyId);
         }
     }
 

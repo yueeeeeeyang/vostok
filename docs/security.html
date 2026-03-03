@@ -390,17 +390,19 @@
 </div>
 
 <h2>数据库字段加密（vkf3）</h2>
-<p>专为数据库列存储设计的字段级加解密方案。采用 AES-256-GCM + DEK/KEK 双层密钥，支持多版本 DEK 持久化、可搜索 Blind Index、Session 批量操作和自描述解密（解密时无需传入 tableKeyId）。</p>
+<p>专为数据库列存储设计的字段级加解密方案。采用 AES-256-GCM + DEK/KEK 双层密钥，支持多版本 DEK 持久化、可搜索 Blind Index、Session 批量操作和自描述解密（解密时无需传入 columnKeyId）。</p>
+
+<p><strong>每个字段独立 columnKeyId，独立 DEK，密钥完全隔离</strong>。一个字段的密钥轮换或泄露不会影响其他字段。当通过 Data 模块集成时，columnKeyId 默认由 Data 模块按 <strong>表名-列名</strong> 自动推导（如 <code>users-phone</code>）；直接调用 Security API 时，columnKeyId 由调用方显式传入。</p>
 
 <div class="callout warn">
   <div class="callout-title">前置条件</div>
-  字段加密依赖 KeyStore，需先调用 <code>initKeyStore()</code> 初始化，再配置字段加密选项并注册 tableKeyId。
+  字段加密依赖 KeyStore，需先调用 <code>initKeyStore()</code> 初始化，再配置字段加密选项并注册 columnKeyId。
 </div>
 
 <h3>vkf3 密文格式</h3>
 <pre><code>┌──────────────────────────────────────────────────────┐
 │  1 byte   版本标识: 0x03                             │
-│  4 bytes  keyIdHash  SHA-256(tableKeyId)[0:4]，大端  │
+│  4 bytes  keyIdHash  SHA-256(columnKeyId)[0:4]，大端  │
 │  4 bytes  dekVersion int32 大端                      │
 │ 12 bytes  GCM IV（SecureRandom 独立生成）            │
 │  N bytes  AES-256-GCM 密文 + 16字节认证标签          │
@@ -421,11 +423,11 @@
     .nullPolicy(<span class="ty">VKNullPolicy</span>.NULL_PASSTHROUGH)  <span class="cm">// null 值处理策略</span>
 );
 
-<span class="cm">// 注册 tableKeyId（建立密钥哈希映射，支持自描述解密；可在 fieldSession 内自动触发）</span>
-<span class="ty">Vostok</span>.Security.registerTableKey(<span class="st">"users"</span>);</code></pre>
+<span class="cm">// 注册 columnKeyId（建立密钥哈希映射，支持自描述解密；可在 fieldSession 内自动触发）</span>
+<span class="ty">Vostok</span>.Security.registerColumnKey(<span class="st">"users"</span>);</code></pre>
 
 <h3>Session API（推荐）</h3>
-<p>Session 绑定单个 tableKeyId，内部复用缓存的 DEK 和 Blind Key，适合批量加解密场景。Session 实现 <code>AutoCloseable</code>，建议配合 try-with-resources 使用。</p>
+<p>Session 绑定单个 columnKeyId，内部复用缓存的 DEK 和 Blind Key，适合批量加解密场景。Session 实现 <code>AutoCloseable</code>，建议配合 try-with-resources 使用。</p>
 <pre><code><span class="kw">try</span> (<span class="ty">VKFieldSession</span> session = <span class="ty">Vostok</span>.Security.fieldSession(<span class="st">"users"</span>)) {
     <span class="cm">// 加密字符串字段</span>
     <span class="ty">String</span> cipher = session.encrypt(phoneNumber);
@@ -448,7 +450,7 @@
 <pre><code><span class="cm">// 加密字段（String → vkf3 Base64 密文）</span>
 <span class="ty">String</span> cipher = <span class="ty">Vostok</span>.Security.encryptField(plain, <span class="st">"users"</span>);
 
-<span class="cm">// 自描述解密（从密文头解析 tableKeyId，无需传入）</span>
+<span class="cm">// 自描述解密（从密文头解析 columnKeyId，无需传入）</span>
 <span class="ty">String</span> plain = <span class="ty">Vostok</span>.Security.decryptField(cipher);
 
 <span class="cm">// 可搜索 Blind Index</span>
@@ -468,11 +470,12 @@
 
 <span class="cm">// 失效 DEK 缓存（KEK 轮换后调用，强制从 KeyStore 重新加载）</span>
 <span class="ty">Vostok</span>.Security.invalidateDekCache(<span class="st">"users"</span>);
-<span class="ty">Vostok</span>.Security.invalidateAllDekCache();  <span class="cm">// 失效全部 tableKeyId 的缓存</span></code></pre>
+<span class="ty">Vostok</span>.Security.invalidateAllDekCache();  <span class="cm">// 失效全部 columnKeyId 的缓存</span></code></pre>
 
 <div class="callout info">
-  <div class="callout-title">跨表防护</div>
-  vkf3 密文头携带 <code>keyIdHash</code>（tableKeyId 的 SHA-256 前 4 字节）。Session 解密时校验密文的 <code>keyIdHash</code> 与本 Session 的 tableKeyId 是否一致，不匹配则抛 <code>VKSecurityException</code>（防止用 A 表 Session 解密 B 表密文）。
+  <div class="callout-title">字段级密钥隔离与跨字段防护</div>
+  每个 columnKeyId 拥有独立的 DEK，不同字段（或不同表的同名字段）之间密钥完全隔离。<br>
+  vkf3 密文头携带 <code>keyIdHash</code>（columnKeyId 的 SHA-256 前 4 字节）。Session 解密时校验密文的 <code>keyIdHash</code> 与本 Session 的 columnKeyId 是否一致，不匹配则抛 <code>VKSecurityException</code>（防止用字段 A 的 Session 解密字段 B 的密文）。
 </div>
 
 <h3>VKFieldType 枚举</h3>
@@ -496,7 +499,7 @@
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
     <tr><td class="param-name">dekCacheTtlSeconds</td><td>int</td><td>300</td><td>DEK 内存缓存 TTL（秒）；0 = 禁用缓存，每次操作均从 KeyStore 加载</td></tr>
-    <tr><td class="param-name">blindKeyIdSuffix</td><td>String</td><td>".blind"</td><td>Blind Key 文件名后缀（追加到 tableKeyId 后），更改后历史 Blind Index 失效</td></tr>
+    <tr><td class="param-name">blindKeyIdSuffix</td><td>String</td><td>".blind"</td><td>Blind Key 文件名后缀（追加到 columnKeyId 后），更改后历史 Blind Index 失效</td></tr>
     <tr><td class="param-name">nullPolicy</td><td>VKNullPolicy</td><td>NULL_PASSTHROUGH</td><td>NULL_PASSTHROUGH（null 输入返回 null）；REJECT（null 输入抛异常）</td></tr>
   </tbody>
 </table>
@@ -506,16 +509,16 @@
   <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
   <tbody>
     <tr><td><code>configureFieldEncrypt(VKFieldEncryptConfig)</code></td><td>void</td><td>配置字段加密选项（可多次调用；未调用则使用默认配置）</td></tr>
-    <tr><td><code>registerTableKey(tableKeyId)</code></td><td>void</td><td>注册 tableKeyId，建立哈希映射（自描述解密所需）</td></tr>
-    <tr><td><code>fieldSession(tableKeyId)</code></td><td>VKFieldSession</td><td>创建绑定到 tableKeyId 的 Session（AutoCloseable）</td></tr>
-    <tr><td><code>encryptField(plain, tableKeyId)</code></td><td>String</td><td>加密字符串字段，返回 vkf3 Base64 密文</td></tr>
-    <tr><td><code>decryptField(cipher)</code></td><td>String</td><td>自描述解密（从密文头自动识别 tableKeyId）</td></tr>
-    <tr><td><code>blindIndex(plain, tableKeyId)</code></td><td>String</td><td>计算可搜索 Blind Index（HMAC-SHA256，64 字符 hex）</td></tr>
-    <tr><td><code>encryptTyped(value, tableKeyId, VKFieldType)</code></td><td>String</td><td>类型安全加密（自动序列化）</td></tr>
+    <tr><td><code>registerColumnKey(columnKeyId)</code></td><td>void</td><td>注册 columnKeyId，建立哈希映射（自描述解密所需）</td></tr>
+    <tr><td><code>fieldSession(columnKeyId)</code></td><td>VKFieldSession</td><td>创建绑定到 columnKeyId 的 Session（AutoCloseable）</td></tr>
+    <tr><td><code>encryptField(plain, columnKeyId)</code></td><td>String</td><td>加密字符串字段，返回 vkf3 Base64 密文</td></tr>
+    <tr><td><code>decryptField(cipher)</code></td><td>String</td><td>自描述解密（从密文头自动识别 columnKeyId）</td></tr>
+    <tr><td><code>blindIndex(plain, columnKeyId)</code></td><td>String</td><td>计算可搜索 Blind Index（HMAC-SHA256，64 字符 hex）</td></tr>
+    <tr><td><code>encryptTyped(value, columnKeyId, VKFieldType)</code></td><td>String</td><td>类型安全加密（自动序列化）</td></tr>
     <tr><td><code>decryptTyped(cipher, VKFieldType)</code></td><td>Object</td><td>类型安全解密（自动反序列化）</td></tr>
-    <tr><td><code>rotateDek(tableKeyId)</code></td><td>void</td><td>轮换 DEK（生成下一版本，旧密文仍可解密）</td></tr>
-    <tr><td><code>reEncryptFields(ciphers, tableKeyId)</code></td><td>List&lt;String&gt;</td><td>批量重加密（fail-fast，1:1 映射）</td></tr>
-    <tr><td><code>invalidateDekCache(tableKeyId)</code></td><td>void</td><td>失效指定 tableKeyId 的 DEK + Blind Key 缓存</td></tr>
+    <tr><td><code>rotateDek(columnKeyId)</code></td><td>void</td><td>轮换 DEK（生成下一版本，旧密文仍可解密）</td></tr>
+    <tr><td><code>reEncryptFields(ciphers, columnKeyId)</code></td><td>List&lt;String&gt;</td><td>批量重加密（fail-fast，1:1 映射）</td></tr>
+    <tr><td><code>invalidateDekCache(columnKeyId)</code></td><td>void</td><td>失效指定 columnKeyId 的 DEK + Blind Key 缓存</td></tr>
     <tr><td><code>invalidateAllDekCache()</code></td><td>void</td><td>失效全部 DEK + Blind Key 缓存</td></tr>
   </tbody>
 </table>

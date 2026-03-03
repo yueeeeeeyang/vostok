@@ -11,6 +11,8 @@ import java.lang.reflect.Field;
 public class FieldMeta {
     private final Field field;
     private final String columnName;
+    /** 所属表名（来自 {@code @VKEntity.table}），用于字段加密的自动 columnKeyId 推导。 */
+    private final String tableName;
     private final boolean id;
     private final boolean auto;
     private final boolean encrypted;
@@ -45,10 +47,11 @@ public class FieldMeta {
      *
      * @param field            Java 反射字段对象
      * @param columnName       数据库列名
+     * @param tableName        所属表名（来自 @VKEntity.table），字段加密自动推导 columnKeyId 用
      * @param id               是否为主键字段
      * @param auto             是否为自增主键
      * @param encrypted        是否加密存储
-     * @param encryptionKeyId  加密 keyId（空字符串表示使用默认）
+     * @param encryptionKeyId  加密 keyId（空字符串表示使用默认 tableName-columnName）
      * @param version          是否为乐观锁版本字段
      * @param logicDelete      是否为逻辑删除字段
      * @param deletedValue     已删除状态值（类型已转换）
@@ -59,7 +62,7 @@ public class FieldMeta {
      * @param length           字符串类型列的最大长度（DDL）
      * @param unique           是否添加唯一约束（DDL）
      */
-    public FieldMeta(Field field, String columnName, boolean id, boolean auto,
+    public FieldMeta(Field field, String columnName, String tableName, boolean id, boolean auto,
                      boolean encrypted, String encryptionKeyId,
                      boolean version, boolean logicDelete,
                      Object deletedValue, Object normalValue,
@@ -67,6 +70,7 @@ public class FieldMeta {
                      boolean nullable, int length, boolean unique) {
         this.field = field;
         this.columnName = columnName;
+        this.tableName = tableName;
         this.id = id;
         this.auto = auto;
         this.encrypted = encrypted;
@@ -104,6 +108,11 @@ public class FieldMeta {
 
     public String getColumnName() {
         return columnName;
+    }
+
+    /** 所属表名（来自 {@code @VKEntity.table}），字段加密自动推导 columnKeyId 用。 */
+    public String getTableName() {
+        return tableName;
     }
 
     public boolean isId() {

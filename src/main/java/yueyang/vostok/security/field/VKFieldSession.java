@@ -9,7 +9,7 @@ import java.util.Base64;
  * 数据库字段加密 Session，实现 {@link AutoCloseable}。
  *
  * <p>由 {@link yueyang.vostok.security.VostokSecurity#fieldSession(String)} 构建，
- * 绑定到单个 tableKeyId。Session 内复用缓存的 DEK 和 Blind Key，避免重复密钥解包开销。
+ * 绑定到单个 columnKeyId。Session 内复用缓存的 DEK 和 Blind Key，避免重复密钥解包开销。
  *
  * <p>使用模式（try-with-resources）：
  * <pre>{@code
@@ -27,7 +27,7 @@ import java.util.Base64;
  */
 public final class VKFieldSession implements AutoCloseable {
 
-    private final String tableKeyId;
+    private final String columnKeyId;
     /** 预计算的 keyIdHash，避免每次加解密都重新计算 */
     private final int keyIdHash;
     private final VKTableDekCache cache;
@@ -37,19 +37,19 @@ public final class VKFieldSession implements AutoCloseable {
     private volatile boolean closed;
 
     /**
-     * 构建 Session，并向 cache 注册 tableKeyId（建立 keyIdHash → tableKeyId 映射）。
+     * 构建 Session，并向 cache 注册 columnKeyId（建立 keyIdHash → columnKeyId 映射）。
      *
-     * @param tableKeyId  表级密钥 ID
+     * @param columnKeyId  表级密钥 ID
      * @param cache       DEK/Blind Key 缓存（由 VostokSecurity 持有）
      * @param nullPolicy  空值处理策略
      */
-    public VKFieldSession(String tableKeyId, VKTableDekCache cache, VKNullPolicy nullPolicy) {
-        this.tableKeyId = tableKeyId;
-        this.keyIdHash = VKFieldCrypto.computeKeyIdHash(tableKeyId);
+    public VKFieldSession(String columnKeyId, VKTableDekCache cache, VKNullPolicy nullPolicy) {
+        this.columnKeyId = columnKeyId;
+        this.keyIdHash = VKFieldCrypto.computeKeyIdHash(columnKeyId);
         this.cache = cache;
         this.nullPolicy = nullPolicy;
-        // 注册 tableKeyId，建立 hash 到 tableKeyId 的反查映射（用于自描述解密）
-        cache.registerTableKey(tableKeyId);
+        // 注册 columnKeyId，建立 hash 到 columnKeyId 的反查映射（用于自描述解密）
+        cache.registerColumnKey(columnKeyId);
     }
 
     /**
@@ -63,14 +63,14 @@ public final class VKFieldSession implements AutoCloseable {
         if (plain == null) {
             return handleNull();
         }
-        VKTableDekCache.DekHandle handle = cache.currentDek(tableKeyId);
+        VKTableDekCache.DekHandle handle = cache.currentDek(columnKeyId);
         return VKFieldCrypto.encryptString(plain, handle.dek(), keyIdHash, handle.version());
     }
 
     /**
      * 解密 vkf3 格式 Base64 密文，返回明文字符串。
      *
-     * <p>跨表防护：若密文的 keyIdHash 与本 Session 的 tableKeyId 不匹配，
+     * <p>跨表防护：若密文的 keyIdHash 与本 Session 的 columnKeyId 不匹配，
      * 抛 {@link VKSecurityException}（防止误用其他表的密文进行解密）。
      *
      * @param cipher vkf3 Base64 密文；null 返回 null
@@ -82,14 +82,14 @@ public final class VKFieldSession implements AutoCloseable {
             return null;
         }
         byte[] raw = validateAndDecode(cipher);
-        // 跨表防护：校验 keyIdHash 与本 Session 的 tableKeyId 一致
+        // 跨表防护：校验 keyIdHash 与本 Session 的 columnKeyId 一致
         int cipherKeyIdHash = VKFieldCrypto.parseKeyIdHash(raw);
         if (cipherKeyIdHash != keyIdHash) {
             throw new VKSecurityException(
                     "Cross-table decrypt detected: cipher belongs to a different table");
         }
         int dekVersion = VKFieldCrypto.parseDekVersion(raw);
-        SecretKey dek = cache.getDekForVersion(tableKeyId, dekVersion);
+        SecretKey dek = cache.getDekForVersion(columnKeyId, dekVersion);
         return VKFieldCrypto.decryptString(cipher, dek);
     }
 
@@ -106,7 +106,7 @@ public final class VKFieldSession implements AutoCloseable {
         if (plain == null) {
             return handleNull();
         }
-        SecretKey blindKey = cache.getBlindKey(tableKeyId);
+        SecretKey blindKey = cache.getBlindKey(columnKeyId);
         return VKFieldCrypto.computeBlindIndex(plain, blindKey);
     }
 
@@ -123,7 +123,7 @@ public final class VKFieldSession implements AutoCloseable {
             return handleNull();
         }
         byte[] bytes = type.toBytes(value);
-        VKTableDekCache.DekHandle handle = cache.currentDek(tableKeyId);
+        VKTableDekCache.DekHandle handle = cache.currentDek(columnKeyId);
         return VKFieldCrypto.encryptBytes(bytes, handle.dek(), keyIdHash, handle.version());
     }
 
@@ -146,7 +146,7 @@ public final class VKFieldSession implements AutoCloseable {
                     "Cross-table decrypt detected: cipher belongs to a different table");
         }
         int dekVersion = VKFieldCrypto.parseDekVersion(raw);
-        SecretKey dek = cache.getDekForVersion(tableKeyId, dekVersion);
+        SecretKey dek = cache.getDekForVersion(columnKeyId, dekVersion);
         byte[] plainBytes = VKFieldCrypto.decryptBytes(cipher, dek);
         return type.fromBytes(plainBytes);
     }
@@ -173,18 +173,18 @@ public final class VKFieldSession implements AutoCloseable {
         }
         // 用旧版本 DEK 解密，纯字节操作不经 String 中转
         int oldDekVersion = VKFieldCrypto.parseDekVersion(raw);
-        SecretKey oldDek = cache.getDekForVersion(tableKeyId, oldDekVersion);
+        SecretKey oldDek = cache.getDekForVersion(columnKeyId, oldDekVersion);
         byte[] plainBytes = VKFieldCrypto.decryptBytes(cipher, oldDek);
         // 用当前最新 DEK 重新加密
-        VKTableDekCache.DekHandle handle = cache.currentDek(tableKeyId);
+        VKTableDekCache.DekHandle handle = cache.currentDek(columnKeyId);
         return VKFieldCrypto.encryptBytes(plainBytes, handle.dek(), keyIdHash, handle.version());
     }
 
     /**
-     * 返回本 Session 绑定的 tableKeyId。
+     * 返回本 Session 绑定的 columnKeyId。
      */
-    public String getTableKeyId() {
-        return tableKeyId;
+    public String getColumnKeyId() {
+        return columnKeyId;
     }
 
     /**

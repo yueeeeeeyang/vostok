@@ -130,9 +130,9 @@ public class VostokFieldEncryptTest {
     }
 
     @Test
-    void testFieldSessionGetTableKeyId() {
+    void testFieldSessionGetColumnKeyId() {
         try (VKFieldSession session = VostokSecurity.fieldSession("products")) {
-            assertEquals("products", session.getTableKeyId());
+            assertEquals("products", session.getColumnKeyId());
         }
     }
 
@@ -140,7 +140,7 @@ public class VostokFieldEncryptTest {
 
     @Test
     void testEncryptTypedAllTypes() {
-        VostokSecurity.registerTableKey("typed-table");
+        VostokSecurity.registerColumnKey("typed-table");
 
         // STRING
         String strCipher = VostokSecurity.encryptTyped("hello", "typed-table", VKFieldType.STRING);
@@ -187,7 +187,7 @@ public class VostokFieldEncryptTest {
 
     @Test
     void testEncryptTypedNullReturnsNull() {
-        VostokSecurity.registerTableKey("typed-table");
+        VostokSecurity.registerColumnKey("typed-table");
         assertNull(VostokSecurity.encryptTyped(null, "typed-table", VKFieldType.STRING));
         assertNull(VostokSecurity.decryptTyped(null, VKFieldType.STRING));
     }
@@ -196,20 +196,20 @@ public class VostokFieldEncryptTest {
 
     @Test
     void testDecryptFieldSelfDescribing() {
-        // 加密时注册 tableKeyId，解密时通过 keyIdHash 自动定位
+        // 加密时注册 columnKeyId，解密时通过 keyIdHash 自动定位
         String cipher = VostokSecurity.encryptField("secret", "accounts");
-        // decryptField 不需要传入 tableKeyId
+        // decryptField 不需要传入 columnKeyId
         String plain = VostokSecurity.decryptField(cipher);
         assertEquals("secret", plain);
     }
 
     @Test
     void testDecryptFieldUnknownHashThrows() {
-        // 创建密文（tableKeyId 注册到 hashRegistry）
+        // 创建密文（columnKeyId 注册到 hashRegistry）
         String cipher = VostokSecurity.encryptField("value", "knownTable");
         // 清除 hashRegistry（使 keyIdHash 变成未知）
         VostokSecurity.invalidateAllDekCache();
-        // 此时 decryptField 找不到 tableKeyId，应抛异常
+        // 此时 decryptField 找不到 columnKeyId，应抛异常
         assertThrows(VKSecurityException.class, () -> VostokSecurity.decryptField(cipher));
     }
 
@@ -377,7 +377,7 @@ public class VostokFieldEncryptTest {
     void testConcurrentEncryptDecrypt() throws InterruptedException {
         int threadCount = 20;
         int opsPerThread = 50;
-        VostokSecurity.registerTableKey("concurrent-table");
+        VostokSecurity.registerColumnKey("concurrent-table");
 
         ExecutorService pool = Executors.newFixedThreadPool(threadCount);
         AtomicInteger successCount = new AtomicInteger(0);
@@ -419,7 +419,7 @@ public class VostokFieldEncryptTest {
     @Test
     void testConcurrentBlindIndex() throws InterruptedException {
         int threadCount = 10;
-        VostokSecurity.registerTableKey("blind-table");
+        VostokSecurity.registerColumnKey("blind-table");
         // 预先计算基准 blind index
         String expected = VostokSecurity.blindIndex("test-value", "blind-table");
 
@@ -460,7 +460,7 @@ public class VostokFieldEncryptTest {
         // 失效后重新加载仍可解密
         VostokSecurity.invalidateDekCache("users");
         // 需要重新注册（invalidate 会清除 hashRegistry）
-        VostokSecurity.registerTableKey("users");
+        VostokSecurity.registerColumnKey("users");
         assertEquals(plain, VostokSecurity.decryptField(cipher));
     }
 
@@ -470,8 +470,8 @@ public class VostokFieldEncryptTest {
         String c2 = VostokSecurity.encryptField("b", "tableY");
         VostokSecurity.invalidateAllDekCache();
         // 重新注册后仍可解密
-        VostokSecurity.registerTableKey("tableX");
-        VostokSecurity.registerTableKey("tableY");
+        VostokSecurity.registerColumnKey("tableX");
+        VostokSecurity.registerColumnKey("tableY");
         assertEquals("a", VostokSecurity.decryptField(c1));
         assertEquals("b", VostokSecurity.decryptField(c2));
     }
@@ -526,7 +526,7 @@ public class VostokFieldEncryptTest {
     @Test
     void testSessionReEncryptBytes() {
         // 测试二进制内容 reEncrypt（通过 encryptTyped BYTES）
-        VostokSecurity.registerTableKey("binary-table");
+        VostokSecurity.registerColumnKey("binary-table");
         byte[] original = new byte[]{0x00, (byte) 0xFF, 0x42, (byte) 0x80, 0x01};
         String cipher = VostokSecurity.encryptTyped(original, "binary-table", VKFieldType.BYTES);
         VostokSecurity.rotateDek("binary-table");
@@ -551,9 +551,9 @@ public class VostokFieldEncryptTest {
 
     @Test
     void testVkf3FormatKeyIdHash() {
-        String tableKeyId = "my-table";
-        int expectedHash = VKFieldCrypto.computeKeyIdHash(tableKeyId);
-        String cipher = VostokSecurity.encryptField("data", tableKeyId);
+        String columnKeyId = "my-table";
+        int expectedHash = VKFieldCrypto.computeKeyIdHash(columnKeyId);
+        String cipher = VostokSecurity.encryptField("data", columnKeyId);
         byte[] raw = Base64.getDecoder().decode(cipher);
         int parsedHash = VKFieldCrypto.parseKeyIdHash(raw);
         assertEquals(expectedHash, parsedHash, "keyIdHash in cipher must match computeKeyIdHash");

@@ -252,15 +252,15 @@ public final class LocalFileKeyStore implements VKKeyStore {
     // ---------------------------------------------------------------- 字段级加密（vkf3）
 
     /**
-     * 读取 tableKeyId 的当前 Field DEK 版本号。
+     * 读取 columnKeyId 的当前 Field DEK 版本号。
      * 文件 {@code {id}.fdek.ver} 存储纯文本整数，不存在时返回 0。
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @return 当前版本号；0 表示尚未创建
      */
     @Override
-    public int getFieldDekVersion(String tableKeyId) {
-        String id = normalizeKeyId(tableKeyId);
+    public int getFieldDekVersion(String columnKeyId) {
+        String id = normalizeKeyId(columnKeyId);
         synchronized (lockFor(id)) {
             return readFieldDekVersionLocked(id);
         }
@@ -270,18 +270,18 @@ public final class LocalFileKeyStore implements VKKeyStore {
      * 加载指定版本的 wrapped DEK，返回 {@code "{kekVersion}:{wrappedDekBase64}"}。
      * 文件 {@code {id}.fdek.v{dekVersion}} 存储 masterKey 加密后的字符串。
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @param dekVersion DEK 版本号
      * @return 解密后的 {@code "{kekVersion}:{wrappedDekBase64}"}
      */
     @Override
-    public String loadFieldWrappedDek(String tableKeyId, int dekVersion) {
-        String id = normalizeKeyId(tableKeyId);
+    public String loadFieldWrappedDek(String columnKeyId, int dekVersion) {
+        String id = normalizeKeyId(columnKeyId);
         synchronized (lockFor(id)) {
             Path file = baseDir.resolve(id + ".fdek.v" + dekVersion);
             if (!Files.exists(file)) {
                 throw new VKSecurityException(
-                        "Field DEK not found for tableKeyId=" + tableKeyId + " version=" + dekVersion);
+                        "Field DEK not found for columnKeyId=" + columnKeyId + " version=" + dekVersion);
             }
             return decryptValue(readText(file));
         }
@@ -297,12 +297,12 @@ public final class LocalFileKeyStore implements VKKeyStore {
      *   <li>写 {@code {id}.fdek.ver} = next</li>
      * </ol>
      *
-     * @param tableKeyId 表级密钥 ID
+     * @param columnKeyId 表级密钥 ID
      * @return 新 DEK 版本号
      */
     @Override
-    public int createNextFieldDek(String tableKeyId) {
-        String id = normalizeKeyId(tableKeyId);
+    public int createNextFieldDek(String columnKeyId) {
+        String id = normalizeKeyId(columnKeyId);
         synchronized (lockFor(id)) {
             // 读当前版本（锁内文件读，防并发竞争）
             int current = readFieldDekVersionLocked(id);
@@ -310,7 +310,7 @@ public final class LocalFileKeyStore implements VKKeyStore {
             // 生成新 DEK（256 位 AES）
             String newDekBase64 = VKAesCrypto.generateAesKeyBase64();
             // 用当前 KEK 包裹 DEK（wrapDek 内部 synchronized 可重入，same thread safe）
-            String wrappedResult = wrapDek(tableKeyId, newDekBase64);
+            String wrappedResult = wrapDek(columnKeyId, newDekBase64);
             // 写 DEK 文件：masterKey 二次加密保证存储安全
             writeText(baseDir.resolve(id + ".fdek.v" + next), encryptValue(wrappedResult));
             // 更新版本号文件（原子写，后写版本确保文件存在后才更新指针）
@@ -323,13 +323,13 @@ public final class LocalFileKeyStore implements VKKeyStore {
      * 获取或创建 Blind Key，在 per-keyId 锁内完成。
      * 文件已存在则直接读取（Blind Key 不轮换），否则生成新密钥并持久化。
      *
-     * @param tableKeyId  表级密钥 ID
+     * @param columnKeyId  表级密钥 ID
      * @param blindSuffix Blind Key 文件名后缀（追加到 id 后，如 ".blind"）
      * @return {@code "{kekVersion}:{wrappedBlindKeyBase64}"}
      */
     @Override
-    public String getOrCreateFieldBlindKey(String tableKeyId, String blindSuffix) {
-        String id = normalizeKeyId(tableKeyId);
+    public String getOrCreateFieldBlindKey(String columnKeyId, String blindSuffix) {
+        String id = normalizeKeyId(columnKeyId);
         synchronized (lockFor(id)) {
             // blindSuffix 追加到 id 后作为文件名（如 "users.blind"）
             Path file = baseDir.resolve(id + blindSuffix);
@@ -340,7 +340,7 @@ public final class LocalFileKeyStore implements VKKeyStore {
             // 首次创建：生成新 Blind Key
             String newBlindKeyBase64 = VKAesCrypto.generateAesKeyBase64();
             // 用当前 KEK 包裹（wrapDek 可重入，safe）
-            String wrappedResult = wrapDek(tableKeyId, newBlindKeyBase64);
+            String wrappedResult = wrapDek(columnKeyId, newBlindKeyBase64);
             // 持久化（masterKey 二次加密）
             writeText(file, encryptValue(wrappedResult));
             return wrappedResult;
@@ -350,7 +350,7 @@ public final class LocalFileKeyStore implements VKKeyStore {
     /**
      * 在锁内读取 Field DEK 版本号（无需再次获取锁的内部方法）。
      *
-     * @param id 规范化后的 tableKeyId
+     * @param id 规范化后的 columnKeyId
      * @return 版本号；文件不存在时返回 0
      */
     private int readFieldDekVersionLocked(String id) {

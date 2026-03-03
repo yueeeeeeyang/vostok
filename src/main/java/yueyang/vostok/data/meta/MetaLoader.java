@@ -108,7 +108,7 @@ public final class MetaLoader {
                 normalValueObj = convertAnnotationValue(field, logicDelete.normalValue(), clazz);
             }
 
-            FieldMeta meta = new FieldMeta(field, columnName, isId, auto, encrypted, keyId,
+            FieldMeta meta = new FieldMeta(field, columnName, table, isId, auto, encrypted, keyId,
                     isVersion, isLogicDelete, deletedValueObj, normalValueObj,
                     insertable, updatable, nullable, length, unique);
             fields.add(meta);

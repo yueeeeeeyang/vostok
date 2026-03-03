@@ -10,14 +10,14 @@ import java.util.Base64;
 /**
  * 字段级加解密工具。
  *
- * <p>底层使用 vkf3 格式（AES-256-GCM + DEK/KEK 双层密钥，自描述头携带 tableKeyId 哈希和 DEK 版本号）。
+ * <p>底层使用 vkf3 格式（AES-256-GCM + DEK/KEK 双层密钥，自描述头携带 columnKeyId 哈希和 DEK 版本号）。
  * 加密委托给 {@link Vostok.Security#encryptField}，解密委托给 {@link Vostok.Security#decryptField}
- * （自描述解密，无需调用方传入 tableKeyId）。
+ * （自描述解密，无需调用方传入 columnKeyId）。
  *
  * <p>vkf3 密文格式（Base64 编码的二进制载荷）：
  * <pre>
  * byte[0]     = 0x03          版本标识
- * byte[1..4]  = keyIdHash     SHA-256(tableKeyId)[0:4]，大端 int32
+ * byte[1..4]  = keyIdHash     SHA-256(columnKeyId)[0:4]，大端 int32
  * byte[5..8]  = dekVersion    int32 大端
  * byte[9..20] = GCM IV        12字节
  * byte[21..]  = AES-256-GCM 密文 + 16字节认证标签
@@ -40,9 +40,16 @@ public final class VKFieldCrypto {
     /**
      * 写入参数绑定前执行字段加密，返回 vkf3 格式 Base64 密文。
      *
-     * @param field  字段元数据（含 encrypted 标志和可选 keyId）
+     * <p>columnKeyId 解析优先级：
+     * <ol>
+     *   <li>{@code @VKColumn(keyId="...")} 显式指定的值</li>
+     *   <li>自动推导：{@code tableName-columnName}（如 {@code users-phone}）</li>
+     * </ol>
+     * 每个字段独立使用一套 DEK，实现字段级密钥隔离。
+     *
+     * @param field  字段元数据（含 encrypted 标志、可选 keyId、tableName、columnName）
      * @param value  原始值；null 直接透传
-     * @param config 数据配置（含 fieldEncryptionEnabled、defaultEncryptionKeyId）
+     * @param config 数据配置（含 fieldEncryptionEnabled 开关）
      * @return vkf3 Base64 密文，或原始值（不需加密时）
      */
     public static Object encryptWrite(FieldMeta field, Object value, VKDataConfig config) {
@@ -52,16 +59,16 @@ public final class VKFieldCrypto {
         if (!(value instanceof String)) {
             throw new VKArgumentException("Encrypted field value must be String: " + field.getField().getName());
         }
-        String tableKeyId = resolveKeyId(field, config);
+        String columnKeyId = resolveKeyId(field);
         try {
-            return Vostok.Security.encryptField((String) value, tableKeyId);
+            return Vostok.Security.encryptField((String) value, columnKeyId);
         } catch (Exception e) {
             throw new VKArgumentException("Encrypt field failed: " + field.getField().getName(), e);
         }
     }
 
     /**
-     * 读取结果映射前执行字段解密（vkf3 自描述解密，不需要调用方传入 tableKeyId）。
+     * 读取结果映射前执行字段解密（vkf3 自描述解密，不需要调用方传入 columnKeyId）。
      *
      * <p>若值不是 vkf3 格式（非 Base64 或版本字节不匹配）：
      * <ul>
@@ -69,9 +76,9 @@ public final class VKFieldCrypto {
      *   <li>{@code allowPlaintextRead=false}：抛 {@link VKArgumentException}</li>
      * </ul>
      *
-     * @param field  字段元数据
+     * @param field  字段元数据（含 tableName、columnName，用于自动推导 columnKeyId）
      * @param value  数据库读取到的值；null 直接透传
-     * @param config 数据配置
+     * @param config 数据配置（含 fieldEncryptionEnabled、allowPlaintextRead 开关）
      * @return 明文字符串，或原始值（不需解密时）
      */
     public static Object decryptRead(FieldMeta field, Object value, VKDataConfig config) {
@@ -89,7 +96,7 @@ public final class VKFieldCrypto {
             throw new VKArgumentException("Encrypted payload format invalid for field: " + field.getField().getName());
         }
         try {
-            // 自描述解密：vkf3 头携带 keyIdHash，Security 模块自动找到对应 tableKeyId
+            // 自描述解密：vkf3 头携带 keyIdHash，Security 模块自动找到对应 columnKeyId
             return Vostok.Security.decryptField(text);
         } catch (Exception e) {
             throw new VKArgumentException("Decrypt field failed: " + field.getField().getName(), e);
@@ -120,15 +127,22 @@ public final class VKFieldCrypto {
         return config != null && config.isFieldEncryptionEnabled() && field != null && field.isEncrypted();
     }
 
-    private static String resolveKeyId(FieldMeta field, VKDataConfig config) {
+    /**
+     * 解析字段加密使用的 columnKeyId。
+     *
+     * <p>优先级：
+     * <ol>
+     *   <li>{@code @VKColumn(keyId="...")} 显式值</li>
+     *   <li>自动推导：{@code tableName-columnName}（如 {@code users-phone}）</li>
+     * </ol>
+     * 自动推导保证每个字段使用独立的 DEK，互不影响。
+     */
+    private static String resolveKeyId(FieldMeta field) {
         String keyId = field.getEncryptionKeyId();
         if (keyId != null && !keyId.isBlank()) {
             return keyId;
         }
-        String fallback = config == null ? null : config.getDefaultEncryptionKeyId();
-        if (fallback == null || fallback.isBlank()) {
-            throw new VKArgumentException("Encryption keyId is blank for field: " + field.getField().getName());
-        }
-        return fallback;
+        // 自动推导：tableName-columnName，如 "users-phone"、"orders-address"
+        return field.getTableName() + "-" + field.getColumnName();
     }
 }

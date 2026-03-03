@@ -19,7 +19,7 @@ public class VKFieldEncryptConfig {
     /** DEK 缓存 TTL 秒数；0 = 禁用缓存 */
     private int dekCacheTtlSeconds = 300;
 
-    /** Blind Key 文件名后缀（拼接到 tableKeyId 后形成文件名） */
+    /** Blind Key 文件名后缀（拼接到 columnKeyId 后形成文件名） */
     private String blindKeyIdSuffix = ".blind";
 
     /** 空值策略 */

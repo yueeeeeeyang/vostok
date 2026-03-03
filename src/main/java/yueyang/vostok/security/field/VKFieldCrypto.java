@@ -18,7 +18,7 @@ import java.util.Base64;
  * <h3>vkf3 密文格式（Base64 前的二进制布局）：</h3>
  * <pre>
  * byte[0]      = 0x03          版本标识
- * byte[1..4]   = keyIdHash     SHA-256(tableKeyId)[0:4]，大端 int32
+ * byte[1..4]   = keyIdHash     SHA-256(columnKeyId)[0:4]，大端 int32
  * byte[5..8]   = dekVersion    int32 大端
  * byte[9..20]  = GCM IV        12字节，SecureRandom 独立生成
  * byte[21..]   = AES-256-GCM 密文 + 16字节认证标签（doFinal 一次性输出）
@@ -49,18 +49,18 @@ public final class VKFieldCrypto {
     }
 
     /**
-     * 计算 tableKeyId 的 SHA-256 前 4 字节作为 keyIdHash（大端 int32）。
-     * 用于自描述解密时快速定位对应的 tableKeyId。
+     * 计算 columnKeyId 的 SHA-256 前 4 字节作为 keyIdHash（大端 int32）。
+     * 用于自描述解密时快速定位对应的 columnKeyId。
      *
      * <p>注意：此哈希仅在 JVM 进程内做碰撞检测，不保证全局唯一性。
      *
-     * @param tableKeyId 表级密钥 ID
-     * @return SHA-256(tableKeyId) 的前 4 字节（大端 int32 解释）
+     * @param columnKeyId 列级密钥 ID
+     * @return SHA-256(columnKeyId) 的前 4 字节（大端 int32 解释）
      */
-    public static int computeKeyIdHash(String tableKeyId) {
+    public static int computeKeyIdHash(String columnKeyId) {
         try {
             MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] hash = md.digest(tableKeyId.getBytes(StandardCharsets.UTF_8));
+            byte[] hash = md.digest(columnKeyId.getBytes(StandardCharsets.UTF_8));
             // 取前 4 字节，ByteBuffer 默认大端
             return ByteBuffer.wrap(hash, 0, 4).getInt();
         } catch (Exception e) {
@@ -97,7 +97,7 @@ public final class VKFieldCrypto {
      *
      * @param plain      明文字节数组
      * @param dek        数据加密密钥（AES-256）
-     * @param keyIdHash  tableKeyId 的 hash（写入头部，供自描述解密）
+     * @param keyIdHash  columnKeyId 的 hash（写入头部，供自描述解密）
      * @param dekVersion DEK 版本号（写入头部，供多版本解密）
      * @return Base64 编码的 vkf3 格式密文
      */
@@ -133,7 +133,7 @@ public final class VKFieldCrypto {
      *
      * @param plain      明文字符串
      * @param dek        数据加密密钥
-     * @param keyIdHash  tableKeyId 的 hash
+     * @param keyIdHash  columnKeyId 的 hash
      * @param dekVersion DEK 版本号
      * @return Base64 编码的 vkf3 格式密文
      */

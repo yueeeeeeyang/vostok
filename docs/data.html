@@ -619,6 +619,11 @@ executor.submit(task2);</code></pre>
 <h2>字段透明加密</h2>
 <p>Data 模块通过 <code>@VKColumn(encrypted=true)</code> 注解对数据库列实现透明加密：写入时自动加密，读取时自动解密，业务代码操作实体字段如同操作明文。底层使用 Security 模块的 <strong>vkf3 格式</strong>（AES-256-GCM + DEK/KEK 双层密钥），解密为自描述模式，密文头携带密钥标识，无需调用方额外传参。</p>
 
+<div class="callout info">
+  <div class="callout-title">字段级密钥隔离</div>
+  每个加密字段使用独立的 columnKeyId，默认规则为 <strong>表名-列名</strong>（如 <code>users-phone</code>、<code>users-id_card</code>）。每个字段持有独立的 DEK，一个字段的密钥轮换或泄露不影响其他字段。如需覆盖，通过 <code>@VKColumn(keyId="custom-key")</code> 显式指定。
+</div>
+
 <div class="callout warn">
   <div class="callout-title">前置条件</div>
   字段加密依赖 Security 模块 KeyStore。需先调用 <code>Vostok.Security.initKeyStore()</code> 初始化密钥存储，再启用 Data 模块字段加密。
@@ -634,8 +639,7 @@ executor.submit(task2);</code></pre>
 <span class="ty">Vostok</span>.Data.init(
     <span class="kw">new</span> <span class="ty">VKDataConfig</span>()
         .url(<span class="st">"jdbc:mysql://..."</span>)
-        .fieldEncryptionEnabled(<span class="kw">true</span>)
-        .defaultEncryptionKeyId(<span class="st">"my-key-v1"</span>),  <span class="cm">// 默认 tableKeyId</span>
+        .fieldEncryptionEnabled(<span class="kw">true</span>),
     <span class="st">"com.example.entity"</span>
 );
 
@@ -645,24 +649,46 @@ executor.submit(task2);</code></pre>
     <span class="an">@VKId</span>
     <span class="kw">private</span> <span class="ty">Long</span> id;
 
-    <span class="an">@VKColumn</span>(name = <span class="st">"phone"</span>, encrypted = <span class="kw">true</span>)              <span class="cm">// 使用默认 tableKeyId</span>
+    <span class="cm">// columnKeyId 自动推导为 "users-phone"（表名-列名）</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"phone"</span>, encrypted = <span class="kw">true</span>)
     <span class="kw">private</span> <span class="ty">String</span> phone;
 
-    <span class="an">@VKColumn</span>(name = <span class="st">"id_card"</span>, encrypted = <span class="kw">true</span>, keyId = <span class="st">"sensitive-key"</span>)  <span class="cm">// 指定 tableKeyId</span>
+    <span class="cm">// columnKeyId 自动推导为 "users-id_card"</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"id_card"</span>, encrypted = <span class="kw">true</span>)
     <span class="kw">private</span> <span class="ty">String</span> idCard;
+
+    <span class="cm">// 显式指定 columnKeyId（覆盖自动推导）</span>
+    <span class="an">@VKColumn</span>(name = <span class="st">"secret"</span>, encrypted = <span class="kw">true</span>, keyId = <span class="st">"custom-key"</span>)
+    <span class="kw">private</span> <span class="ty">String</span> secret;
 }</code></pre>
 
 <p>加密字段类型必须为 <code>String</code>，存储在数据库中的值为 vkf3 格式 Base64 字符串。解密采用自描述模式，密文头携带密钥哈希和 DEK 版本号，支持跨 DEK 版本解密（DEK 轮换后旧密文无需重加密）。</p>
 
+<h3>columnKeyId 推导规则</h3>
+<table class="api-table">
+  <thead><tr><th>情况</th><th>columnKeyId</th><th>示例</th></tr></thead>
+  <tbody>
+    <tr><td>未指定 <code>keyId</code></td><td><code>表名-列名</code></td><td><code>users-phone</code>、<code>orders-address</code></td></tr>
+    <tr><td>显式 <code>@VKColumn(keyId="k")</code></td><td><code>k</code>（原样使用）</td><td><code>custom-key</code></td></tr>
+  </tbody>
+</table>
+
 <h3>存量数据迁移（加密 / 解密）</h3>
 <p>对已有明文数据执行批量加密，或将 vkf3 密文批量解密还原为明文。已是 vkf3 密文的行在加密时自动跳过（幂等），可分批、断点续跑。</p>
+
+<div class="callout info">
+  <div class="callout-title">迁移时的 columnKeyId</div>
+  <code>encryptKeyId</code> 必须与字段在运行时使用的 columnKeyId 完全一致，否则加密结果无法被 Data 模块自动解密。<br>
+  未指定 <code>@VKColumn(keyId)</code> 时，运行时 columnKeyId 为 <code>表名-列名</code>（如 <code>users-phone</code>），迁移时 <code>encryptKeyId</code> 应填写相同的值。
+</div>
+
 <pre><code><span class="cm">// 预览迁移计划（估算行数，不执行任何写入）</span>
 <span class="ty">VKCryptoMigratePlan</span> plan = <span class="ty">Vostok</span>.Data.previewEncrypt(
     <span class="kw">new</span> <span class="ty">VKCryptoMigrateOptions</span>()
         .table(<span class="st">"users"</span>)
         .idColumn(<span class="st">"id"</span>)
         .targetColumn(<span class="st">"phone"</span>)
-        .encryptKeyId(<span class="st">"my-key-v1"</span>)  <span class="cm">// 对应 Security 模块的 tableKeyId</span>
+        .encryptKeyId(<span class="st">"users-phone"</span>)  <span class="cm">// 与字段运行时 columnKeyId 一致（表名-列名）</span>
         .batchSize(<span class="nu">500</span>)
 );
 <span class="ty">System</span>.out.println(<span class="st">"预计行数: "</span> + plan.getEstimatedRows());
@@ -673,7 +699,7 @@ executor.submit(task2);</code></pre>
         .table(<span class="st">"users"</span>)
         .idColumn(<span class="st">"id"</span>)
         .targetColumn(<span class="st">"phone"</span>)
-        .encryptKeyId(<span class="st">"my-key-v1"</span>)
+        .encryptKeyId(<span class="st">"users-phone"</span>)  <span class="cm">// columnKeyId = 表名-列名</span>
         .batchSize(<span class="nu">500</span>)
         .skipOnError(<span class="kw">true</span>)
         .useTransactionPerBatch(<span class="kw">true</span>)
@@ -765,7 +791,6 @@ executor.submit(task2);</code></pre>
     <tr><td class="param-name">ddlSchema</td><td>String</td><td>—</td><td>DDL 校验使用的 schema（可选）</td></tr>
     <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">字段加密（vkf3）</td></tr>
     <tr><td class="param-name">fieldEncryptionEnabled</td><td>boolean</td><td>false</td><td>是否开启字段透明加密（vkf3 格式）</td></tr>
-    <tr><td class="param-name">defaultEncryptionKeyId</td><td>String</td><td>"data-default"</td><td>默认 tableKeyId，对应 Security 模块 KeyStore 中的密钥标识</td></tr>
     <tr><td class="param-name">allowPlaintextRead</td><td>boolean</td><td>false</td><td>是否允许读取非 vkf3 明文（true = 迁移期跳过，false = 格式异常时抛异常）</td></tr>
   </tbody>
 </table>
