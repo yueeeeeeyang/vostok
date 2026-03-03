@@ -1,0 +1,12 @@
+:root {
+  --vf-color-bg: #f5f7fb;
+  --vf-color-border: #e5e7eb;
+  --vf-color-text: #111827;
+  --vf-color-primary: #18a058;
+}
+
+.vf-card {
+  background: #fff;
+  border: 1px solid var(--vf-color-border);
+  border-radius: 8px;
+}
