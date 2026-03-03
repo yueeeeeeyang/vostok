@@ -75,7 +75,10 @@ public final class VKScanner {
                         scanDirectory(root, dir, prefixes, result);
                     } else if ("jar".equals(protocol)) {
                         JarURLConnection conn = (JarURLConnection) url.openConnection();
-                        File jar = new File(conn.getJarFile().getName());
+                        // 用 getJarFileURL() 获取 JAR 文件路径，避免调用 getJarFile() 打开 JarFile 造成资源泄漏
+                        // setUseCaches(false) 防止 JVM 内部缓存持有 JarFile 句柄
+                        conn.setUseCaches(false);
+                        File jar = new File(conn.getJarFileURL().toURI());
                         scanJar(jar, prefixes, result);
                     } else {
                         // ignore unknown protocol

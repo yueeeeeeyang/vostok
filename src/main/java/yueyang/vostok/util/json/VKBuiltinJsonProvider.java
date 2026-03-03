@@ -231,7 +231,9 @@ public final class VKBuiltinJsonProvider implements VKJsonProvider {
             try {
                 Object converted = convertFieldValue(v, f.getType(), f.getGenericType());
                 f.set(obj, converted);
-            } catch (Exception ignore) {
+            } catch (IllegalArgumentException | IllegalAccessException ignore) {
+                // IllegalArgumentException: 类型转换不兼容，跳过该字段（best-effort 反序列化）
+                // IllegalAccessException: 不应触发（FieldCache 已调用 setAccessible），保守兜底
             }
         }
         return obj;
@@ -366,13 +368,16 @@ public final class VKBuiltinJsonProvider implements VKJsonProvider {
                 skipWhitespace();
                 String key = parseString();
                 skipWhitespace();
-                if (s.charAt(pos) != ':') {
-                    throw new IllegalArgumentException("Expected '\"'");
+                if (isEnd() || s.charAt(pos) != ':') {
+                    throw new IllegalArgumentException("Expected ':'");
                 }
                 pos++;
                 Object val = parseValue();
                 map.put(key, val);
                 skipWhitespace();
+                if (isEnd()) {
+                    throw new IllegalArgumentException("Unexpected end of input: expected '}' or ','");
+                }
                 if (s.charAt(pos) == '}') {
                     pos++;
                     break;
@@ -397,6 +402,9 @@ public final class VKBuiltinJsonProvider implements VKJsonProvider {
                 Object val = parseValue();
                 list.add(val);
                 skipWhitespace();
+                if (isEnd()) {
+                    throw new IllegalArgumentException("Unexpected end of input: expected ']' or ','");
+                }
                 if (s.charAt(pos) == ']') {
                     pos++;
                     break;
@@ -422,7 +430,7 @@ public final class VKBuiltinJsonProvider implements VKJsonProvider {
                 }
                 if (c == '\\') {
                     if (isEnd()) {
-                        break;
+                        throw new IllegalArgumentException("Unterminated string: trailing backslash");
                     }
                     char esc = s.charAt(pos++);
                     switch (esc) {
@@ -435,6 +443,10 @@ public final class VKBuiltinJsonProvider implements VKJsonProvider {
                         case 'r' -> sb.append('\r');
                         case 't' -> sb.append('\t');
                         case 'u' -> {
+                            if (pos + 4 > s.length()) {
+                                throw new IllegalArgumentException(
+                                        "Invalid \\uXXXX escape: fewer than 4 hex digits at pos " + pos);
+                            }
                             String hex = s.substring(pos, pos + 4);
                             sb.append((char) Integer.parseInt(hex, 16));
                             pos += 4;

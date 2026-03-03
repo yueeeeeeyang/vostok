@@ -2,11 +2,34 @@ package yueyang.vostok.util.codec;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.zip.CRC32;
 
 public final class VKCodecs {
     private static final char[] HEX = "0123456789abcdef".toCharArray();
+
+    /**
+     * 线程本地 MD5 实例。
+     * MessageDigest 非线程安全，ThreadLocal 保证每线程独享一个实例，避免每次调用走 JCA provider 查找链。
+     * {@link MessageDigest#digest(byte[])} 调用后自动 reset，可安全复用。
+     */
+    private static final ThreadLocal<MessageDigest> MD5_LOCAL = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("MD5");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("MD5 not available", e);
+        }
+    });
+
+    /** 线程本地 SHA-256 实例，复用策略与 MD5_LOCAL 相同。 */
+    private static final ThreadLocal<MessageDigest> SHA256_LOCAL = ThreadLocal.withInitial(() -> {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        }
+    });
 
     private VKCodecs() {
     }
@@ -83,22 +106,17 @@ public final class VKCodecs {
     }
 
     public static String md5Hex(String value) {
-        return digestHex("MD5", value);
-    }
-
-    public static String sha256Hex(String value) {
-        return digestHex("SHA-256", value);
-    }
-
-    private static String digestHex(String algorithm, String value) {
         if (value == null) {
             return null;
         }
-        try {
-            MessageDigest md = MessageDigest.getInstance(algorithm);
-            return hexEncode(md.digest(value.getBytes(StandardCharsets.UTF_8)));
-        } catch (Exception e) {
-            throw new IllegalStateException("Digest failed: " + algorithm, e);
+        // digest() 隐式 reset，ThreadLocal 实例可安全复用
+        return hexEncode(MD5_LOCAL.get().digest(value.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    public static String sha256Hex(String value) {
+        if (value == null) {
+            return null;
         }
+        return hexEncode(SHA256_LOCAL.get().digest(value.getBytes(StandardCharsets.UTF_8)));
     }
 }
