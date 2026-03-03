@@ -13,6 +13,7 @@
   --code-bg: #141720;
   --code-border: #252a40;
   --sidebar-w: 260px;
+  --toc-w: 220px;
   --red: #f87171;
   --yellow: #fbbf24;
   --purple: #a78bfa;
@@ -386,6 +387,67 @@ pre code {
 /* ── Error table ─────────────────────────────────── */
 .error-code { color: var(--red); font-family: monospace; font-weight: 600; font-size: 13px; }
 .enum-name { color: var(--purple); font-family: monospace; font-size: 12.5px; }
+
+/* ── Page TOC (Right) ────────────────────────────── */
+.page-toc {
+  display: none;
+  position: fixed;
+  right: 0; top: 0;
+  width: var(--toc-w);
+  height: 100vh;
+  overflow-y: auto;
+  padding: 24px 14px 40px;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  z-index: 50;
+}
+
+.toc-heading {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  padding: 0 6px 10px;
+  margin-top: 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.toc-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.toc-list li a {
+  display: block;
+  padding: 5px 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  border-radius: 0 4px 4px 0;
+  line-height: 1.45;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.toc-list li a:hover {
+  color: var(--text);
+  background: var(--surface2);
+  text-decoration: none;
+}
+
+.toc-list li a.toc-active {
+  color: var(--primary);
+  border-left-color: var(--primary);
+  background: rgba(79,142,247,0.08);
+}
+
+@media (min-width: 1360px) {
+  .page-toc { display: block; }
+  .main { margin-right: var(--toc-w); }
+}
 
 /* ── Scrollbar ───────────────────────────────────── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
