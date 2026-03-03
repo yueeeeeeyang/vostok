@@ -289,12 +289,18 @@
 <span class="ty">String</span> sha256 = <span class="ty">Vostok</span>.File.hash(<span class="st">"data/package.zip"</span>, <span class="st">"SHA-256"</span>);</code></pre>
 
 <h2>文件加密与解密</h2>
-<p>委托 <code>Vostok.Security</code> 的 AES-256-GCM 实现。加密格式为：原始字节 → Base64 → AES-GCM → Base64 密文文本文件。</p>
-<pre><code><span class="cm">// 加密文件：sourcePath 明文 → targetPath 密文</span>
-<span class="ty">Vostok</span>.File.encryptFile(<span class="st">"data/secret.bin"</span>, <span class="st">"data/secret.enc"</span>, <span class="st">"my-secret-key"</span>);
+<p>委托 <code>Vostok.Security</code> 的 AES-256-GCM 实现，采用 vkf2 分块流式格式（每 1 MB 独立一个 GCM 分块），内存消耗恒定，支持任意大小的二进制文件。加密密钥通过 DEK/KEK 双层 Key Wrapping 保护，keyId 和 KEK 版本号写入文件头，解密时自动读取，无需调用方保存额外参数。使用前须先初始化 <code>Vostok.Security</code> 的 KeyStore。</p>
+<pre><code><span class="cm">// 前提：初始化 Security 模块的 KeyStore（与 encryptWithKeyId 共享同一 KeyStore）</span>
+<span class="ty">Vostok</span>.Security.initKeyStore(<span class="kw">new</span> <span class="ty">VKKeyStoreConfig</span>()
+    .baseDir(<span class="st">"./keys"</span>)
+    .masterKey(<span class="st">"my-master-secret"</span>));
 
-<span class="cm">// 解密文件：sourcePath 密文 → targetPath 明文</span>
-<span class="ty">Vostok</span>.File.decryptFile(<span class="st">"data/secret.enc"</span>, <span class="st">"data/secret.bin"</span>, <span class="st">"my-secret-key"</span>);</code></pre>
+<span class="cm">// 加密文件：sourcePath 明文 → targetPath vkf2 密文，keyId 对应 KeyStore 中的 KEK</span>
+<span class="ty">Vostok</span>.File.encryptFile(<span class="st">"data/secret.bin"</span>, <span class="st">"data/secret.enc"</span>, <span class="st">"file-key-v1"</span>);
+
+<span class="cm">// 解密文件：sourcePath 密文 → targetPath 明文（keyId 和 KEK 版本自动从文件头读取）</span>
+<span class="cm">// 解密失败（认证错误/密钥错误）时目标文件不写入任何字节</span>
+<span class="ty">Vostok</span>.File.decryptFile(<span class="st">"data/secret.enc"</span>, <span class="st">"data/secret.bin"</span>);</code></pre>
 
 <h2>文件监听</h2>
 <p><code>watch()</code> 返回 <code>VKFileWatchHandle</code>（实现 <code>AutoCloseable</code>），调用 <code>close()</code> 停止监听。</p>
@@ -485,8 +491,8 @@ handle.close();
     <tr><td><code>thumbnailTo(imagePath, targetPath, options)</code></td><td>生成缩略图并写入文件</td></tr>
     <tr><td><code>hash(path, algorithm)</code></td><td>计算文件哈希（MD5/SHA-256 等）</td></tr>
     <tr><td colspan="2" style="font-weight:600;color:var(--accent)">加密与解密</td></tr>
-    <tr><td><code>encryptFile(src, dest, secret)</code></td><td>AES-256-GCM 加密文件</td></tr>
-    <tr><td><code>decryptFile(src, dest, secret)</code></td><td>AES-256-GCM 解密文件</td></tr>
+    <tr><td><code>encryptFile(src, dest, keyId)</code></td><td>vkf2 分块流式 AES-256-GCM 加密文件（需先初始化 Security KeyStore）</td></tr>
+    <tr><td><code>decryptFile(src, dest)</code></td><td>解密 vkf2/vkf1 格式文件（keyId 自动从文件头读取，失败时目标文件不写入任何字节）</td></tr>
     <tr><td colspan="2" style="font-weight:600;color:var(--accent)">文件监听</td></tr>
     <tr><td><code>watch(path, listener)</code></td><td>监听文件/目录变化，返回 VKFileWatchHandle</td></tr>
     <tr><td><code>watch(path, recursive, listener)</code></td><td>监听，显式指定是否递归</td></tr>

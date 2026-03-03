@@ -314,21 +314,35 @@
 
 <div class="callout info">
   <div class="callout-title">与 encryptWithKeyId 的区别</div>
-  <code>encryptWithKeyId</code> / <code>decryptWithKeyId</code> 仅适用于<b>短文本字段</b>（数据库字段、Token、配置项等），内部以 <code>String</code> 传递明文，不适合二进制文件。文件加解密专用接口直接操作字节流，二进制安全，加密过程内存消耗恒定（约 64 KB 缓冲区），不受文件大小限制。
+  <code>encryptWithKeyId</code> / <code>decryptWithKeyId</code> 仅适用于<b>短文本字段</b>（数据库字段、Token、配置项等），内部以 <code>String</code> 传递明文，不适合二进制文件。文件加解密专用接口直接操作字节流，二进制安全，加密与解密均采用 <b>1 MB 分块流式处理</b>，内存消耗恒定，不受文件大小限制。
 </div>
 
-<h3>vkf1 文件格式</h3>
-<p>加密文件以 <code>VKFC</code> 魔数开头，文件头携带解密所需的全部元数据：</p>
+<h3>vkf2 文件格式（当前默认）</h3>
+<p>加密文件以 <code>VKFC</code> 魔数开头，文件头携带解密所需的全部元数据，正文采用 1 MB 分块结构：</p>
 <pre><code>┌─────────────────────────────────────────────────────────────────┐
 │  4 bytes  Magic: 'V','K','F','C'                               │
-│  1 byte   版本号: 0x01                                         │
+│  1 byte   版本号: 0x02                                         │
 │  1 byte   keyId 字节长度（uint8，max 255）                     │
 │  N bytes  keyId（UTF-8）                                       │
 │  8 bytes  kekVersion（int64 big-endian）                       │
 │  2 bytes  wrappedDek 字节长度（uint16 big-endian）             │
-│  M bytes  wrappedDek（AES-256-GCM 加密后的 DEK，Base64）      │
-│ 12 bytes  GCM IV（SecureRandom 每次随机生成）                  │
+│  M bytes  wrappedDek（AES-256-GCM 加密后的 DEK）              │
 ├─────────────────────────────────────────────────────────────────┤
+│  [分块正文，循环直到终止符]                                     │
+│    4 bytes  chunk_len（int32，密文长度，含 16 字节 GCM 标签）  │
+│   12 bytes  chunk_iv（SecureRandom 每块独立生成）              │
+│  chunk_len bytes  AES-256-GCM 密文 + 认证标签                 │
+│  ...（每块最大 1 MB 明文 + 16 字节标签）                       │
+├─────────────────────────────────────────────────────────────────┤
+│  4 bytes  终止符: 0x00000000                                   │
+└─────────────────────────────────────────────────────────────────┘</code></pre>
+
+<h3>vkf1 格式（遗留，只读兼容）</h3>
+<p>版本号 <code>0x01</code> 的旧格式使用单个 GCM 实例覆盖全文，<code>decryptFile</code> / <code>decryptStream</code> 自动识别并回退至 v1 解密路径，无需任何手动干预。新加密操作始终写出 vkf2 格式。</p>
+<pre><code>┌─────────────────────────────────────────────────────────────────┐
+│  [与 vkf2 相同的文件头，版本号 0x01]                            │
+├─────────────────────────────────────────────────────────────────┤
+│ 12 bytes  GCM IV（全文唯一）                                   │
 │  rest     AES-256-GCM 密文（末尾含 16 字节 GCM 认证标签）     │
 └─────────────────────────────────────────────────────────────────┘</code></pre>
 
@@ -345,10 +359,10 @@
     <span class="st">"file-key-v1"</span>          <span class="cm">// keyId：对应 KeyStore 中的 KEK</span>
 );
 
-<span class="cm">// 解密文件（自动从文件头提取 keyId 和 KEK 版本，无需传入密钥）</span>
+<span class="cm">// 解密文件（自动从文件头提取 keyId 和 KEK 版本，无需传入密钥；支持 vkf2/vkf1 格式）</span>
 <span class="ty">Vostok</span>.Security.decryptFile(
-    <span class="ty">Path</span>.of(<span class="st">"report.vkf"</span>),   <span class="cm">// 加密源文件（vkf1 格式）</span>
-    <span class="ty">Path</span>.of(<span class="st">"report_dec.pdf"</span>) <span class="cm">// 明文目标文件</span>
+    <span class="ty">Path</span>.of(<span class="st">"report.vkf"</span>),   <span class="cm">// 加密源文件（vkf2 或 vkf1 遗留格式）</span>
+    <span class="ty">Path</span>.of(<span class="st">"report_dec.pdf"</span>) <span class="cm">// 明文目标文件（失败时不写入任何字节）</span>
 );
 
 <span class="cm">// KEK 轮换后，旧文件仍可直接解密（无需重加密）</span>
@@ -368,9 +382,11 @@
     <span class="ty">Vostok</span>.Security.decryptStream(in, out);
 }</code></pre>
 
-<div class="callout warn">
+<div class="callout info">
   <div class="callout-title">解密内存说明</div>
-  AES-GCM 的安全属性要求认证标签（16 字节）验证通过后才能输出明文，因此 <code>decryptFile</code> / <code>decryptStream</code> 需将密文全部读入内存后一次性解密。解密时所需内存约等于密文文件大小，对超大文件（数 GB）需确保 JVM 堆充裕。
+  <strong>vkf2（当前默认）：</strong>每块独立 AES-GCM 解密，内存消耗约 1 MB + GCM 标签（16 字节），与文件总大小无关，可安全处理 GB 级文件。<br>
+  <strong>vkf1（遗留格式）：</strong>单 GCM 实例覆盖全文，解密时仍需将密文全部读入内存，对大文件需确保 JVM 堆充裕。建议将 v1 文件重新加密为 v2 格式。<br>
+  <strong>原子写保护：</strong><code>decryptFile(Path, Path)</code> 内部先解密到临时文件（<code>.vktmp.{nanoTime}</code>），成功后原子替换目标文件；认证失败或 IO 错误时临时文件自动删除，目标文件不会写入任何字节。
 </div>
 
 <h2>检测结果类型</h2>
@@ -528,8 +544,8 @@
 <table class="api-table">
   <thead><tr><th>方法</th><th>返回值</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>encryptFile(src, dst, keyId)</code></td><td>void</td><td>加密文件（Path → Path），流式 AES-256-GCM + Key Wrapping，二进制安全，适合任意类型文件</td></tr>
-    <tr><td><code>decryptFile(src, dst)</code></td><td>void</td><td>解密 vkf1 格式文件（Path → Path），自动从文件头提取 keyId 和 KEK 版本</td></tr>
+    <tr><td><code>encryptFile(src, dst, keyId)</code></td><td>void</td><td>加密文件（Path → Path），vkf2 分块流式 AES-256-GCM + Key Wrapping，二进制安全，适合任意类型文件</td></tr>
+    <tr><td><code>decryptFile(src, dst)</code></td><td>void</td><td>解密 vkf2（或 vkf1 遗留）格式文件（Path → Path），自动从文件头提取 keyId 和 KEK 版本；先写临时文件，成功后原子替换目标，失败时目标不写入任何字节</td></tr>
     <tr><td><code>encryptStream(in, out, keyId)</code></td><td>void</td><td>流式加密（InputStream → OutputStream），in/out 不会被关闭</td></tr>
     <tr><td><code>decryptStream(in, out)</code></td><td>void</td><td>流式解密（InputStream → OutputStream），in/out 不会被关闭</td></tr>
   </tbody>
