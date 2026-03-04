@@ -3,7 +3,7 @@
 面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合多个模块能力。
 各模块可独立初始化、按需使用。
 
-**当前版本：`1.9.1.0`**
+**当前版本：`1.9.2.1`**
 
 **详细文档**：[Vostok Docs](https://yueeeeeeyang.github.io/vostok/)
 
@@ -15,7 +15,7 @@
 <dependency>
   <groupId>yueyang</groupId>
   <artifactId>vostok</artifactId>
-  <version>1.9.1.0</version>
+  <version>1.9.2.1</version>
 </dependency>
 ```
 
@@ -29,7 +29,7 @@
 | `Vostok.Web` | `VostokWeb` | NIO Web 服务、路由、中间件、WebSocket、SSE、自动 CRUD |
 | `Vostok.Cache` | `VostokCache` | Memory / Redis / 两级缓存、Pipeline、统计 |
 | `Vostok.File` | `VostokFile` | 文件读写、压缩解压、目录操作、监听、文件加解密 |
-| `Vostok.Office` | `VostokOffice` | Office 能力入口（支持 Excel .xlsx + Word .docx 读写/统计） |
+| `Vostok.Office` | `VostokOffice` | Office 能力入口（支持 Excel/Word/PPT/PDF 读写/统计） |
 | `Vostok.Log` | `VostokLog` | 异步日志、滚动压缩、命名 logger、MDC |
 | `Vostok.Config` | `VostokConfig` | 配置加载、热更新、变更监听、类型绑定 |
 | `Vostok.Security` | `VostokSecurity` | SQL/XSS/路径等安全检测、加解密、签名验签 |
@@ -196,6 +196,12 @@ import yueyang.vostok.office.excel.VKExcelWorkbook;
 import yueyang.vostok.office.word.VKWordImageLoadMode;
 import yueyang.vostok.office.word.VKWordReadOptions;
 import yueyang.vostok.office.word.VKWordWriteRequest;
+import yueyang.vostok.office.ppt.VKPptImageLoadMode;
+import yueyang.vostok.office.ppt.VKPptReadOptions;
+import yueyang.vostok.office.ppt.VKPptWriteRequest;
+import yueyang.vostok.office.pdf.VKPdfImageLoadMode;
+import yueyang.vostok.office.pdf.VKPdfReadOptions;
+import yueyang.vostok.office.pdf.VKPdfWriteRequest;
 
 Vostok.File.init(new VKFileConfig().baseDir("./data"));
 Vostok.Office.init(new VKOfficeConfig());
@@ -227,6 +233,24 @@ int imageCount = Vostok.Office.countWordImages("word/orders.docx");
 // 大文件建议 metadata-only 模式读取图片，避免 OOM
 var readOpt = VKWordReadOptions.defaults().imageLoadMode(VKWordImageLoadMode.METADATA_ONLY);
 var doc = Vostok.Office.readWord("word/orders.docx", readOpt);
+
+// PPT（方法名中的 PPT 全大写）
+VKPptWriteRequest pptReq = new VKPptWriteRequest();
+pptReq.addSlide().addParagraph("季度总结 Q1").addImageBytes("chart.png", chartBytes);
+Vostok.Office.writePPT("ppt/summary.pptx", pptReq);
+String pptText = Vostok.Office.readPPTText("ppt/summary.pptx");
+int pptSlides = Vostok.Office.countPPTSlides("ppt/summary.pptx");
+var pptReadOpt = VKPptReadOptions.defaults().imageLoadMode(VKPptImageLoadMode.METADATA_ONLY);
+var pptDoc = Vostok.Office.readPPT("ppt/summary.pptx", pptReadOpt);
+
+// PDF（方法名中的 PDF 全大写）
+VKPdfWriteRequest pdfReq = new VKPdfWriteRequest();
+pdfReq.addPage().addParagraph("账单 A001").addImageBytes("logo.png", logoBytes);
+Vostok.Office.writePDF("pdf/bill.pdf", pdfReq);
+String pdfText = Vostok.Office.readPDFText("pdf/bill.pdf");
+int pdfPages = Vostok.Office.countPDFPages("pdf/bill.pdf");
+var pdfReadOpt = VKPdfReadOptions.defaults().imageLoadMode(VKPdfImageLoadMode.METADATA_ONLY);
+var pdfDoc = Vostok.Office.readPDF("pdf/bill.pdf", pdfReadOpt);
 ```
 
 ### Log

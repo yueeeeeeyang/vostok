@@ -13,6 +13,24 @@ import yueyang.vostok.office.excel.internal.VKExcelPackageWriter;
 import yueyang.vostok.office.excel.internal.VKExcelSecurityGuard;
 import yueyang.vostok.office.exception.VKOfficeErrorCode;
 import yueyang.vostok.office.exception.VKOfficeException;
+import yueyang.vostok.office.pdf.VKPdfDocument;
+import yueyang.vostok.office.pdf.VKPdfImage;
+import yueyang.vostok.office.pdf.VKPdfReadOptions;
+import yueyang.vostok.office.pdf.VKPdfWriteOptions;
+import yueyang.vostok.office.pdf.VKPdfWriteRequest;
+import yueyang.vostok.office.pdf.internal.VKPdfDocumentReader;
+import yueyang.vostok.office.pdf.internal.VKPdfLimits;
+import yueyang.vostok.office.pdf.internal.VKPdfSecurityGuard;
+import yueyang.vostok.office.pdf.internal.VKPdfWriter;
+import yueyang.vostok.office.ppt.VKPptDocument;
+import yueyang.vostok.office.ppt.VKPptImage;
+import yueyang.vostok.office.ppt.VKPptReadOptions;
+import yueyang.vostok.office.ppt.VKPptWriteOptions;
+import yueyang.vostok.office.ppt.VKPptWriteRequest;
+import yueyang.vostok.office.ppt.internal.VKPptLimits;
+import yueyang.vostok.office.ppt.internal.VKPptPackageReader;
+import yueyang.vostok.office.ppt.internal.VKPptPackageWriter;
+import yueyang.vostok.office.ppt.internal.VKPptSecurityGuard;
 import yueyang.vostok.office.word.VKWordDocument;
 import yueyang.vostok.office.word.VKWordImage;
 import yueyang.vostok.office.word.VKWordReadOptions;
@@ -33,7 +51,7 @@ import java.util.function.Function;
 /**
  * Office 模块门面。
  *
- * <p>当前提供 Excel / Word（.xlsx / .docx）读写能力，底层文件读写、压缩解压复用 File 模块。</p>
+ * <p>当前提供 Excel / Word / PPT / PDF（.xlsx / .docx / .pptx / .pdf）读写能力。</p>
  */
 public class VostokOffice {
     private static final Object LOCK = new Object();
@@ -249,6 +267,180 @@ public class VostokOffice {
         }
     }
 
+    /** 读取 PPT 全文文本。 */
+    public static String readPPTText(String path) {
+        return readPPTText(path, VKPptReadOptions.defaults());
+    }
+
+    /** 读取 PPT 全文文本。 */
+    public static String readPPTText(String path, VKPptReadOptions options) {
+        return withPPTReader(path, options, VKPptPackageReader::readText);
+    }
+
+    /** 读取 PPT 全部图片。 */
+    public static List<VKPptImage> readPPTImages(String path) {
+        return readPPTImages(path, VKPptReadOptions.defaults());
+    }
+
+    /** 读取 PPT 全部图片。 */
+    public static List<VKPptImage> readPPTImages(String path, VKPptReadOptions options) {
+        return withPPTReader(path, options, VKPptPackageReader::readImages);
+    }
+
+    /** 获取 PPT 字数（按非空白 Unicode code point 统计）。 */
+    public static int countPPTChars(String path) {
+        return countPPTChars(path, VKPptReadOptions.defaults());
+    }
+
+    /** 获取 PPT 字数（仅计数路径）。 */
+    public static int countPPTChars(String path, VKPptReadOptions options) {
+        return withPPTReader(path, options, VKPptPackageReader::countChars);
+    }
+
+    /** 获取 PPT 图片数量（按出现次数统计）。 */
+    public static int countPPTImages(String path) {
+        return countPPTImages(path, VKPptReadOptions.defaults());
+    }
+
+    /** 获取 PPT 图片数量（按出现次数统计）。 */
+    public static int countPPTImages(String path, VKPptReadOptions options) {
+        return withPPTReader(path, options, VKPptPackageReader::countImages);
+    }
+
+    /** 获取 PPT 幻灯片数。 */
+    public static int countPPTSlides(String path) {
+        return countPPTSlides(path, VKPptReadOptions.defaults());
+    }
+
+    /** 获取 PPT 幻灯片数。 */
+    public static int countPPTSlides(String path, VKPptReadOptions options) {
+        return withPPTReader(path, options, VKPptPackageReader::countSlides);
+    }
+
+    /** 一次解包聚合读取 PPT（文本 + 字数 + 图片 + 幻灯片数）。 */
+    public static VKPptDocument readPPT(String path) {
+        return readPPT(path, VKPptReadOptions.defaults());
+    }
+
+    /** 一次解包聚合读取 PPT（文本 + 字数 + 图片 + 幻灯片数）。 */
+    public static VKPptDocument readPPT(String path, VKPptReadOptions options) {
+        return withPPTReader(path, options, VKPptPackageReader::readDocument);
+    }
+
+    /** 写入 PPT（文本 + 图片）。 */
+    public static void writePPT(String path, VKPptWriteRequest request) {
+        writePPT(path, request, VKPptWriteOptions.defaults());
+    }
+
+    /** 写入 PPT（文本 + 图片）。 */
+    public static void writePPT(String path, VKPptWriteRequest request, VKPptWriteOptions options) {
+        ensureInitialized();
+        ensureLocalFileMode();
+        if (request == null) {
+            throw new VKOfficeException(VKOfficeErrorCode.INVALID_ARGUMENT, "PPT write request is null");
+        }
+
+        VKPptSecurityGuard.assertSafePath(path);
+        requirePptx(path);
+
+        VKPptLimits limits = VKPptLimits.fromWrite(config, options);
+        String tempDir = createTempDir(limits.tempSubDir(), "pptx_");
+        try {
+            Path packageRoot = readLocalPath(tempDir);
+            Path baseDir = Path.of(Vostok.File.config().getBaseDir()).toAbsolutePath().normalize();
+            VKPptPackageWriter writer = new VKPptPackageWriter(packageRoot, baseDir, limits);
+            writer.writePackage(request);
+            Vostok.File.zip(tempDir, path, false);
+            ensureFileBytesLimit(path, limits.maxDocumentBytes(), "PPT document");
+        } finally {
+            cleanupTempDir(tempDir);
+        }
+    }
+
+    /** 读取 PDF 全文文本。 */
+    public static String readPDFText(String path) {
+        return readPDFText(path, VKPdfReadOptions.defaults());
+    }
+
+    /** 读取 PDF 全文文本。 */
+    public static String readPDFText(String path, VKPdfReadOptions options) {
+        return withPDFReader(path, options, VKPdfDocumentReader::readText);
+    }
+
+    /** 读取 PDF 全部图片。 */
+    public static List<VKPdfImage> readPDFImages(String path) {
+        return readPDFImages(path, VKPdfReadOptions.defaults());
+    }
+
+    /** 读取 PDF 全部图片。 */
+    public static List<VKPdfImage> readPDFImages(String path, VKPdfReadOptions options) {
+        return withPDFReader(path, options, VKPdfDocumentReader::readImages);
+    }
+
+    /** 获取 PDF 字数（按非空白 Unicode code point 统计）。 */
+    public static int countPDFChars(String path) {
+        return countPDFChars(path, VKPdfReadOptions.defaults());
+    }
+
+    /** 获取 PDF 字数（仅计数路径）。 */
+    public static int countPDFChars(String path, VKPdfReadOptions options) {
+        return withPDFReader(path, options, VKPdfDocumentReader::countChars);
+    }
+
+    /** 获取 PDF 图片数量（按出现次数统计）。 */
+    public static int countPDFImages(String path) {
+        return countPDFImages(path, VKPdfReadOptions.defaults());
+    }
+
+    /** 获取 PDF 图片数量（按出现次数统计）。 */
+    public static int countPDFImages(String path, VKPdfReadOptions options) {
+        return withPDFReader(path, options, VKPdfDocumentReader::countImages);
+    }
+
+    /** 获取 PDF 页数。 */
+    public static int countPDFPages(String path) {
+        return countPDFPages(path, VKPdfReadOptions.defaults());
+    }
+
+    /** 获取 PDF 页数。 */
+    public static int countPDFPages(String path, VKPdfReadOptions options) {
+        return withPDFReader(path, options, VKPdfDocumentReader::countPages);
+    }
+
+    /** 聚合读取 PDF（文本 + 字数 + 图片 + 页数）。 */
+    public static VKPdfDocument readPDF(String path) {
+        return readPDF(path, VKPdfReadOptions.defaults());
+    }
+
+    /** 聚合读取 PDF（文本 + 字数 + 图片 + 页数）。 */
+    public static VKPdfDocument readPDF(String path, VKPdfReadOptions options) {
+        return withPDFReader(path, options, VKPdfDocumentReader::readDocument);
+    }
+
+    /** 写入 PDF（文本 + 图片）。 */
+    public static void writePDF(String path, VKPdfWriteRequest request) {
+        writePDF(path, request, VKPdfWriteOptions.defaults());
+    }
+
+    /** 写入 PDF（文本 + 图片）。 */
+    public static void writePDF(String path, VKPdfWriteRequest request, VKPdfWriteOptions options) {
+        ensureInitialized();
+        ensureLocalFileMode();
+        if (request == null) {
+            throw new VKOfficeException(VKOfficeErrorCode.INVALID_ARGUMENT, "PDF write request is null");
+        }
+
+        VKPdfSecurityGuard.assertSafePath(path);
+        requirePdf(path);
+
+        VKPdfLimits limits = VKPdfLimits.fromWrite(config, options);
+        Path baseDir = Path.of(Vostok.File.config().getBaseDir()).toAbsolutePath().normalize();
+        VKPdfWriter writer = new VKPdfWriter(baseDir, limits);
+        byte[] bytes = writer.write(request);
+        Vostok.File.writeBytes(path, bytes);
+        ensureFileBytesLimit(path, limits.maxDocumentBytes(), "PDF document");
+    }
+
     /**
      * Word 统一读取模板：
      * 负责安全校验、解包与清理，业务逻辑由 action 操作 VKWordPackageReader。
@@ -276,6 +468,66 @@ public class VostokOffice {
         } finally {
             cleanupTempDir(tempDir);
         }
+    }
+
+    /**
+     * PPT 统一读取模板：
+     * 负责安全校验、解包与清理，业务逻辑由 action 操作 VKPptPackageReader。
+     */
+    private static <T> T withPPTReader(String path, VKPptReadOptions options, Function<VKPptPackageReader, T> action) {
+        ensureInitialized();
+        ensureLocalFileMode();
+        if (action == null) {
+            throw new VKOfficeException(VKOfficeErrorCode.INVALID_ARGUMENT, "PPT reader action is null");
+        }
+
+        VKPptSecurityGuard.assertSafePath(path);
+        requirePptx(path);
+
+        VKPptLimits limits = VKPptLimits.fromRead(config, options);
+        ensureFileBytesLimit(path, limits.maxDocumentBytes(), "PPT document");
+        VKPptSecurityGuard.assertZipMagic(readLocalPath(path));
+
+        String tempDir = createTempDir(limits.tempSubDir(), "pptx_");
+        try {
+            Vostok.File.unzip(path, tempDir, buildUnzipOptions(config));
+            Path packageRoot = locatePackageRoot(readLocalPath(tempDir));
+            VKPptPackageReader reader = new VKPptPackageReader(packageRoot, limits);
+            return action.apply(reader);
+        } finally {
+            cleanupTempDir(tempDir);
+        }
+    }
+
+    /**
+     * PDF 统一读取模板：
+     * 负责安全校验并创建解析器，业务逻辑由 action 操作 VKPdfDocumentReader。
+     */
+    private static <T> T withPDFReader(String path, VKPdfReadOptions options, Function<VKPdfDocumentReader, T> action) {
+        ensureInitialized();
+        ensureLocalFileMode();
+        if (action == null) {
+            throw new VKOfficeException(VKOfficeErrorCode.INVALID_ARGUMENT, "PDF reader action is null");
+        }
+
+        VKPdfSecurityGuard.assertSafePath(path);
+        requirePdf(path);
+
+        VKPdfLimits limits = VKPdfLimits.fromRead(config, options);
+        ensureFileBytesLimit(path, limits.maxDocumentBytes(), "PDF document");
+
+        Path source = readLocalPath(path);
+        VKPdfSecurityGuard.assertPdfMagic(source);
+
+        byte[] bytes;
+        try {
+            bytes = Files.readAllBytes(source);
+        } catch (IOException e) {
+            throw new VKOfficeException(VKOfficeErrorCode.IO_ERROR,
+                    "Read PDF bytes failed: " + path, e);
+        }
+        VKPdfDocumentReader reader = new VKPdfDocumentReader(bytes, limits);
+        return action.apply(reader);
     }
 
     private static void ensureInitialized() {
@@ -307,6 +559,20 @@ public class VostokOffice {
         if (path == null || !path.toLowerCase().endsWith(".docx")) {
             throw new VKOfficeException(VKOfficeErrorCode.UNSUPPORTED_FORMAT,
                     "Only .docx is supported: " + path);
+        }
+    }
+
+    private static void requirePptx(String path) {
+        if (path == null || !path.toLowerCase().endsWith(".pptx")) {
+            throw new VKOfficeException(VKOfficeErrorCode.UNSUPPORTED_FORMAT,
+                    "Only .pptx is supported: " + path);
+        }
+    }
+
+    private static void requirePdf(String path) {
+        if (path == null || !path.toLowerCase().endsWith(".pdf")) {
+            throw new VKOfficeException(VKOfficeErrorCode.UNSUPPORTED_FORMAT,
+                    "Only .pdf is supported: " + path);
         }
     }
 
@@ -398,6 +664,22 @@ public class VostokOffice {
                 .wordMaxSingleImageBytes(source.getWordMaxSingleImageBytes())
                 .wordMaxTotalImageBytes(source.getWordMaxTotalImageBytes())
                 .wordTempDir(source.getWordTempDir())
+                .pptMaxDocumentBytes(source.getPptMaxDocumentBytes())
+                .pptMaxSlides(source.getPptMaxSlides())
+                .pptMaxTextChars(source.getPptMaxTextChars())
+                .pptMaxImages(source.getPptMaxImages())
+                .pptMaxSingleImageBytes(source.getPptMaxSingleImageBytes())
+                .pptMaxTotalImageBytes(source.getPptMaxTotalImageBytes())
+                .pptTempDir(source.getPptTempDir())
+                .pdfMaxDocumentBytes(source.getPdfMaxDocumentBytes())
+                .pdfMaxPages(source.getPdfMaxPages())
+                .pdfMaxTextChars(source.getPdfMaxTextChars())
+                .pdfMaxImages(source.getPdfMaxImages())
+                .pdfMaxSingleImageBytes(source.getPdfMaxSingleImageBytes())
+                .pdfMaxTotalImageBytes(source.getPdfMaxTotalImageBytes())
+                .pdfMaxObjects(source.getPdfMaxObjects())
+                .pdfMaxStreamBytes(source.getPdfMaxStreamBytes())
+                .pdfTempDir(source.getPdfTempDir())
                 .xxeSampleBytes(source.getXxeSampleBytes())
                 .unzipMaxEntries(source.getUnzipMaxEntries())
                 .unzipMaxTotalUncompressedBytes(source.getUnzipMaxTotalUncompressedBytes())
@@ -416,6 +698,20 @@ public class VostokOffice {
                 || cfg.getWordMaxImages() <= 0
                 || cfg.getWordMaxSingleImageBytes() <= 0
                 || cfg.getWordMaxTotalImageBytes() <= 0
+                || cfg.getPptMaxDocumentBytes() <= 0
+                || cfg.getPptMaxSlides() <= 0
+                || cfg.getPptMaxTextChars() <= 0
+                || cfg.getPptMaxImages() <= 0
+                || cfg.getPptMaxSingleImageBytes() <= 0
+                || cfg.getPptMaxTotalImageBytes() <= 0
+                || cfg.getPdfMaxDocumentBytes() <= 0
+                || cfg.getPdfMaxPages() <= 0
+                || cfg.getPdfMaxTextChars() <= 0
+                || cfg.getPdfMaxImages() <= 0
+                || cfg.getPdfMaxSingleImageBytes() <= 0
+                || cfg.getPdfMaxTotalImageBytes() <= 0
+                || cfg.getPdfMaxObjects() <= 0
+                || cfg.getPdfMaxStreamBytes() <= 0
                 || cfg.getXxeSampleBytes() <= 0) {
             throw new VKOfficeException(VKOfficeErrorCode.CONFIG_ERROR,
                     "Invalid office limits in VKOfficeConfig");
@@ -427,6 +723,14 @@ public class VostokOffice {
         if (cfg.getWordTempDir() == null || cfg.getWordTempDir().trim().isEmpty()) {
             throw new VKOfficeException(VKOfficeErrorCode.CONFIG_ERROR,
                     "Office wordTempDir is blank");
+        }
+        if (cfg.getPptTempDir() == null || cfg.getPptTempDir().trim().isEmpty()) {
+            throw new VKOfficeException(VKOfficeErrorCode.CONFIG_ERROR,
+                    "Office pptTempDir is blank");
+        }
+        if (cfg.getPdfTempDir() == null || cfg.getPdfTempDir().trim().isEmpty()) {
+            throw new VKOfficeException(VKOfficeErrorCode.CONFIG_ERROR,
+                    "Office pdfTempDir is blank");
         }
     }
 }

@@ -14,7 +14,7 @@
       <div class="logo-mark">V</div>
       <div>
         <div class="logo-text">Vostok</div>
-        <div class="logo-version">v1.9.1.0 · JDK 17+</div>
+        <div class="logo-version">v1.9.2.1 · JDK 17+</div>
       </div>
     </a>
   </div>
@@ -44,7 +44,7 @@
 <div class="page-header">
   <div class="module-tag">📊 Vostok.Office</div>
   <h1>Office 文档处理模块</h1>
-  <p class="desc">提供 Office 相关能力入口。当前支持 Excel（.xlsx）与 Word（.docx）能力：Excel 读写/流式读取，Word 文本与图片读取、字数与图片数统计，以及文本+图片的 Word 生成。</p>
+  <p class="desc">提供 Excel（.xlsx）、Word（.docx）、PPT（.pptx）和 PDF（.pdf）的读取、统计与生成能力。压缩格式统一复用 File 模块 zip/unzip，支持大文件 metadata-only 与仅计数路径。</p>
 </div>
 
 <h2>初始化（建议显式）</h2>
@@ -52,19 +52,18 @@
 <span class="kw">import</span> yueyang.vostok.file.VKFileConfig;
 <span class="kw">import</span> yueyang.vostok.office.VKOfficeConfig;
 
-<span class="cm">// Office 依赖 File 模块（用于本地文件读写与 zip/unzip）</span>
 <span class="ty">Vostok</span>.File.init(<span class="kw">new</span> <span class="ty">VKFileConfig</span>().baseDir(<span class="st">"./data"</span>));
 
 <span class="ty">Vostok</span>.Office.init(<span class="kw">new</span> <span class="ty">VKOfficeConfig</span>()
     .excelTempDir(<span class="st">"tmp/excel"</span>)
     .wordTempDir(<span class="st">"tmp/word"</span>)
-    .wordMaxTextChars(<span class="num">20_000_000</span>)
-    .wordMaxImages(<span class="num">10_000</span>));
+    .pptTempDir(<span class="st">"tmp/ppt"</span>)
+    .pdfTempDir(<span class="st">"tmp/pdf"</span>));
 </code></pre>
 
 <div class="callout warn">
   <div class="callout-title">当前限制</div>
-  仅支持 <code>.xlsx</code> 与 <code>.docx</code>，且目前只支持 <code>Vostok.File</code> 的 <code>local</code> 模式。
+  仅支持 <code>.xlsx/.docx/.pptx/.pdf</code>，且当前仅支持 <code>Vostok.File</code> 的 <code>local</code> 模式。
 </div>
 
 <h2>Excel 示例</h2>
@@ -76,72 +75,78 @@
         .addCell(<span class="ty">VKExcelCell</span>.numberCell(<span class="num">2</span>, <span class="num">2</span>, <span class="st">"99.5"</span>)));
 
 <span class="ty">Vostok</span>.Office.writeExcel(<span class="st">"excel/orders.xlsx"</span>, workbook);
-
 <span class="ty">Vostok</span>.Office.readExcelRows(<span class="st">"excel/orders.xlsx"</span>, <span class="st">"Orders"</span>,
     <span class="ty">VKExcelReadOptions</span>.defaults(), row -&gt; process(row.rowIndex(), row.cells()));
 </code></pre>
 
-<h2>Word 读取</h2>
+<h2>Word 示例</h2>
 <pre><code><span class="kw">import</span> yueyang.vostok.office.word.*;
 
-<span class="cm">// 读取全文文本</span>
-<span class="ty">String</span> text = <span class="ty">Vostok</span>.Office.readWordText(<span class="st">"word/orders.docx"</span>);
+<span class="ty">VKWordWriteRequest</span> wordReq = <span class="kw">new</span> <span class="ty">VKWordWriteRequest</span>()
+    .addParagraph(<span class="st">"订单 A001"</span>)
+    .addImageBytes(<span class="st">"logo.png"</span>, logoBytes)
+    .addImageFile(<span class="st">"images/sign.png"</span>);
 
-<span class="cm">// 统计字数（仅计数路径，不构建全文字符串）</span>
+<span class="ty">Vostok</span>.Office.writeWord(<span class="st">"word/orders.docx"</span>, wordReq);
+
+<span class="ty">String</span> text = <span class="ty">Vostok</span>.Office.readWordText(<span class="st">"word/orders.docx"</span>);
 <span class="ty">int</span> chars = <span class="ty">Vostok</span>.Office.countWordChars(<span class="st">"word/orders.docx"</span>);
 
-<span class="cm">// 读取全部图片（默认返回 bytes）</span>
-<span class="ty">List</span>&lt;<span class="ty">VKWordImage</span>&gt; images = <span class="ty">Vostok</span>.Office.readWordImages(<span class="st">"word/orders.docx"</span>);
-
-<span class="cm">// 大文件模式：仅读取图片 metadata，避免 OOM</span>
 <span class="ty">VKWordReadOptions</span> metadataOnly = <span class="ty">VKWordReadOptions</span>.defaults()
     .imageLoadMode(<span class="ty">VKWordImageLoadMode</span>.METADATA_ONLY);
-<span class="ty">List</span>&lt;<span class="ty">VKWordImage</span>&gt; metaImages = <span class="ty">Vostok</span>.Office.readWordImages(<span class="st">"word/orders.docx"</span>, metadataOnly);
-
-<span class="cm">// 一次解包聚合读取：文本 + 字数 + 图片 + 图片数</span>
-<span class="ty">VKWordDocument</span> doc = <span class="ty">Vostok</span>.Office.readWord(<span class="st">"word/orders.docx"</span>, metadataOnly);
+<span class="ty">VKWordDocument</span> wordDoc = <span class="ty">Vostok</span>.Office.readWord(<span class="st">"word/orders.docx"</span>, metadataOnly);
 </code></pre>
 
-<h2>Word 生成（文本 + 图片）</h2>
-<pre><code><span class="kw">import</span> yueyang.vostok.office.word.*;
+<h2>PPT 示例（方法名中的 PPT 全大写）</h2>
+<pre><code><span class="kw">import</span> yueyang.vostok.office.ppt.*;
 
-<span class="ty">VKWordWriteRequest</span> request = <span class="kw">new</span> <span class="ty">VKWordWriteRequest</span>()
-    .addParagraph(<span class="st">"订单 A001"</span>)
-    .addImageBytes(<span class="st">"logo.png"</span>, logoBytes)   <span class="cm">// bytes 输入</span>
-    .addImageFile(<span class="st">"images/sign.png"</span>);       <span class="cm">// 文件路径输入（相对 File.baseDir）</span>
+<span class="ty">VKPptWriteRequest</span> req = <span class="kw">new</span> <span class="ty">VKPptWriteRequest</span>();
+req.addSlide().addParagraph(<span class="st">"季度总结 Q1"</span>).addImageBytes(<span class="st">"chart.png"</span>, chartBytes);
 
-<span class="ty">Vostok</span>.Office.writeWord(<span class="st">"word/orders.docx"</span>, request,
-    <span class="ty">VKWordWriteOptions</span>.defaults()
-        .maxImages(<span class="num">100</span>)
-        .maxSingleImageBytes(<span class="num">5L</span> * <span class="num">1024</span> * <span class="num">1024</span>));
+<span class="ty">Vostok</span>.Office.writePPT(<span class="st">"ppt/summary.pptx"</span>, req);
+
+<span class="ty">String</span> pptText = <span class="ty">Vostok</span>.Office.readPPTText(<span class="st">"ppt/summary.pptx"</span>);
+<span class="ty">int</span> slides = <span class="ty">Vostok</span>.Office.countPPTSlides(<span class="st">"ppt/summary.pptx"</span>);
+
+<span class="ty">VKPptReadOptions</span> metadataOnly = <span class="ty">VKPptReadOptions</span>.defaults()
+    .imageLoadMode(<span class="ty">VKPptImageLoadMode</span>.METADATA_ONLY);
+<span class="ty">VKPptDocument</span> pptDoc = <span class="ty">Vostok</span>.Office.readPPT(<span class="st">"ppt/summary.pptx"</span>, metadataOnly);
+</code></pre>
+
+<h2>PDF 示例（方法名中的 PDF 全大写）</h2>
+<pre><code><span class="kw">import</span> yueyang.vostok.office.pdf.*;
+
+<span class="ty">VKPdfWriteRequest</span> req = <span class="kw">new</span> <span class="ty">VKPdfWriteRequest</span>();
+req.addPage().addParagraph(<span class="st">"账单 A001"</span>).addImageBytes(<span class="st">"logo.png"</span>, logoBytes);
+
+<span class="ty">Vostok</span>.Office.writePDF(<span class="st">"pdf/bill.pdf"</span>, req);
+
+<span class="ty">String</span> pdfText = <span class="ty">Vostok</span>.Office.readPDFText(<span class="st">"pdf/bill.pdf"</span>);
+<span class="ty">int</span> pages = <span class="ty">Vostok</span>.Office.countPDFPages(<span class="st">"pdf/bill.pdf"</span>);
+
+<span class="ty">VKPdfReadOptions</span> metadataOnly = <span class="ty">VKPdfReadOptions</span>.defaults()
+    .imageLoadMode(<span class="ty">VKPdfImageLoadMode</span>.METADATA_ONLY);
+<span class="ty">VKPdfDocument</span> pdfDoc = <span class="ty">Vostok</span>.Office.readPDF(<span class="st">"pdf/bill.pdf"</span>, metadataOnly);
 </code></pre>
 
 <div class="callout info">
   <div class="callout-title">字数统计规则</div>
-  Word 字数按非空白 Unicode code point 统计；空格、换行、制表符不计入字数。
+  Word/PPT/PDF 字数统一按“非空白 Unicode code point”统计；空格、换行、制表符不计入字数。
 </div>
 
 <h2>配置参数（VKOfficeConfig）</h2>
 <table class="config-table">
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td class="param-name">excelMaxSheets</td><td>int</td><td>256</td><td>Excel 最大工作表数量</td></tr>
-    <tr><td class="param-name">excelMaxRowsPerSheet</td><td>int</td><td>1,000,000</td><td>Excel 单表最大行数</td></tr>
-    <tr><td class="param-name">excelMaxColsPerRow</td><td>int</td><td>16,384</td><td>Excel 单行最大列数</td></tr>
-    <tr><td class="param-name">excelMaxCellChars</td><td>int</td><td>32,767</td><td>Excel 单元格最大字符数</td></tr>
-    <tr><td class="param-name">excelMaxSharedStrings</td><td>int</td><td>2,000,000</td><td>Excel sharedStrings 最大条目数</td></tr>
-    <tr><td class="param-name">excelMaxWorkbookBytes</td><td>long</td><td>536870912</td><td>Excel 文件字节上限（默认 512MB）</td></tr>
     <tr><td class="param-name">excelTempDir</td><td>String</td><td>"tmp/excel"</td><td>Excel 临时目录</td></tr>
-    <tr><td class="param-name">wordMaxDocumentBytes</td><td>long</td><td>536870912</td><td>Word 文件字节上限（默认 512MB）</td></tr>
-    <tr><td class="param-name">wordMaxTextChars</td><td>int</td><td>20,000,000</td><td>Word 文本最大字数</td></tr>
-    <tr><td class="param-name">wordMaxImages</td><td>int</td><td>10,000</td><td>Word 最大图片数量</td></tr>
-    <tr><td class="param-name">wordMaxSingleImageBytes</td><td>long</td><td>52428800</td><td>单张图片最大字节数（默认 50MB）</td></tr>
-    <tr><td class="param-name">wordMaxTotalImageBytes</td><td>long</td><td>536870912</td><td>所有图片总字节上限（默认 512MB）</td></tr>
     <tr><td class="param-name">wordTempDir</td><td>String</td><td>"tmp/word"</td><td>Word 临时目录</td></tr>
-    <tr><td class="param-name">xxeSampleBytes</td><td>int</td><td>8192</td><td>XML 安全采样字节数</td></tr>
-    <tr><td class="param-name">unzipMaxEntries</td><td>long</td><td>-1</td><td>解压最大条目数（-1 不限制）</td></tr>
-    <tr><td class="param-name">unzipMaxTotalUncompressedBytes</td><td>long</td><td>-1</td><td>解压总字节上限（-1 不限制）</td></tr>
-    <tr><td class="param-name">unzipMaxEntryUncompressedBytes</td><td>long</td><td>-1</td><td>单文件解压上限（-1 不限制）</td></tr>
+    <tr><td class="param-name">pptTempDir</td><td>String</td><td>"tmp/ppt"</td><td>PPT 临时目录</td></tr>
+    <tr><td class="param-name">pdfTempDir</td><td>String</td><td>"tmp/pdf"</td><td>PDF 临时目录</td></tr>
+    <tr><td class="param-name">pptMaxSlides</td><td>int</td><td>10,000</td><td>PPT 最大幻灯片数量</td></tr>
+    <tr><td class="param-name">pdfMaxPages</td><td>int</td><td>10,000</td><td>PDF 最大页数</td></tr>
+    <tr><td class="param-name">pdfMaxObjects</td><td>int</td><td>1,000,000</td><td>PDF 最大对象数</td></tr>
+    <tr><td class="param-name">pdfMaxStreamBytes</td><td>long</td><td>134217728</td><td>PDF 单 stream 解码上限（默认 128MB）</td></tr>
+    <tr><td class="param-name">xxeSampleBytes</td><td>int</td><td>8192</td><td>XML 安全采样字节数（Excel/Word/PPT）</td></tr>
   </tbody>
 </table>
 
@@ -152,12 +157,30 @@
     <tr><td><code>readExcel(path)</code></td><td>读取 .xlsx（全量）</td></tr>
     <tr><td><code>writeExcel(path, workbook)</code></td><td>写入 .xlsx</td></tr>
     <tr><td><code>readExcelRows(path, sheetName, options, consumer)</code></td><td>流式逐行读取 .xlsx</td></tr>
+
     <tr><td><code>readWordText(path)</code></td><td>读取 .docx 全文文本</td></tr>
-    <tr><td><code>readWordImages(path, options)</code></td><td>读取 .docx 全部图片（支持 metadata only）</td></tr>
+    <tr><td><code>readWordImages(path, options)</code></td><td>读取 .docx 全部图片</td></tr>
     <tr><td><code>countWordChars(path, options)</code></td><td>统计 .docx 字数（仅计数路径）</td></tr>
     <tr><td><code>countWordImages(path, options)</code></td><td>统计 .docx 图片数</td></tr>
-    <tr><td><code>readWord(path, options)</code></td><td>一次解包聚合读取 Word 文档信息</td></tr>
+    <tr><td><code>readWord(path, options)</code></td><td>聚合读取 Word 信息</td></tr>
     <tr><td><code>writeWord(path, request, options)</code></td><td>生成 .docx（文本 + 图片）</td></tr>
+
+    <tr><td><code>readPPTText(path, options)</code></td><td>读取 .pptx 文本</td></tr>
+    <tr><td><code>readPPTImages(path, options)</code></td><td>读取 .pptx 图片（支持 metadata-only）</td></tr>
+    <tr><td><code>countPPTChars(path, options)</code></td><td>统计 .pptx 字数（仅计数路径）</td></tr>
+    <tr><td><code>countPPTImages(path, options)</code></td><td>统计 .pptx 图片数</td></tr>
+    <tr><td><code>countPPTSlides(path, options)</code></td><td>统计 .pptx 幻灯片数</td></tr>
+    <tr><td><code>readPPT(path, options)</code></td><td>聚合读取 PPT 信息</td></tr>
+    <tr><td><code>writePPT(path, request, options)</code></td><td>生成 .pptx（文本 + 图片）</td></tr>
+
+    <tr><td><code>readPDFText(path, options)</code></td><td>读取 .pdf 文本</td></tr>
+    <tr><td><code>readPDFImages(path, options)</code></td><td>读取 .pdf 图片（支持 metadata-only）</td></tr>
+    <tr><td><code>countPDFChars(path, options)</code></td><td>统计 .pdf 字数（仅计数路径）</td></tr>
+    <tr><td><code>countPDFImages(path, options)</code></td><td>统计 .pdf 图片数</td></tr>
+    <tr><td><code>countPDFPages(path, options)</code></td><td>统计 .pdf 页数</td></tr>
+    <tr><td><code>readPDF(path, options)</code></td><td>聚合读取 PDF 信息</td></tr>
+    <tr><td><code>writePDF(path, request, options)</code></td><td>生成 .pdf（文本 + 图片）</td></tr>
+
     <tr><td><code>started()</code></td><td>是否已初始化</td></tr>
     <tr><td><code>config()</code></td><td>获取当前配置副本</td></tr>
     <tr><td><code>close()</code></td><td>关闭 Office 模块</td></tr>
@@ -171,12 +194,12 @@
     <tr><td><code>OF-400</code></td><td>INVALID_ARGUMENT</td><td>参数为空或非法</td></tr>
     <tr><td><code>OF-402</code></td><td>CONFIG_ERROR</td><td>Office 配置不合法</td></tr>
     <tr><td><code>OF-403</code></td><td>STATE_ERROR</td><td>运行状态不满足（如 File 模式不支持）</td></tr>
-    <tr><td><code>OF-404</code></td><td>NOT_FOUND</td><td>资源不存在（如 sheet / 图片文件）</td></tr>
+    <tr><td><code>OF-404</code></td><td>NOT_FOUND</td><td>资源不存在（如文件/部件）</td></tr>
     <tr><td><code>OF-500</code></td><td>IO_ERROR</td><td>底层 IO 失败</td></tr>
-    <tr><td><code>OF-530</code></td><td>UNSUPPORTED_FORMAT</td><td>不支持格式（当前仅 .xlsx / .docx）</td></tr>
+    <tr><td><code>OF-530</code></td><td>UNSUPPORTED_FORMAT</td><td>不支持格式（仅 .xlsx/.docx/.pptx/.pdf）</td></tr>
     <tr><td><code>OF-564</code></td><td>PARSE_ERROR</td><td>Office 文档解析失败</td></tr>
     <tr><td><code>OF-565</code></td><td>WRITE_ERROR</td><td>Office 文档写入失败</td></tr>
-    <tr><td><code>OF-566</code></td><td>LIMIT_EXCEEDED</td><td>超过大小/行列/字数/图片限制</td></tr>
+    <tr><td><code>OF-566</code></td><td>LIMIT_EXCEEDED</td><td>超过字数/图片/页数/大小限制</td></tr>
     <tr><td><code>OF-567</code></td><td>SECURITY_ERROR</td><td>安全检测失败（路径/魔数/XXE）</td></tr>
   </tbody>
 </table>
