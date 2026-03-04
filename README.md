@@ -3,7 +3,7 @@
 面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合多个模块能力。
 各模块可独立初始化、按需使用。
 
-**当前版本：`1.9.2.2`**
+**当前版本：`1.9.2.3`**
 
 **详细文档**：[Vostok Docs](https://yueeeeeeyang.github.io/vostok/)
 
@@ -15,7 +15,7 @@
 <dependency>
   <groupId>yueyang</groupId>
   <artifactId>vostok</artifactId>
-  <version>1.9.2.2</version>
+  <version>1.9.2.3</version>
 </dependency>
 ```
 
@@ -138,7 +138,16 @@ Vostok.Data.tx(() -> {
 
 ```java
 import yueyang.vostok.Vostok;
+import yueyang.vostok.web.mvc.VKMvcConfig;
+import yueyang.vostok.web.mvc.VKWebResult;
+import yueyang.vostok.web.mvc.annotation.VKApi;
+import yueyang.vostok.web.mvc.annotation.VKBody;
+import yueyang.vostok.web.mvc.annotation.VKGet;
+import yueyang.vostok.web.mvc.annotation.VKPath;
+import yueyang.vostok.web.mvc.annotation.VKPost;
+import yueyang.vostok.web.mvc.annotation.VKQuery;
 
+// 方式 1：函数式路由
 Vostok.Web.init(8080)
     .get("/users/{id}", (req, res) -> {
         String id = req.param("id");
@@ -150,6 +159,31 @@ Vostok.Web.init(8080)
     .health();
 
 Vostok.Web.start();
+
+// 方式 2：@VKApi 注解路由 + 自动 VKWebResult 包装
+class CreateReq {
+    public String name;
+}
+
+@VKApi("/api/users")
+class UserApi {
+    @VKGet("/detail/{id}")
+    public java.util.Map<String, Object> detail(
+            @VKPath("id") long id,
+            @VKQuery(value = "page", required = false, defaultValue = "1") int page) {
+        return java.util.Map.of("id", id, "page", page);
+    }
+
+    @VKPost("/create")
+    public VKWebResult<String> create(@VKBody CreateReq req) {
+        return VKWebResult.of(201, null, "created-" + req.name);
+    }
+}
+
+Vostok.Web.init(8080)
+    .mvcConfig(VKMvcConfig.defaults().exposeExceptionMessage(false))
+    .controller(new UserApi())
+    .controllers("com.example.api");
 ```
 
 ### Cache

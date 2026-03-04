@@ -14,7 +14,7 @@
       <div class="logo-mark">V</div>
       <div>
         <div class="logo-text">Vostok</div>
-        <div class="logo-version">v1.9.2.2 · JDK 17+</div>
+        <div class="logo-version">v1.9.2.3 · JDK 17+</div>
       </div>
     </a>
   </div>
@@ -44,7 +44,7 @@
 <div class="page-header">
   <div class="module-tag">🌐 Vostok.Web</div>
   <h1>Web 服务器模块</h1>
-  <p class="desc">基于 Java NIO Reactor 模式的高性能 HTTP 服务器，支持路由、中间件、WebSocket、SSE、静态资源、GZIP 压缩、CORS、TLS/HTTPS、限流，以及根据实体类自动生成 REST CRUD API。</p>
+  <p class="desc">基于 Java NIO Reactor 模式的高性能 HTTP 服务器，支持函数式路由、<code>@VKApi</code> 注解控制器参数绑定、统一 <code>VKWebResult</code> 返回、中间件、WebSocket、SSE、静态资源、GZIP 压缩、CORS、TLS/HTTPS、限流，以及根据实体类自动生成 REST CRUD API。</p>
 </div>
 
 <h2>初始化与启动</h2>
@@ -89,6 +89,92 @@ web.post(<span class="st">"/items"</span>, handler);
 web.route(<span class="st">"PUT"</span>, <span class="st">"/items/{id}"</span>, handler);
 web.route(<span class="st">"DELETE"</span>, <span class="st">"/items/{id}"</span>, handler);
 web.route(<span class="st">"PATCH"</span>, <span class="st">"/items/{id}"</span>, handler);</code></pre>
+
+<h3>注解控制器（@VKApi）</h3>
+<p>除了函数式 <code>VKHandler</code>，也可以用注解方式定义 API。类上使用 <code>@VKApi</code>，方法上使用 <code>@VKGet/@VKPost/@VKPut/@VKDelete/@VKPatch</code>。</p>
+<pre><code><span class="kw">import</span> yueyang.vostok.Vostok;
+<span class="kw">import</span> yueyang.vostok.web.http.VKResponse;
+<span class="kw">import</span> yueyang.vostok.web.mvc.VKMvcConfig;
+<span class="kw">import</span> yueyang.vostok.web.mvc.VKWebResult;
+<span class="kw">import</span> yueyang.vostok.web.mvc.annotation.*;
+
+<span class="kw">class</span> <span class="ty">CreateUserReq</span> {
+    <span class="kw">public</span> <span class="ty">String</span> name;
+}
+
+<span class="an">@VKApi</span>(<span class="st">"/api/users"</span>)
+<span class="kw">class</span> <span class="ty">UserApi</span> {
+    <span class="an">@VKGet</span>(<span class="st">"/detail/{id}"</span>)
+    <span class="kw">public</span> <span class="ty">java.util.Map</span>&lt;<span class="ty">String</span>, <span class="ty">Object</span>&gt; detail(
+            <span class="an">@VKPath</span>(<span class="st">"id"</span>) <span class="kw">long</span> id,
+            <span class="an">@VKQuery</span>(value = <span class="st">"page"</span>, required = <span class="kw">false</span>, defaultValue = <span class="st">"1"</span>) <span class="kw">int</span> page) {
+        <span class="kw">return</span> <span class="ty">java.util.Map</span>.of(<span class="st">"id"</span>, id, <span class="st">"page"</span>, page);
+    }
+
+    <span class="an">@VKPost</span>(<span class="st">"/create"</span>)
+    <span class="kw">public</span> <span class="ty">VKWebResult</span>&lt;<span class="ty">String</span>&gt; create(<span class="an">@VKBody</span> <span class="ty">CreateUserReq</span> req) {
+        <span class="kw">return</span> <span class="ty">VKWebResult</span>.of(<span class="nu">201</span>, <span class="kw">null</span>, <span class="st">"created-"</span> + req.name);
+    }
+
+    <span class="an">@VKGet</span>(<span class="st">"/manual"</span>)
+    <span class="kw">public</span> <span class="kw">void</span> manual(<span class="ty">VKResponse</span> res) {
+        <span class="cm">// void 返回代表手动响应模式，不自动包装 VKWebResult</span>
+        res.status(<span class="nu">202</span>).text(<span class="st">"manual"</span>);
+    }
+}
+
+<span class="ty">Vostok</span>.Web.init(<span class="nu">8080</span>)
+    .mvcConfig(<span class="ty">VKMvcConfig</span>.defaults().exposeExceptionMessage(<span class="kw">false</span>))
+    .controller(<span class="kw">new</span> <span class="ty">UserApi</span>())
+    .controllers(<span class="st">"com.example.api"</span>);</code></pre>
+
+<div class="callout">
+  <div class="callout-title">路径拼接规则</div>
+  <code>@VKApi("/api/users") + @VKGet("/list") =&gt; /api/users/list</code><br>
+  <code>@VKApi</code> 不写前缀时，方法注解路径应写完整路径（如 <code>/api/users/list</code>）。
+</div>
+
+<h3>参数绑定注解</h3>
+<table class="api-table">
+  <thead><tr><th>注解</th><th>来源</th><th>示例</th></tr></thead>
+  <tbody>
+    <tr><td><code>@VKPath("id")</code></td><td>路径参数</td><td><code>/users/{id}</code></td></tr>
+    <tr><td><code>@VKQuery("page")</code></td><td>Query 参数（支持 defaultValue）</td><td><code>?page=1</code></td></tr>
+    <tr><td><code>@VKHeader("X-Token")</code></td><td>请求头</td><td><code>X-Token: abc</code></td></tr>
+    <tr><td><code>@VKCookie("sid")</code></td><td>Cookie</td><td><code>Cookie: sid=s-001</code></td></tr>
+    <tr><td><code>@VKBody</code></td><td>JSON 请求体</td><td>绑定到 POJO</td></tr>
+    <tr><td><code>@VKForm("name")</code></td><td>表单字段</td><td>multipart/form-data 或 form</td></tr>
+    <tr><td><code>@VKFile("file")</code></td><td>单文件上传</td><td><code>VKUploadedFile</code></td></tr>
+    <tr><td><code>@VKFiles("files")</code></td><td>多文件上传</td><td><code>List&lt;VKUploadedFile&gt;</code></td></tr>
+    <tr><td><code>VKRequest / VKResponse</code></td><td>原生对象注入</td><td>参数可直接声明类型，无需注解</td></tr>
+  </tbody>
+</table>
+
+<h3>自动返回与 VKWebResult&lt;T&gt;</h3>
+<p><code>@VKApi</code> 路由默认启用自动返回包装。普通返回值会自动包装成 <code>VKWebResult.ok(data)</code>，并补齐链路字段。</p>
+<table class="api-table">
+  <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>statusCode</code></td><td><code>int</code></td><td>业务状态码，同时作为 HTTP 状态码输出</td></tr>
+    <tr><td><code>errorMessage</code></td><td><code>String</code></td><td>错误信息；成功时一般为 null</td></tr>
+    <tr><td><code>data</code></td><td><code>T</code></td><td>业务返回数据</td></tr>
+    <tr><td><code>requestCostMs</code></td><td><code>long</code></td><td>请求耗时（毫秒）</td></tr>
+    <tr><td><code>traceId</code></td><td><code>String</code></td><td>链路追踪 ID（来自请求）</td></tr>
+    <tr><td><code>requestTime</code></td><td><code>long</code></td><td>请求进入处理器时间（epochMillis）</td></tr>
+    <tr><td><code>responseTime</code></td><td><code>long</code></td><td>响应写出前时间（epochMillis）</td></tr>
+  </tbody>
+</table>
+
+<pre><code><span class="cm">// 返回普通对象：自动包装为 VKWebResult.ok(...)</span>
+{
+  <span class="st">"statusCode"</span>: <span class="nu">200</span>,
+  <span class="st">"errorMessage"</span>: <span class="kw">null</span>,
+  <span class="st">"data"</span>: {<span class="st">"id"</span>: <span class="nu">9</span>, <span class="st">"page"</span>: <span class="nu">1</span>},
+  <span class="st">"requestCostMs"</span>: <span class="nu">3</span>,
+  <span class="st">"traceId"</span>: <span class="st">"trace-abc"</span>,
+  <span class="st">"requestTime"</span>: <span class="nu">1741075200000</span>,
+  <span class="st">"responseTime"</span>: <span class="nu">1741075200003</span>
+}</code></pre>
 
 <h3>路径参数 &amp; 查询参数</h3>
 <pre><code>web.get(<span class="st">"/users/{id}"</span>, (req, res) -&gt; {
@@ -512,6 +598,12 @@ web.error((error, req, res) -&gt; {
     );
 });</code></pre>
 
+<div class="callout">
+  <div class="callout-title">@VKApi 路由异常处理说明</div>
+  <code>@VKApi</code> 路由内部会把绑定错误统一包装为 400、执行异常统一包装为 500 的 <code>VKWebResult</code>。<br>
+  传统 <code>get/post/route</code> 注册的函数式路由仍按原逻辑走全局 <code>web.error(...)</code>。
+</div>
+
 <h2>生命周期</h2>
 <pre><code><span class="cm">// 启动服务器（阻塞直到服务器绑定端口完成）</span>
 <span class="ty">Vostok</span>.Web.start();
@@ -592,6 +684,9 @@ web.error((error, req, res) -&gt; {
     <tr><td><code>get(path, VKHandler)</code></td><td>注册 GET 路由</td></tr>
     <tr><td><code>post(path, VKHandler)</code></td><td>注册 POST 路由</td></tr>
     <tr><td><code>route(method, path, VKHandler)</code></td><td>注册任意 HTTP 方法路由</td></tr>
+    <tr><td><code>controller(Object)</code></td><td>注册单个 <code>@VKApi</code> 控制器实例</td></tr>
+    <tr><td><code>controllers(String... basePackages)</code></td><td>扫描包并注册 <code>@VKApi</code> 控制器</td></tr>
+    <tr><td><code>mvcConfig(VKMvcConfig)</code></td><td>设置注解路由行为（自动包装/异常暴露等）</td></tr>
     <tr><td><code>use(VKMiddleware)</code></td><td>注册全局中间件</td></tr>
     <tr><td><code>error(VKErrorHandler)</code></td><td>注册全局错误处理器</td></tr>
     <tr><td><code>cors()</code></td><td>启用默认 CORS 中间件</td></tr>
@@ -611,6 +706,19 @@ web.error((error, req, res) -&gt; {
     <tr><td><code>health(String path)</code></td><td>注册自定义路径健康检查端点</td></tr>
     <tr><td><code>metrics()</code></td><td>注册 GET /actuator/metrics 端点</td></tr>
     <tr><td><code>metrics(String path)</code></td><td>注册自定义路径 Metrics 端点</td></tr>
+  </tbody>
+</table>
+
+<h3>MVC 配置（VKMvcConfig）</h3>
+<table class="api-table">
+  <thead><tr><th>配置项</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>autoWrapEnabled</code></td><td><code>true</code></td><td>是否对非 <code>VKWebResult</code> 返回值自动包装</td></tr>
+    <tr><td><code>internalErrorMessage</code></td><td><code>"Internal Server Error"</code></td><td>控制器异常的默认错误文案</td></tr>
+    <tr><td><code>exposeExceptionMessage</code></td><td><code>false</code></td><td>是否对外暴露异常原始 message（建议生产关闭）</td></tr>
+    <tr><td><code>failFastOnControllerLoad</code></td><td><code>true</code></td><td>控制器扫描/注册失败时是否立即抛错</td></tr>
+    <tr><td><code>bindErrorStatus</code></td><td><code>400</code></td><td>参数绑定失败的 HTTP 状态码</td></tr>
+    <tr><td><code>internalErrorStatus</code></td><td><code>500</code></td><td>控制器执行异常的 HTTP 状态码</td></tr>
   </tbody>
 </table>
 

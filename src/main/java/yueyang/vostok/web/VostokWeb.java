@@ -13,6 +13,8 @@ import yueyang.vostok.web.rate.VKRateLimitConfig;
 import yueyang.vostok.web.sse.VKSseHandler;
 import yueyang.vostok.web.websocket.VKWebSocketConfig;
 import yueyang.vostok.web.websocket.VKWebSocketHandler;
+import yueyang.vostok.web.mvc.VKMvcConfig;
+import yueyang.vostok.web.mvc.VKMvcControllerRegistry;
 
 /**
  * Vostok Web 公共 API 入口类。
@@ -25,6 +27,7 @@ public class VostokWeb {
     private static final Object LOCK = new Object();
     private static final VostokWeb INSTANCE = new VostokWeb();
     private static VKWebServer server;
+    private static volatile VKMvcConfig mvcConfig = VKMvcConfig.defaults();
 
     protected VostokWeb() {
     }
@@ -36,6 +39,7 @@ public class VostokWeb {
     public static VostokWeb init(VKWebConfig config) {
         synchronized (LOCK) {
             server = new VKWebServer(config);
+            mvcConfig = VKMvcConfig.defaults();
         }
         return INSTANCE;
     }
@@ -113,6 +117,26 @@ public class VostokWeb {
     public VostokWeb route(String method, String path, VKHandler handler) {
         ensureServer();
         server.addRoute(method, path, handler);
+        return this;
+    }
+
+    /** 注册单个注解控制器实例。 */
+    public VostokWeb controller(Object controller) {
+        ensureServer();
+        new VKMvcControllerRegistry(server, mvcConfig).registerController(controller);
+        return this;
+    }
+
+    /** 按包扫描并注册注解控制器。 */
+    public VostokWeb controllers(String... basePackages) {
+        ensureServer();
+        new VKMvcControllerRegistry(server, mvcConfig).registerControllers(basePackages);
+        return this;
+    }
+
+    /** 设置 MVC 注解路由配置。 */
+    public VostokWeb mvcConfig(VKMvcConfig config) {
+        mvcConfig = config == null ? VKMvcConfig.defaults() : config.copy();
         return this;
     }
 
