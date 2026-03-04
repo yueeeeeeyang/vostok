@@ -44,7 +44,7 @@
 <div class="page-header">
   <div class="module-tag">📊 Vostok.Office</div>
   <h1>Office 文档处理模块</h1>
-  <p class="desc">提供 Office 相关能力入口。当前版本聚焦 Excel（.xlsx）读写：支持全量读取、流式逐行读取、生成工作簿，并复用 File 模块的 ZIP/UNZIP 能力与 Security 模块的安全检测链路。</p>
+  <p class="desc">提供 Office 相关能力入口。当前支持 Excel（.xlsx）与 Word（.docx）能力：Excel 读写/流式读取，Word 文本与图片读取、字数与图片数统计，以及文本+图片的 Word 生成。</p>
 </div>
 
 <h2>初始化（建议显式）</h2>
@@ -55,84 +55,90 @@
 <span class="cm">// Office 依赖 File 模块（用于本地文件读写与 zip/unzip）</span>
 <span class="ty">Vostok</span>.File.init(<span class="kw">new</span> <span class="ty">VKFileConfig</span>().baseDir(<span class="st">"./data"</span>));
 
-<span class="cm">// Office 配置（可选）</span>
 <span class="ty">Vostok</span>.Office.init(<span class="kw">new</span> <span class="ty">VKOfficeConfig</span>()
-    .excelMaxSheets(<span class="num">256</span>)
-    .excelMaxRowsPerSheet(<span class="num">1_000_000</span>)
-    .excelMaxColsPerRow(<span class="num">16_384</span>)
-    .excelMaxCellChars(<span class="num">32_767</span>)
-    .excelMaxWorkbookBytes(<span class="num">512L</span> * <span class="num">1024</span> * <span class="num">1024</span>)
     .excelTempDir(<span class="st">"tmp/excel"</span>)
-);
+    .wordTempDir(<span class="st">"tmp/word"</span>)
+    .wordMaxTextChars(<span class="num">20_000_000</span>)
+    .wordMaxImages(<span class="num">10_000</span>));
 </code></pre>
 
 <div class="callout warn">
   <div class="callout-title">当前限制</div>
-  仅支持 <code>.xlsx</code>，且目前只支持 <code>Vostok.File</code> 的 <code>local</code> 模式。
+  仅支持 <code>.xlsx</code> 与 <code>.docx</code>，且目前只支持 <code>Vostok.File</code> 的 <code>local</code> 模式。
 </div>
 
-<h2>写入 Excel</h2>
+<h2>Excel 示例</h2>
 <pre><code><span class="kw">import</span> yueyang.vostok.office.excel.*;
 
 <span class="ty">VKExcelWorkbook</span> workbook = <span class="kw">new</span> <span class="ty">VKExcelWorkbook</span>()
     .addSheet(<span class="kw">new</span> <span class="ty">VKExcelSheet</span>(<span class="st">"Orders"</span>)
         .addCell(<span class="ty">VKExcelCell</span>.stringCell(<span class="num">1</span>, <span class="num">1</span>, <span class="st">"orderId"</span>))
-        .addCell(<span class="ty">VKExcelCell</span>.stringCell(<span class="num">1</span>, <span class="num">2</span>, <span class="st">"amount"</span>))
-        .addCell(<span class="ty">VKExcelCell</span>.stringCell(<span class="num">2</span>, <span class="num">1</span>, <span class="st">"A001"</span>))
-        .addCell(<span class="ty">VKExcelCell</span>.numberCell(<span class="num">2</span>, <span class="num">2</span>, <span class="st">"99.5"</span>))
-        .addCell(<span class="ty">VKExcelCell</span>.formulaCell(<span class="num">3</span>, <span class="num">2</span>, <span class="st">"SUM(B2:B2)"</span>, <span class="st">"99.5"</span>)));
+        .addCell(<span class="ty">VKExcelCell</span>.numberCell(<span class="num">2</span>, <span class="num">2</span>, <span class="st">"99.5"</span>)));
 
 <span class="ty">Vostok</span>.Office.writeExcel(<span class="st">"excel/orders.xlsx"</span>, workbook);
+
+<span class="ty">Vostok</span>.Office.readExcelRows(<span class="st">"excel/orders.xlsx"</span>, <span class="st">"Orders"</span>,
+    <span class="ty">VKExcelReadOptions</span>.defaults(), row -&gt; process(row.rowIndex(), row.cells()));
 </code></pre>
 
-<h2>读取 Excel（全量）</h2>
-<pre><code><span class="kw">import</span> yueyang.vostok.office.excel.VKExcelWorkbook;
+<h2>Word 读取</h2>
+<pre><code><span class="kw">import</span> yueyang.vostok.office.word.*;
 
-<span class="ty">VKExcelWorkbook</span> wb = <span class="ty">Vostok</span>.Office.readExcel(<span class="st">"excel/orders.xlsx"</span>);
-<span class="ty">String</span> orderId = wb.getSheet(<span class="st">"Orders"</span>).getCell(<span class="num">2</span>, <span class="num">1</span>).value();
+<span class="cm">// 读取全文文本</span>
+<span class="ty">String</span> text = <span class="ty">Vostok</span>.Office.readWordText(<span class="st">"word/orders.docx"</span>);
+
+<span class="cm">// 统计字数（仅计数路径，不构建全文字符串）</span>
+<span class="ty">int</span> chars = <span class="ty">Vostok</span>.Office.countWordChars(<span class="st">"word/orders.docx"</span>);
+
+<span class="cm">// 读取全部图片（默认返回 bytes）</span>
+<span class="ty">List</span>&lt;<span class="ty">VKWordImage</span>&gt; images = <span class="ty">Vostok</span>.Office.readWordImages(<span class="st">"word/orders.docx"</span>);
+
+<span class="cm">// 大文件模式：仅读取图片 metadata，避免 OOM</span>
+<span class="ty">VKWordReadOptions</span> metadataOnly = <span class="ty">VKWordReadOptions</span>.defaults()
+    .imageLoadMode(<span class="ty">VKWordImageLoadMode</span>.METADATA_ONLY);
+<span class="ty">List</span>&lt;<span class="ty">VKWordImage</span>&gt; metaImages = <span class="ty">Vostok</span>.Office.readWordImages(<span class="st">"word/orders.docx"</span>, metadataOnly);
+
+<span class="cm">// 一次解包聚合读取：文本 + 字数 + 图片 + 图片数</span>
+<span class="ty">VKWordDocument</span> doc = <span class="ty">Vostok</span>.Office.readWord(<span class="st">"word/orders.docx"</span>, metadataOnly);
 </code></pre>
 
-<h2>读取 Excel（流式逐行，推荐大文件）</h2>
-<pre><code><span class="kw">import</span> yueyang.vostok.office.excel.VKExcelReadOptions;
+<h2>Word 生成（文本 + 图片）</h2>
+<pre><code><span class="kw">import</span> yueyang.vostok.office.word.*;
 
-<span class="ty">Vostok</span>.Office.readExcelRows(
-    <span class="st">"excel/orders.xlsx"</span>,
-    <span class="st">"Orders"</span>,
-    <span class="ty">VKExcelReadOptions</span>.defaults().maxRowsPerSheet(<span class="num">1_000_000</span>),
-    row -&gt; {
-        <span class="ty">int</span> rowNo = row.rowIndex();
-        <span class="ty">String</span> id = row.cells().containsKey(<span class="num">1</span>) ? row.cells().get(<span class="num">1</span>).value() : <span class="kw">null</span>;
-        process(rowNo, id);
-    }
-);
+<span class="ty">VKWordWriteRequest</span> request = <span class="kw">new</span> <span class="ty">VKWordWriteRequest</span>()
+    .addParagraph(<span class="st">"订单 A001"</span>)
+    .addImageBytes(<span class="st">"logo.png"</span>, logoBytes)   <span class="cm">// bytes 输入</span>
+    .addImageFile(<span class="st">"images/sign.png"</span>);       <span class="cm">// 文件路径输入（相对 File.baseDir）</span>
+
+<span class="ty">Vostok</span>.Office.writeWord(<span class="st">"word/orders.docx"</span>, request,
+    <span class="ty">VKWordWriteOptions</span>.defaults()
+        .maxImages(<span class="num">100</span>)
+        .maxSingleImageBytes(<span class="num">5L</span> * <span class="num">1024</span> * <span class="num">1024</span>));
 </code></pre>
 
 <div class="callout info">
-  <div class="callout-title">内存建议</div>
-  <code>readExcelRows()</code> 采用流式 StAX 解析，适合大文件导入；<code>readExcel()</code> 会构建完整工作簿对象，建议用于中小文件。
+  <div class="callout-title">字数统计规则</div>
+  Word 字数按非空白 Unicode code point 统计；空格、换行、制表符不计入字数。
 </div>
-
-<h2>安全链路</h2>
-<ul>
-  <li>路径安全：调用 <code>Vostok.Security.assertSafePath</code> 检查输入路径。</li>
-  <li>文件识别：读取文件头并校验 ZIP 魔数，拒绝伪装文件。</li>
-  <li>脚本伪装：调用 <code>checkExecutableScriptUpload</code> 检测恶意上传。</li>
-  <li>XML 安全：禁用 DTD/外部实体，并做 XXE 样本检测。</li>
-  <li>解压安全：复用 File 模块 unzip 限制（Zip Slip / Zip Bomb 防护）。</li>
-</ul>
 
 <h2>配置参数（VKOfficeConfig）</h2>
 <table class="config-table">
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td class="param-name">excelMaxSheets</td><td>int</td><td>256</td><td>最大工作表数量</td></tr>
-    <tr><td class="param-name">excelMaxRowsPerSheet</td><td>int</td><td>1,000,000</td><td>单表最大行数</td></tr>
-    <tr><td class="param-name">excelMaxColsPerRow</td><td>int</td><td>16,384</td><td>单行最大列数</td></tr>
-    <tr><td class="param-name">excelMaxCellChars</td><td>int</td><td>32,767</td><td>单元格最大字符数</td></tr>
-    <tr><td class="param-name">excelMaxSharedStrings</td><td>int</td><td>2,000,000</td><td>sharedStrings 最大条目数</td></tr>
-    <tr><td class="param-name">excelMaxWorkbookBytes</td><td>long</td><td>536870912</td><td>工作簿最大字节数（默认 512MB）</td></tr>
-    <tr><td class="param-name">excelTempDir</td><td>String</td><td>"tmp/excel"</td><td>临时目录（相对 File.baseDir）</td></tr>
-    <tr><td class="param-name">xxeSampleBytes</td><td>int</td><td>8192</td><td>XML 采样检测字节数</td></tr>
+    <tr><td class="param-name">excelMaxSheets</td><td>int</td><td>256</td><td>Excel 最大工作表数量</td></tr>
+    <tr><td class="param-name">excelMaxRowsPerSheet</td><td>int</td><td>1,000,000</td><td>Excel 单表最大行数</td></tr>
+    <tr><td class="param-name">excelMaxColsPerRow</td><td>int</td><td>16,384</td><td>Excel 单行最大列数</td></tr>
+    <tr><td class="param-name">excelMaxCellChars</td><td>int</td><td>32,767</td><td>Excel 单元格最大字符数</td></tr>
+    <tr><td class="param-name">excelMaxSharedStrings</td><td>int</td><td>2,000,000</td><td>Excel sharedStrings 最大条目数</td></tr>
+    <tr><td class="param-name">excelMaxWorkbookBytes</td><td>long</td><td>536870912</td><td>Excel 文件字节上限（默认 512MB）</td></tr>
+    <tr><td class="param-name">excelTempDir</td><td>String</td><td>"tmp/excel"</td><td>Excel 临时目录</td></tr>
+    <tr><td class="param-name">wordMaxDocumentBytes</td><td>long</td><td>536870912</td><td>Word 文件字节上限（默认 512MB）</td></tr>
+    <tr><td class="param-name">wordMaxTextChars</td><td>int</td><td>20,000,000</td><td>Word 文本最大字数</td></tr>
+    <tr><td class="param-name">wordMaxImages</td><td>int</td><td>10,000</td><td>Word 最大图片数量</td></tr>
+    <tr><td class="param-name">wordMaxSingleImageBytes</td><td>long</td><td>52428800</td><td>单张图片最大字节数（默认 50MB）</td></tr>
+    <tr><td class="param-name">wordMaxTotalImageBytes</td><td>long</td><td>536870912</td><td>所有图片总字节上限（默认 512MB）</td></tr>
+    <tr><td class="param-name">wordTempDir</td><td>String</td><td>"tmp/word"</td><td>Word 临时目录</td></tr>
+    <tr><td class="param-name">xxeSampleBytes</td><td>int</td><td>8192</td><td>XML 安全采样字节数</td></tr>
     <tr><td class="param-name">unzipMaxEntries</td><td>long</td><td>-1</td><td>解压最大条目数（-1 不限制）</td></tr>
     <tr><td class="param-name">unzipMaxTotalUncompressedBytes</td><td>long</td><td>-1</td><td>解压总字节上限（-1 不限制）</td></tr>
     <tr><td class="param-name">unzipMaxEntryUncompressedBytes</td><td>long</td><td>-1</td><td>单文件解压上限（-1 不限制）</td></tr>
@@ -143,13 +149,15 @@
 <table class="api-table">
   <thead><tr><th>方法</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td><code>init()</code></td><td>使用默认配置初始化 Office 模块</td></tr>
-    <tr><td><code>init(config)</code></td><td>按指定配置初始化 Office 模块</td></tr>
     <tr><td><code>readExcel(path)</code></td><td>读取 .xlsx（全量）</td></tr>
-    <tr><td><code>readExcel(path, options)</code></td><td>带限制选项读取 .xlsx（全量）</td></tr>
     <tr><td><code>writeExcel(path, workbook)</code></td><td>写入 .xlsx</td></tr>
-    <tr><td><code>writeExcel(path, workbook, options)</code></td><td>带限制选项写入 .xlsx</td></tr>
-    <tr><td><code>readExcelRows(path, sheetName, options, consumer)</code></td><td>按行流式读取 .xlsx</td></tr>
+    <tr><td><code>readExcelRows(path, sheetName, options, consumer)</code></td><td>流式逐行读取 .xlsx</td></tr>
+    <tr><td><code>readWordText(path)</code></td><td>读取 .docx 全文文本</td></tr>
+    <tr><td><code>readWordImages(path, options)</code></td><td>读取 .docx 全部图片（支持 metadata only）</td></tr>
+    <tr><td><code>countWordChars(path, options)</code></td><td>统计 .docx 字数（仅计数路径）</td></tr>
+    <tr><td><code>countWordImages(path, options)</code></td><td>统计 .docx 图片数</td></tr>
+    <tr><td><code>readWord(path, options)</code></td><td>一次解包聚合读取 Word 文档信息</td></tr>
+    <tr><td><code>writeWord(path, request, options)</code></td><td>生成 .docx（文本 + 图片）</td></tr>
     <tr><td><code>started()</code></td><td>是否已初始化</td></tr>
     <tr><td><code>config()</code></td><td>获取当前配置副本</td></tr>
     <tr><td><code>close()</code></td><td>关闭 Office 模块</td></tr>
@@ -163,13 +171,13 @@
     <tr><td><code>OF-400</code></td><td>INVALID_ARGUMENT</td><td>参数为空或非法</td></tr>
     <tr><td><code>OF-402</code></td><td>CONFIG_ERROR</td><td>Office 配置不合法</td></tr>
     <tr><td><code>OF-403</code></td><td>STATE_ERROR</td><td>运行状态不满足（如 File 模式不支持）</td></tr>
-    <tr><td><code>OF-404</code></td><td>NOT_FOUND</td><td>sheet 或资源不存在</td></tr>
+    <tr><td><code>OF-404</code></td><td>NOT_FOUND</td><td>资源不存在（如 sheet / 图片文件）</td></tr>
     <tr><td><code>OF-500</code></td><td>IO_ERROR</td><td>底层 IO 失败</td></tr>
-    <tr><td><code>OF-530</code></td><td>UNSUPPORTED_FORMAT</td><td>不支持格式（当前仅 .xlsx）</td></tr>
-    <tr><td><code>OF-564</code></td><td>PARSE_ERROR</td><td>Excel 解析失败</td></tr>
-    <tr><td><code>OF-565</code></td><td>WRITE_ERROR</td><td>Excel 写入失败</td></tr>
-    <tr><td><code>OF-566</code></td><td>LIMIT_EXCEEDED</td><td>超过行列/大小等限制</td></tr>
-    <tr><td><code>OF-567</code></td><td>SECURITY_ERROR</td><td>安全检测失败（魔数/XXE/路径等）</td></tr>
+    <tr><td><code>OF-530</code></td><td>UNSUPPORTED_FORMAT</td><td>不支持格式（当前仅 .xlsx / .docx）</td></tr>
+    <tr><td><code>OF-564</code></td><td>PARSE_ERROR</td><td>Office 文档解析失败</td></tr>
+    <tr><td><code>OF-565</code></td><td>WRITE_ERROR</td><td>Office 文档写入失败</td></tr>
+    <tr><td><code>OF-566</code></td><td>LIMIT_EXCEEDED</td><td>超过大小/行列/字数/图片限制</td></tr>
+    <tr><td><code>OF-567</code></td><td>SECURITY_ERROR</td><td>安全检测失败（路径/魔数/XXE）</td></tr>
   </tbody>
 </table>
 

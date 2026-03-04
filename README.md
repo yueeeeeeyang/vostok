@@ -29,7 +29,7 @@
 | `Vostok.Web` | `VostokWeb` | NIO Web 服务、路由、中间件、WebSocket、SSE、自动 CRUD |
 | `Vostok.Cache` | `VostokCache` | Memory / Redis / 两级缓存、Pipeline、统计 |
 | `Vostok.File` | `VostokFile` | 文件读写、压缩解压、目录操作、监听、文件加解密 |
-| `Vostok.Office` | `VostokOffice` | Office 能力入口（当前支持 Excel .xlsx 读写与流式导入） |
+| `Vostok.Office` | `VostokOffice` | Office 能力入口（支持 Excel .xlsx + Word .docx 读写/统计） |
 | `Vostok.Log` | `VostokLog` | 异步日志、滚动压缩、命名 logger、MDC |
 | `Vostok.Config` | `VostokConfig` | 配置加载、热更新、变更监听、类型绑定 |
 | `Vostok.Security` | `VostokSecurity` | SQL/XSS/路径等安全检测、加解密、签名验签 |
@@ -193,21 +193,40 @@ import yueyang.vostok.office.excel.VKExcelCell;
 import yueyang.vostok.office.excel.VKExcelReadOptions;
 import yueyang.vostok.office.excel.VKExcelSheet;
 import yueyang.vostok.office.excel.VKExcelWorkbook;
+import yueyang.vostok.office.word.VKWordImageLoadMode;
+import yueyang.vostok.office.word.VKWordReadOptions;
+import yueyang.vostok.office.word.VKWordWriteRequest;
 
 Vostok.File.init(new VKFileConfig().baseDir("./data"));
 Vostok.Office.init(new VKOfficeConfig());
 
+// Excel
 VKExcelWorkbook wb = new VKExcelWorkbook()
     .addSheet(new VKExcelSheet("Orders")
         .addCell(VKExcelCell.stringCell(1, 1, "orderId"))
         .addCell(VKExcelCell.numberCell(2, 2, "99.5")));
 
 Vostok.Office.writeExcel("excel/orders.xlsx", wb);
-
 Vostok.Office.readExcelRows("excel/orders.xlsx", "Orders",
     VKExcelReadOptions.defaults(), row -> {
         // 处理每一行
     });
+
+// Word 生成（文本 + 图片）
+VKWordWriteRequest wordReq = new VKWordWriteRequest()
+    .addParagraph("订单 A001")
+    .addImageBytes("logo.png", logoBytes)
+    .addImageFile("images/sign.png");
+Vostok.Office.writeWord("word/orders.docx", wordReq);
+
+// Word 读取与统计
+String text = Vostok.Office.readWordText("word/orders.docx");
+int chars = Vostok.Office.countWordChars("word/orders.docx");
+int imageCount = Vostok.Office.countWordImages("word/orders.docx");
+
+// 大文件建议 metadata-only 模式读取图片，避免 OOM
+var readOpt = VKWordReadOptions.defaults().imageLoadMode(VKWordImageLoadMode.METADATA_ONLY);
+var doc = Vostok.Office.readWord("word/orders.docx", readOpt);
 ```
 
 ### Log
