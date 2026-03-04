@@ -1,12 +1,12 @@
-# `@vostok/frontend` 使用说明
+# `@vostok/frontend` 接入说明
 
-## 安装
+## 1. 安装
 
 ```bash
 pnpm add @vostok/frontend vue vue-router pinia naive-ui
 ```
 
-## 初始化
+## 2. 插件初始化
 
 ```ts
 import { createApp } from 'vue';
@@ -18,93 +18,243 @@ createApp(App)
     api: {
       profile: 'default',
       profiles: [{ name: 'default', baseURL: 'https://api.example.com', authScheme: 'bearer' }]
+    },
+    debug: {
+      enableLogger: false
     }
   })
   .mount('#app');
 ```
 
-## 导入组件
+## 3. 导入方式
 
 ```ts
-import { ProTable, ProForm } from '@vostok/frontend/components';
+import {
+  VkAdminLayout,
+  VkTable,
+  VkForm,
+  VkSearchBar,
+  VkUpload,
+  VkSelector,
+  VkModalForm,
+  VkDrawerForm
+} from '@vostok/frontend/components';
 ```
 
-## ProTable 使用示例（含全部开关）
-
-```ts
-import type {
-  ProAdvancedSearchField,
-  ProTableActionButton,
-  ProTableColumn,
-  ProTableQuery,
-  ProTableResult,
-  ProToolbarAction
-} from '@vostok/frontend';
-
-interface UserRow {
-  id: string;
-  name: string;
-  email: string;
-  status: string;
-}
-
-const columns: ProTableColumn[] = [
-  { key: 'id', title: 'ID', sortable: true },
-  { key: 'name', title: '姓名', sortable: true },
-  { key: 'email', title: '邮箱', sortable: true },
-  { key: 'status', title: '状态', sortable: true }
-];
-
-const advancedSearchFields: ProAdvancedSearchField[] = [
-  { key: 'email', label: '邮箱', type: 'input', placeholder: '按邮箱筛选' },
-  {
-    key: 'status',
-    label: '状态',
-    type: 'select',
-    options: [
-      { label: '激活', value: 'active' },
-      { label: '未激活', value: 'inactive' }
-    ]
-  },
-  { key: 'createdAtRange', label: '创建时间', type: 'datetime_range' }
-];
-
-const customActionButtons: ProTableActionButton<UserRow>[] = [
-  { key: 'view', label: '查看', onClick: (row) => console.log(row) }
-];
-
-const toolbarActions: ProToolbarAction[] = [
-  { key: 'action1', label: 'action1', onClick: () => console.log('action1') },
-  { key: 'action2', label: 'action2', onClick: () => console.log('action2') }
-];
-
-async function fetchUsers(query: ProTableQuery): Promise<ProTableResult<UserRow>> {
-  // query 内会包含 keyword、advancedFilters、sortKey、sortOrder 等参数
-  // createdAtRange 类型为 [number, number]，表示时间戳区间
-  return { items: [], total: 0 };
-}
-```
-
-```vue
-<ProTable
-  :columns="columns"
-  :fetcher="fetchUsers"
-  pagination-mode="server"
-  row-key="id"
-  :toolbar-actions="toolbarActions"
-  :advanced-search-fields="advancedSearchFields"
-  :custom-action-buttons="customActionButtons"
-  :show-fuzzy-search="true"
-  :show-advanced-search="true"
-  :show-column-setting="true"
-  :show-column-sort="true"
-  :show-custom-actions="true"
-/>
-```
-
-## 导入 API 能力
+## 4. API 能力导入
 
 ```ts
 import { useApiClient } from '@vostok/frontend';
 import { createApiClient } from '@vostok/frontend/api';
 ```
+
+## 5. 组件快速示例
+
+### 5.1 `VkAdminLayout`
+
+```vue
+<script setup lang="ts">
+import { VkAdminLayout } from '@vostok/frontend/components';
+import type {
+  VkAppFieldMap,
+  VkLanguageOption,
+  VkMenuFieldMap,
+  VkNotificationItem,
+  VkUserMenuItem,
+  VkUserProfile
+} from '@vostok/frontend';
+
+const menuFieldMap: VkMenuFieldMap = {
+  key: 'menuId',
+  label: 'menuName',
+  path: 'routePath',
+  children: 'subMenus'
+};
+
+const appFieldMap: VkAppFieldMap = {
+  key: 'appId',
+  label: 'appName',
+  icon: 'iconName',
+  path: 'routePath',
+  recommended: 'isRecommended'
+};
+
+const user: VkUserProfile = {
+  id: 'u-admin',
+  avatar: '',
+  name: '管理员',
+  username: 'admin'
+};
+
+const userMenus: VkUserMenuItem[] = [
+  { key: 'profile', label: '个人中心' },
+  { key: 'logout', label: '退出登录' }
+];
+
+const languageOptions: VkLanguageOption[] = [
+  { value: 'zh-CN', label: '简体中文' },
+  { value: 'en-US', label: 'English' }
+];
+
+const recentNotifications: VkNotificationItem[] = [
+  { key: 'n1', title: '系统通知', time: '刚刚', path: '/message-center' }
+];
+</script>
+
+<template>
+  <VkAdminLayout
+    title="业务后台"
+    menu-api-path="/menus"
+    menu-api-app-key="appKey"
+    :menu-field-map="menuFieldMap"
+    app-api-path="/apps"
+    :app-field-map="appFieldMap"
+    :language-options="languageOptions"
+    current-language="zh-CN"
+    current-theme="light"
+    :user="user"
+    :user-menus="userMenus"
+    :recent-notifications="recentNotifications"
+    :notification-count="recentNotifications.length"
+    message-center-path="/message-center"
+    message-center-button-text="进入消息中心"
+  />
+</template>
+```
+
+### 5.2 `VkTable`
+
+```vue
+<script setup lang="ts">
+import { VkTable } from '@vostok/frontend/components';
+import type { VkTableColumn, VkTableQuery, VkTableResult } from '@vostok/frontend';
+
+interface Row {
+  id: string;
+  name: string;
+}
+
+const columns: VkTableColumn[] = [
+  { key: 'id', title: 'ID', sortable: true },
+  { key: 'name', title: '姓名', sortable: true }
+];
+
+async function fetcher(query: VkTableQuery): Promise<VkTableResult<Row>> {
+  void query;
+  return { items: [], total: 0 };
+}
+</script>
+
+<template>
+  <VkTable
+    :columns="columns"
+    :fetcher="fetcher"
+    pagination-mode="server"
+    row-key="id"
+    :show-fuzzy-search="true"
+    :show-advanced-search="true"
+    :show-column-setting="true"
+    :show-column-sort="true"
+    :show-custom-actions="true"
+  />
+</template>
+```
+
+### 5.3 `VkForm`
+
+```vue
+<script setup lang="ts">
+import { VkForm } from '@vostok/frontend/components';
+import type { VkFormFieldSchema } from '@vostok/frontend';
+
+const schema: VkFormFieldSchema[] = [
+  { key: 'name', label: '姓名', type: 'text', required: true },
+  { key: 'age', label: '年龄', type: 'number' }
+];
+
+async function submitter(values: Record<string, unknown>): Promise<void> {
+  console.log(values);
+}
+</script>
+
+<template>
+  <VkForm :schema="schema" mode="create" :submitter="submitter" />
+</template>
+```
+
+### 5.4 `VkSearchBar`
+
+```vue
+<script setup lang="ts">
+import { VkSearchBar } from '@vostok/frontend/components';
+
+const fields = [
+  { key: 'name', label: '姓名', placeholder: '请输入姓名' },
+  { key: 'email', label: '邮箱', placeholder: '请输入邮箱' }
+];
+
+function handleSearch(values: Record<string, string>): void {
+  console.log(values);
+}
+</script>
+
+<template>
+  <VkSearchBar :fields="fields" @search="handleSearch" />
+</template>
+```
+
+### 5.5 `VkSelector`
+
+```vue
+<script setup lang="ts">
+import { ref } from 'vue';
+import { VkSelector } from '@vostok/frontend/components';
+import type { VkSelectorOption, VkSelectorValue } from '@vostok/frontend';
+
+const value = ref<VkSelectorValue>(null);
+const options: VkSelectorOption[] = [
+  { label: '研发中心', value: 'rd' },
+  { label: '产品中心', value: 'pm' }
+];
+</script>
+
+<template>
+  <VkSelector
+    v-model="value"
+    selector-name="部门"
+    :options="options"
+    option-type="flat"
+    mode="single"
+    :searchable="true"
+    :show-recent="true"
+  />
+</template>
+```
+
+### 5.6 `VkUpload`
+
+```vue
+<template>
+  <VkUpload />
+</template>
+```
+
+### 5.7 `VkModalForm` / `VkDrawerForm`
+
+```vue
+<template>
+  <VkModalForm>
+    <div>弹窗内容</div>
+  </VkModalForm>
+
+  <VkDrawerForm>
+    <div>抽屉内容</div>
+  </VkDrawerForm>
+</template>
+```
+
+## 6. 完整属性与事件文档
+
+组件全量 `props`、事件、插槽、类型说明请查看：
+
+1. [component-spec.md](/Users/yueyang/develop/code/yueyang/vostok/frontend/docs/component-spec.md)

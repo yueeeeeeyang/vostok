@@ -5,12 +5,24 @@ import { resolve } from 'node:path';
 export default defineConfig({
   plugins: [vue()],
   resolve: {
-    alias: {
-      '@vostok/frontend': resolve(__dirname, '../packages/vostok.frontend/src/index.ts'),
-      '@vostok/frontend/components': resolve(__dirname, '../packages/vostok.frontend/src/components/index.ts'),
-      '@vostok/frontend/api': resolve(__dirname, '../packages/vostok.frontend/src/api/index.ts'),
-      '@vostok/frontend/adapters': resolve(__dirname, '../packages/vostok.frontend/src/adapters/index.ts')
-    }
+    alias: [
+      {
+        find: '@vostok/frontend/components',
+        replacement: resolve(__dirname, '../packages/vostok.frontend/src/components/index.ts')
+      },
+      {
+        find: '@vostok/frontend/api',
+        replacement: resolve(__dirname, '../packages/vostok.frontend/src/api/index.ts')
+      },
+      {
+        find: '@vostok/frontend/adapters',
+        replacement: resolve(__dirname, '../packages/vostok.frontend/src/adapters/index.ts')
+      },
+      {
+        find: '@vostok/frontend',
+        replacement: resolve(__dirname, '../packages/vostok.frontend/src/index.ts')
+      }
+    ]
   },
   server: {
     host: '127.0.0.1',

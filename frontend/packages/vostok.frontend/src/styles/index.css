@@ -6,7 +6,7 @@
 }
 
 .vf-card {
-  background: #fff;
-  border: 1px solid var(--vf-color-border);
+  background: var(--n-color, #fff);
+  border: 1px solid var(--n-border-color, var(--vf-color-border));
   border-radius: 8px;
 }

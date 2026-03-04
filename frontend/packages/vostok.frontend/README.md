@@ -2,7 +2,7 @@
 
 一个基于 Vue 3 的前端依赖库，提供：
 
-- 可复用高级组件（如 `ProTable`、`ProForm`）
+- 可复用高级组件（如 `VkTable`、`VkForm`）
 - 统一 API 客户端能力（`createApiClient`、`useApiClient`）
 - 面向异构后端返回的适配器机制
 
@@ -20,3 +20,8 @@ createApp(App).use(VostokFrontendPlugin, {
   }
 });
 ```
+
+## 文档
+
+1. 使用说明：`frontend/docs/library-usage.md`
+2. 组件完整属性文档：`frontend/docs/component-spec.md`

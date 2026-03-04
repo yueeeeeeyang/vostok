@@ -8,5 +8,15 @@ export * from './components';
 export * from './api';
 export * from './adapters';
 export type { VostokFrontendOptions, ApiClient, ApiResult, ApiError, BackendAdapter } from './types/public';
-export type { ProTableProps } from './components/pro-table/pro-table.types';
-export type { ProFormProps } from './components/pro-form/pro-form.types';
+export type { VkTableProps } from './components/vk-table/vk-table.types';
+export type { VkFormProps } from './components/vk-form/vk-form.types';
+export type { VkSelectorProps } from './components/vk-selector/vk-selector.types';
+export type {
+  VkAdminLayoutProps,
+  VkAppFieldMap,
+  VkMenuFieldMap,
+  VkMenuItem,
+  VkNotificationItem,
+  VkUserProfile,
+  VkThemeMode
+} from './components/vk-admin-layout/vk-admin-layout.types';
