@@ -409,6 +409,16 @@ public class VostokFile {
         store().zip(sourcePath, zipPath);
     }
 
+    /**
+     * ZIP 压缩，可指定是否保留源目录名：
+     * includeBaseDir=true：与 zip(source, target) 一致；
+     * includeBaseDir=false：仅压缩目录内容。
+     */
+    public static void zip(String sourcePath, String zipPath, boolean includeBaseDir) {
+        checkWritable();
+        store().zip(sourcePath, zipPath, includeBaseDir);
+    }
+
     public static void unzip(String zipPath, String targetDir) {
         checkWritable();
         VKFileConfig cfg = config();
@@ -657,4 +667,5 @@ public class VostokFile {
                     "Invalid datePartitionZoneId: " + cfg.getDatePartitionZoneId(), e);
         }
     }
+
 }

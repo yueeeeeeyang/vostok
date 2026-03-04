@@ -27,6 +27,7 @@
     <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
     <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
     <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="office.html"><span class="nav-icon">📊</span>Office</a>
     <a href="log.html"><span class="nav-icon">📋</span>Log</a>
     <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
     <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
@@ -49,6 +50,7 @@
 <h2>统一异常处理</h2>
 <pre><code><span class="kw">import</span> yueyang.vostok.data.exception.*;
 <span class="kw">import</span> yueyang.vostok.file.exception.*;
+<span class="kw">import</span> yueyang.vostok.office.exception.*;
 <span class="kw">import</span> yueyang.vostok.config.exception.*;
 
 <span class="cm">// Data 模块</span>
@@ -71,6 +73,13 @@
     <span class="ty">Vostok</span>.File.read(<span class="st">"missing.txt"</span>);
 } <span class="kw">catch</span> (<span class="ty">VKFileException</span> e) {
     log.error(<span class="st">"File error: {} {}"</span>, e.getCode(), e.getMessage());
+}
+
+<span class="cm">// Office 模块</span>
+<span class="kw">try</span> {
+    <span class="ty">Vostok</span>.Office.readExcel(<span class="st">"excel/orders.xlsx"</span>);
+} <span class="kw">catch</span> (<span class="ty">VKOfficeException</span> e) {
+    log.error(<span class="st">"Office error: {} {}"</span>, e.getCode(), e.getMessage());
 }</code></pre>
 
 <h2>Data 模块错误码（VKErrorCode）</h2>
@@ -138,6 +147,31 @@
   <thead><tr><th>异常类</th><th>包路径</th><th>说明</th></tr></thead>
   <tbody>
     <tr><td><code>VKFileException</code></td><td>file.exception</td><td>File 模块所有异常的基类，包含 <code>VKFileErrorCode</code></td></tr>
+  </tbody>
+</table>
+
+<h2>Office 模块错误码（VKOfficeErrorCode）</h2>
+<table class="api-table">
+  <thead><tr><th>错误码</th><th>枚举</th><th>触发场景</th></tr></thead>
+  <tbody>
+    <tr><td><span class="error-code">OF-400</span></td><td><span class="enum-name">INVALID_ARGUMENT</span></td><td>参数非法（空路径、空 consumer 等）</td></tr>
+    <tr><td><span class="error-code">OF-402</span></td><td><span class="enum-name">CONFIG_ERROR</span></td><td>Office 配置不合法</td></tr>
+    <tr><td><span class="error-code">OF-403</span></td><td><span class="enum-name">STATE_ERROR</span></td><td>运行状态不满足（如非 local 文件模式）</td></tr>
+    <tr><td><span class="error-code">OF-404</span></td><td><span class="enum-name">NOT_FOUND</span></td><td>sheet 或资源不存在</td></tr>
+    <tr><td><span class="error-code">OF-500</span></td><td><span class="enum-name">IO_ERROR</span></td><td>IO 操作失败</td></tr>
+    <tr><td><span class="error-code">OF-530</span></td><td><span class="enum-name">UNSUPPORTED_FORMAT</span></td><td>不支持的 Office 格式（当前仅 .xlsx）</td></tr>
+    <tr><td><span class="error-code">OF-564</span></td><td><span class="enum-name">PARSE_ERROR</span></td><td>Excel 解析失败</td></tr>
+    <tr><td><span class="error-code">OF-565</span></td><td><span class="enum-name">WRITE_ERROR</span></td><td>Excel 写入失败</td></tr>
+    <tr><td><span class="error-code">OF-566</span></td><td><span class="enum-name">LIMIT_EXCEEDED</span></td><td>超过行列/大小等限制</td></tr>
+    <tr><td><span class="error-code">OF-567</span></td><td><span class="enum-name">SECURITY_ERROR</span></td><td>安全检测失败（路径/魔数/XXE）</td></tr>
+  </tbody>
+</table>
+
+<h2>Office 模块异常类型</h2>
+<table class="api-table">
+  <thead><tr><th>异常类</th><th>包路径</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>VKOfficeException</code></td><td>office.exception</td><td>Office 模块统一异常，包含 <code>VKOfficeErrorCode</code></td></tr>
   </tbody>
 </table>
 

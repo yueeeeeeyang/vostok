@@ -267,6 +267,11 @@
   ZIP 解压内置 Zip Slip 路径穿越防护和 Zip Bomb 检测。安全上限通过 <code>VKUnzipOptions</code> 或 <code>VKFileConfig</code> 中的 <code>unzipMaxEntries</code>、<code>unzipMaxTotalUncompressedBytes</code>、<code>unzipMaxEntryUncompressedBytes</code> 控制；默认值 <code>-1</code> 表示不限制，生产环境建议显式配置。
 </div>
 
+<div class="callout info">
+  <div class="callout-title">说明</div>
+  Excel（.xlsx）能力已迁移到 <code>Vostok.Office</code>，请参考 <a href="office.html">Office 模块文档</a>。
+</div>
+
 <h2>图片缩略图</h2>
 <pre><code><span class="cm">// 生成缩略图字节，返回 byte[]</span>
 <span class="ty">VKThumbnailOptions</span> opts = <span class="ty">VKThumbnailOptions</span>.builder(<span class="num">200</span>, <span class="num">200</span>)
@@ -480,6 +485,7 @@ handle.close();
     <tr><td><code>createTemp(subDir, prefix, suffix)</code></td><td>在指定子目录下创建临时文件</td></tr>
     <tr><td colspan="2" style="font-weight:600;color:var(--accent)">压缩与解压</td></tr>
     <tr><td><code>zip(src, zipPath)</code></td><td>ZIP 压缩文件或目录</td></tr>
+    <tr><td><code>zip(src, zipPath, includeBaseDir)</code></td><td>ZIP 压缩并指定是否保留源目录名</td></tr>
     <tr><td><code>unzip(zipPath, destDir)</code></td><td>ZIP 解压（使用配置安全限制）</td></tr>
     <tr><td><code>unzip(zipPath, destDir, replace)</code></td><td>ZIP 解压，指定是否覆盖</td></tr>
     <tr><td><code>unzip(zipPath, destDir, options)</code></td><td>ZIP 解压，自定义安全选项</td></tr>

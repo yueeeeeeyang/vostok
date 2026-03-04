@@ -962,6 +962,11 @@ public final class LocalFileStore implements VKFileStore {
 
     @Override
     public void zip(String sourcePath, String zipPath) {
+        zip(sourcePath, zipPath, true);
+    }
+
+    @Override
+    public void zip(String sourcePath, String zipPath, boolean includeBaseDir) {
         Path source = resolve(sourcePath);
         Path zip = resolve(zipPath);
         requireExists(source, sourcePath);
@@ -973,7 +978,11 @@ public final class LocalFileStore implements VKFileStore {
             try (OutputStream os = Files.newOutputStream(zip, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
                  ZipOutputStream zos = new ZipOutputStream(os, charset)) {
                 if (Files.isDirectory(source)) {
-                    zipDirectory(source, zip, zos);
+                    if (includeBaseDir) {
+                        zipDirectory(source, zip, zos);
+                    } else {
+                        zipDirectoryContent(source, zip, zos);
+                    }
                 } else {
                     zipFile(source, source.getFileName().toString(), zos);
                 }
@@ -1339,6 +1348,36 @@ public final class LocalFileStore implements VKFileStore {
                 }
                 Path rel = sourceDir.relativize(p);
                 String entryName = normalizeEntry((base.isEmpty() ? rel.toString() : base + "/" + rel).replace('\\', '/'));
+                if (Files.isDirectory(p)) {
+                    if (!entryName.endsWith("/")) {
+                        entryName = entryName + "/";
+                    }
+                    zos.putNextEntry(new ZipEntry(entryName));
+                    zos.closeEntry();
+                } else {
+                    zipFile(p, entryName, zos);
+                }
+            }
+        }
+    }
+
+    /**
+     * 仅压缩目录内容，不把 sourceDir 自身目录名作为 ZIP 根目录。
+     * 例如 sourceDir=orders/，则 entry 直接是 2026/a.csv，而不是 orders/2026/a.csv。
+     */
+    private void zipDirectoryContent(Path sourceDir, Path zipPath, ZipOutputStream zos) throws IOException {
+        try (Stream<Path> s = Files.walk(sourceDir)) {
+            var it = s.iterator();
+            while (it.hasNext()) {
+                Path p = it.next();
+                if (p.equals(sourceDir) || p.equals(zipPath)) {
+                    continue;
+                }
+                Path rel = sourceDir.relativize(p);
+                String entryName = normalizeEntry(rel.toString().replace('\\', '/'));
+                if (entryName.isEmpty()) {
+                    continue;
+                }
                 if (Files.isDirectory(p)) {
                     if (!entryName.endsWith("/")) {
                         entryName = entryName + "/";

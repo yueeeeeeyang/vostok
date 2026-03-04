@@ -6,6 +6,7 @@ import yueyang.vostok.config.VostokConfig;
 import yueyang.vostok.event.VostokEvent;
 import yueyang.vostok.file.VostokFile;
 import yueyang.vostok.log.VostokLog;
+import yueyang.vostok.office.VostokOffice;
 import yueyang.vostok.security.VostokSecurity;
 import yueyang.vostok.web.VostokWeb;
 import yueyang.vostok.http.VostokHttp;
@@ -50,6 +51,14 @@ public final class Vostok {
      */
     public static final class File extends VostokFile {
         private File() {
+        }
+    }
+
+    /**
+     * Office entry.
+     */
+    public static final class Office extends VostokOffice {
+        private Office() {
         }
     }
 

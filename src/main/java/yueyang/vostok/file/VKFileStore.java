@@ -96,6 +96,20 @@ public interface VKFileStore {
 
     void zip(String sourcePath, String zipPath);
 
+    /**
+     * ZIP 压缩，可选择是否保留源目录名作为压缩包根目录。
+     *
+     * <p>includeBaseDir=true 与 {@link #zip(String, String)} 一致；
+     * includeBaseDir=false 时仅压缩目录内容。
+     */
+    default void zip(String sourcePath, String zipPath, boolean includeBaseDir) {
+        if (includeBaseDir) {
+            zip(sourcePath, zipPath);
+            return;
+        }
+        throw new VKFileException(VKFileErrorCode.UNSUPPORTED, "zip(source, target, includeBaseDir=false) not supported");
+    }
+
     void unzip(String zipPath, String targetDir, boolean replaceExisting);
 
     void unzip(String zipPath, String targetDir, VKUnzipOptions options);

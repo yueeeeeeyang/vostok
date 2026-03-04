@@ -21,7 +21,7 @@
 
 ---
 
-## 模块概览（11 个）
+## 模块概览（12 个）
 
 | 模块 | 门面类 | 说明 |
 |------|--------|------|
@@ -29,6 +29,7 @@
 | `Vostok.Web` | `VostokWeb` | NIO Web 服务、路由、中间件、WebSocket、SSE、自动 CRUD |
 | `Vostok.Cache` | `VostokCache` | Memory / Redis / 两级缓存、Pipeline、统计 |
 | `Vostok.File` | `VostokFile` | 文件读写、压缩解压、目录操作、监听、文件加解密 |
+| `Vostok.Office` | `VostokOffice` | Office 能力入口（当前支持 Excel .xlsx 读写与流式导入） |
 | `Vostok.Log` | `VostokLog` | 异步日志、滚动压缩、命名 logger、MDC |
 | `Vostok.Config` | `VostokConfig` | 配置加载、热更新、变更监听、类型绑定 |
 | `Vostok.Security` | `VostokSecurity` | SQL/XSS/路径等安全检测、加解密、签名验签 |
@@ -180,6 +181,33 @@ String text = Vostok.File.read("notes/a.txt");
 
 Vostok.File.gzip("notes/a.txt", "notes/a.txt.gz");
 Vostok.File.gunzip("notes/a.txt.gz", "notes/a.copy.txt");
+```
+
+### Office
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.file.VKFileConfig;
+import yueyang.vostok.office.VKOfficeConfig;
+import yueyang.vostok.office.excel.VKExcelCell;
+import yueyang.vostok.office.excel.VKExcelReadOptions;
+import yueyang.vostok.office.excel.VKExcelSheet;
+import yueyang.vostok.office.excel.VKExcelWorkbook;
+
+Vostok.File.init(new VKFileConfig().baseDir("./data"));
+Vostok.Office.init(new VKOfficeConfig());
+
+VKExcelWorkbook wb = new VKExcelWorkbook()
+    .addSheet(new VKExcelSheet("Orders")
+        .addCell(VKExcelCell.stringCell(1, 1, "orderId"))
+        .addCell(VKExcelCell.numberCell(2, 2, "99.5")));
+
+Vostok.Office.writeExcel("excel/orders.xlsx", wb);
+
+Vostok.Office.readExcelRows("excel/orders.xlsx", "Orders",
+    VKExcelReadOptions.defaults(), row -> {
+        // 处理每一行
+    });
 ```
 
 ### Log
