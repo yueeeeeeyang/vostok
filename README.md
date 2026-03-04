@@ -3,7 +3,7 @@
 面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合多个模块能力。
 各模块可独立初始化、按需使用。
 
-**当前版本：`1.9.2.1`**
+**当前版本：`1.9.2.2`**
 
 **详细文档**：[Vostok Docs](https://yueeeeeeyang.github.io/vostok/)
 
@@ -15,7 +15,7 @@
 <dependency>
   <groupId>yueyang</groupId>
   <artifactId>vostok</artifactId>
-  <version>1.9.2.1</version>
+  <version>1.9.2.2</version>
 </dependency>
 ```
 
@@ -196,6 +196,10 @@ import yueyang.vostok.office.excel.VKExcelWorkbook;
 import yueyang.vostok.office.word.VKWordImageLoadMode;
 import yueyang.vostok.office.word.VKWordReadOptions;
 import yueyang.vostok.office.word.VKWordWriteRequest;
+import yueyang.vostok.office.convert.VKOfficeConvertOptions;
+import yueyang.vostok.office.template.VKOfficeTemplateData;
+import yueyang.vostok.office.excel.template.VKExcelTemplateOptions;
+import yueyang.vostok.office.job.*;
 import yueyang.vostok.office.ppt.VKPptImageLoadMode;
 import yueyang.vostok.office.ppt.VKPptReadOptions;
 import yueyang.vostok.office.ppt.VKPptWriteRequest;
@@ -251,6 +255,63 @@ String pdfText = Vostok.Office.readPDFText("pdf/bill.pdf");
 int pdfPages = Vostok.Office.countPDFPages("pdf/bill.pdf");
 var pdfReadOpt = VKPdfReadOptions.defaults().imageLoadMode(VKPdfImageLoadMode.METADATA_ONLY);
 var pdfDoc = Vostok.Office.readPDF("pdf/bill.pdf", pdfReadOpt);
+
+// 模板渲染（支持 {{var}} / {{#list as item}} / {{?cond}}）
+Vostok.Office.renderWordTemplate("tpl/order.docx", "out/order.docx",
+    VKOfficeTemplateData.create()
+        .put("name", "Tom")
+        .put("vip", true));
+// renderPPTTemplate / renderPDFTemplate 的参数与语法和 Word 模板一致
+
+// Excel 模板渲染（行级循环）
+// 模板中：
+//   起始行单元格: {{#items as item keepPlaceholderRows=false}}
+//   结束行单元格: {{/items}}
+Vostok.Office.renderExcelTemplate(
+    "tpl/order.xlsx",
+    "out/order.xlsx",
+    Map.of(
+        "orderNo", "A20260304001",
+        "items", List.of(
+            Map.of("name", "可乐", "qty", 2, "amount", "8.00"),
+            Map.of("name", "薯片", "qty", 1, "amount", "6.00")
+        ),
+        "total", "14.00"
+    ),
+    VKExcelTemplateOptions.defaults().defaultKeepPlaceholderRows(true)
+);
+
+// 转换能力
+Vostok.Office.convertToPDF("word/orders.docx", "pdf/orders.pdf");
+Vostok.Office.convertExcelToCSV("excel/orders.xlsx", "csv/orders.csv",
+    VKOfficeConvertOptions.defaults().csvSheetName("Orders"));
+Vostok.Office.convertCSVToExcel("csv/orders.csv", "excel/orders-back.xlsx");
+
+// 流式读取（块回调）
+Vostok.Office.readWordStream("word/orders.docx", block -> {
+    // block.type()/text()/image()
+});
+Vostok.Office.readPPTStream("ppt/summary.pptx", block -> {});
+Vostok.Office.readPDFStream("pdf/bill.pdf", block -> {});
+
+// 结构化提取
+var wordStructured = Vostok.Office.readWordStructured("word/orders.docx");
+var pptStructured = Vostok.Office.readPPTStructured("ppt/summary.pptx");
+var pdfStructured = Vostok.Office.readPDFStructured("pdf/bill.pdf");
+
+// 异步任务 + 类 Event 风格回调（不依赖 Vostok.Event）
+Vostok.Office.onJobCompleted(n ->
+    System.out.println("job completed: " + n.jobId() + ", result=" + n.resultPath()));
+Vostok.Office.onJobDeadLetter(n ->
+    System.out.println("unhandled office job notification: " + n.status()));
+
+String jobId = Vostok.Office.submitJob(VKOfficeJobRequest.create(() -> {
+    Vostok.Office.convertToPDF("word/orders.docx", "pdf/orders-async.pdf");
+    return VKOfficeJobExecutionResult.ofPath("pdf/orders-async.pdf");
+}).type(VKOfficeJobType.CONVERT).tag("order-batch"));
+
+VKOfficeJobResult result = Vostok.Office.awaitJob(jobId, 30_000);
+System.out.println(result.status());
 ```
 
 ### Log

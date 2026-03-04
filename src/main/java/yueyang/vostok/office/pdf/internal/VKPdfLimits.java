@@ -51,7 +51,7 @@ public final class VKPdfLimits {
                 pickLong(opt.maxTotalImageBytes(), config.getPdfMaxTotalImageBytes()),
                 pick(opt.maxObjects(), config.getPdfMaxObjects()),
                 pickLong(opt.maxStreamBytes(), config.getPdfMaxStreamBytes()),
-                config.getPdfTempDir(),
+                formatTempSubDir(config.getOfficeTempDir(), "pdf"),
                 opt.imageLoadMode() == null ? VKPdfImageLoadMode.BYTES : opt.imageLoadMode());
     }
 
@@ -66,7 +66,7 @@ public final class VKPdfLimits {
                 pickLong(opt.maxTotalImageBytes(), config.getPdfMaxTotalImageBytes()),
                 pick(opt.maxObjects(), config.getPdfMaxObjects()),
                 pickLong(opt.maxStreamBytes(), config.getPdfMaxStreamBytes()),
-                pickSubDir(opt.tempSubDir(), config.getPdfTempDir()),
+                pickSubDir(opt.tempSubDir(), formatTempSubDir(config.getOfficeTempDir(), "pdf")),
                 VKPdfImageLoadMode.BYTES);
     }
 
@@ -83,6 +83,15 @@ public final class VKPdfLimits {
             return fallback;
         }
         return value.trim();
+    }
+
+    private static String formatTempSubDir(String root, String child) {
+        String base = root == null ? "" : root.trim();
+        if (base.isEmpty()) {
+            return child;
+        }
+        String normalized = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+        return normalized + "/" + child;
     }
 
     public long maxDocumentBytes() {

@@ -62,7 +62,7 @@ public final class VKPptPackageWriter {
                     String text = paragraph.text();
                     totalChars += VKPptCharCounter.countNonWhitespace(text);
                     checkTextChars(totalChars);
-                    blocks.add(VKPptXmlWriter.BodyBlock.paragraph(text));
+                    blocks.add(VKPptXmlWriter.BodyBlock.paragraph(text, paragraph.style()));
                     continue;
                 }
 
@@ -82,7 +82,7 @@ public final class VKPptPackageWriter {
                     imageRels.put(rid, relTarget);
                     imageExtensions.add(prepared.extension());
 
-                    blocks.add(VKPptXmlWriter.BodyBlock.image(rid, "image" + imageIndex));
+                    blocks.add(VKPptXmlWriter.BodyBlock.image(rid, "image" + imageIndex, image.style()));
                     continue;
                 }
 
@@ -96,7 +96,7 @@ public final class VKPptPackageWriter {
             slideParts.add(new VKPptXmlWriter.SlidePart(i + 1, blocks, imageRels));
         }
 
-        VKPptXmlWriter.writePackage(packageRoot, slideParts, imageExtensions);
+        VKPptXmlWriter.writePackage(packageRoot, slideParts, imageExtensions, request.layoutStyle());
     }
 
     private VKPptMediaWriter.PreparedImage writeImage(VKPptMediaWriter mediaWriter,

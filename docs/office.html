@@ -14,7 +14,7 @@
       <div class="logo-mark">V</div>
       <div>
         <div class="logo-text">Vostok</div>
-        <div class="logo-version">v1.9.2.1 · JDK 17+</div>
+        <div class="logo-version">v1.9.2.2 · JDK 17+</div>
       </div>
     </a>
   </div>
@@ -44,7 +44,7 @@
 <div class="page-header">
   <div class="module-tag">📊 Vostok.Office</div>
   <h1>Office 文档处理模块</h1>
-  <p class="desc">提供 Excel（.xlsx）、Word（.docx）、PPT（.pptx）和 PDF（.pdf）的读取、统计与生成能力。压缩格式统一复用 File 模块 zip/unzip，支持大文件 metadata-only 与仅计数路径。</p>
+  <p class="desc">提供 Excel/Word/PPT/PDF 的读取、统计、生成、模板渲染、格式转换、流式读取、结构化提取与异步任务能力。压缩格式统一复用 File 模块 zip/unzip，支持 metadata-only 与仅计数路径。</p>
 </div>
 
 <h2>初始化（建议显式）</h2>
@@ -55,10 +55,7 @@
 <span class="ty">Vostok</span>.File.init(<span class="kw">new</span> <span class="ty">VKFileConfig</span>().baseDir(<span class="st">"./data"</span>));
 
 <span class="ty">Vostok</span>.Office.init(<span class="kw">new</span> <span class="ty">VKOfficeConfig</span>()
-    .excelTempDir(<span class="st">"tmp/excel"</span>)
-    .wordTempDir(<span class="st">"tmp/word"</span>)
-    .pptTempDir(<span class="st">"tmp/ppt"</span>)
-    .pdfTempDir(<span class="st">"tmp/pdf"</span>));
+    .officeTempDir(<span class="st">"tmp/office"</span>));
 </code></pre>
 
 <div class="callout warn">
@@ -129,6 +126,162 @@ req.addPage().addParagraph(<span class="st">"账单 A001"</span>).addImageBytes(
 <span class="ty">VKPdfDocument</span> pdfDoc = <span class="ty">Vostok</span>.Office.readPDF(<span class="st">"pdf/bill.pdf"</span>, metadataOnly);
 </code></pre>
 
+<h2>模板引擎示例</h2>
+<p>当前支持 <code>renderWordTemplate/renderPPTTemplate/renderPDFTemplate/renderExcelTemplate</code>。</p>
+<p>通用语法：</p>
+<pre><code>{{name}}                    <span class="cm">// 变量替换</span>
+{{#items as item}}...{{/items}} <span class="cm">// 循环（别名 item）</span>
+{{?vip}}...{{/vip}}          <span class="cm">// 条件渲染</span>
+</code></pre>
+
+<h3>Word 模板（docx）</h3>
+<p><strong>模板原文样例（tpl/order.docx）</strong></p>
+<pre><code>订单号：{{orderNo}}
+客户：{{customer}}
+明细：
+{{#items as item}}- {{item.name}} x {{item.qty}} = {{item.amount}}
+{{/items}}
+{{?vip}}VIP 客户折扣：{{vipDiscount}}{{/vip}}
+应付总额：{{total}}
+</code></pre>
+
+<p><strong>渲染调用样例</strong></p>
+<pre><code><span class="ty">Vostok</span>.Office.renderWordTemplate(
+    <span class="st">"tpl/order.docx"</span>,
+    <span class="st">"out/order-rendered.docx"</span>,
+    <span class="ty">VKOfficeTemplateData</span>.create()
+        .put(<span class="st">"orderNo"</span>, <span class="st">"A20260304001"</span>)
+        .put(<span class="st">"customer"</span>, <span class="st">"张三"</span>)
+        .put(<span class="st">"items"</span>, <span class="ty">List</span>.of(
+            <span class="ty">Map</span>.of(<span class="st">"name"</span>, <span class="st">"可乐"</span>, <span class="st">"qty"</span>, <span class="num">2</span>, <span class="st">"amount"</span>, <span class="st">"8.00"</span>),
+            <span class="ty">Map</span>.of(<span class="st">"name"</span>, <span class="st">"薯片"</span>, <span class="st">"qty"</span>, <span class="num">1</span>, <span class="st">"amount"</span>, <span class="st">"6.00"</span>)
+        ))
+        .put(<span class="st">"vip"</span>, <span class="kw">true</span>)
+        .put(<span class="st">"vipDiscount"</span>, <span class="st">"2.00"</span>)
+        .put(<span class="st">"total"</span>, <span class="st">"12.00"</span>)
+);
+</code></pre>
+
+<p><strong>渲染结果样例（读取文本）</strong></p>
+<pre><code>订单号：A20260304001
+客户：张三
+明细：
+- 可乐 x 2 = 8.00
+- 薯片 x 1 = 6.00
+VIP 客户折扣：2.00
+应付总额：12.00
+</code></pre>
+
+<h3>Excel 模板（xlsx，行级循环）</h3>
+<p>Excel 循环块使用“起始行 + 结束行”标记：</p>
+<pre><code>起始行某单元格：{{#items as item}}
+结束行某单元格：{{/items}}
+</code></pre>
+
+<p>起始标记支持参数 <code>keepPlaceholderRows=true|false</code>：</p>
+<pre><code>{{#items as item keepPlaceholderRows=false}}</code></pre>
+<p>优先级：标记行参数 &gt; <code>VKExcelTemplateOptions.defaultKeepPlaceholderRows</code> &gt; 默认值 <code>true</code>。</p>
+
+<p><strong>模板样例（tpl/order.xlsx，Orders sheet）</strong></p>
+<pre><code>R1: 订单号 | {{orderNo}}
+R2: {{#items as item}}
+R3: {{item.name}} | {{item.qty}} | {{item.amount}}
+R4: {{/items}}
+R5: 总计 | {{total}}
+</code></pre>
+
+<p><strong>渲染调用样例</strong></p>
+<pre><code><span class="kw">import</span> yueyang.vostok.office.excel.template.VKExcelTemplateOptions;
+
+<span class="ty">Vostok</span>.Office.renderExcelTemplate(
+    <span class="st">"tpl/order.xlsx"</span>,
+    <span class="st">"out/order.xlsx"</span>,
+    <span class="ty">Map</span>.of(
+        <span class="st">"orderNo"</span>, <span class="st">"A20260304001"</span>,
+        <span class="st">"items"</span>, <span class="ty">List</span>.of(
+            <span class="ty">Map</span>.of(<span class="st">"name"</span>, <span class="st">"可乐"</span>, <span class="st">"qty"</span>, <span class="num">2</span>, <span class="st">"amount"</span>, <span class="st">"8.00"</span>),
+            <span class="ty">Map</span>.of(<span class="st">"name"</span>, <span class="st">"薯片"</span>, <span class="st">"qty"</span>, <span class="num">1</span>, <span class="st">"amount"</span>, <span class="st">"6.00"</span>)
+        ),
+        <span class="st">"total"</span>, <span class="st">"14.00"</span>
+    ),
+    <span class="ty">VKExcelTemplateOptions</span>.defaults()
+        .defaultKeepPlaceholderRows(<span class="kw">true</span>)
+        .targetSheets(<span class="ty">List</span>.of(<span class="st">"Orders"</span>))
+);
+</code></pre>
+
+<p><strong>结果对照：</strong></p>
+<pre><code><span class="cm">// keepPlaceholderRows=true（默认）</span>
+R1: 订单号 | A20260304001
+R2: ""     <span class="cm">// 起始占位行保留并清空标记</span>
+R3: 可乐   | 2 | 8.00
+R4: 薯片   | 1 | 6.00
+R5: ""     <span class="cm">// 结束占位行保留并清空标记</span>
+R6: 总计   | 14.00
+
+<span class="cm">// keepPlaceholderRows=false（可在起始标记或 options 指定）</span>
+R1: 订单号 | A20260304001
+R2: 可乐   | 2 | 8.00   <span class="cm">// 从起始行号开始展开</span>
+R3: 薯片   | 1 | 6.00
+R4: 总计   | 14.00
+</code></pre>
+
+<p><strong>空列表行为：</strong></p>
+<p><code>keepPlaceholderRows=true</code> 时保留起止占位行并清空标记；<code>keepPlaceholderRows=false</code> 时起止占位行及中间模板行全部移除。</p>
+
+<div class="callout info">
+  <div class="callout-title">PPT/PDF 模板提示</div>
+  <code>renderPPTTemplate(...)</code> 与 <code>renderPDFTemplate(...)</code> 的调用方式、模板语法与 Word 模板一致。
+</div>
+
+<h2>转换能力示例</h2>
+<pre><code><span class="kw">import</span> yueyang.vostok.office.convert.VKOfficeConvertOptions;
+
+<span class="cm">// docx/pptx/xlsx -&gt; pdf</span>
+<span class="ty">Vostok</span>.Office.convertToPDF(<span class="st">"word/orders.docx"</span>, <span class="st">"pdf/orders.pdf"</span>);
+
+<span class="cm">// xlsx -&gt; csv</span>
+<span class="ty">Vostok</span>.Office.convertExcelToCSV(
+    <span class="st">"excel/orders.xlsx"</span>,
+    <span class="st">"csv/orders.csv"</span>,
+    <span class="ty">VKOfficeConvertOptions</span>.defaults().csvSheetName(<span class="st">"Orders"</span>)
+);
+
+<span class="cm">// csv -&gt; xlsx</span>
+<span class="ty">Vostok</span>.Office.convertCSVToExcel(<span class="st">"csv/orders.csv"</span>, <span class="st">"excel/orders-back.xlsx"</span>);
+</code></pre>
+
+<h2>流式读取与结构化提取</h2>
+<pre><code><span class="cm">// 流式读取：逐块回调（text/image/meta）</span>
+<span class="ty">Vostok</span>.Office.readWordStream(<span class="st">"word/orders.docx"</span>, block -&gt; consume(block.type(), block.text()));
+<span class="ty">Vostok</span>.Office.readPPTStream(<span class="st">"ppt/summary.pptx"</span>, block -&gt; consume(block.type(), block.text()));
+<span class="ty">Vostok</span>.Office.readPDFStream(<span class="st">"pdf/bill.pdf"</span>, block -&gt; consume(block.type(), block.text()));
+
+<span class="cm">// 结构化提取：节点模型（Word/PPT/PDF）</span>
+<span class="ty">var</span> wordStructured = <span class="ty">Vostok</span>.Office.readWordStructured(<span class="st">"word/orders.docx"</span>);
+<span class="ty">var</span> pptStructured = <span class="ty">Vostok</span>.Office.readPPTStructured(<span class="st">"ppt/summary.pptx"</span>);
+<span class="ty">var</span> pdfStructured = <span class="ty">Vostok</span>.Office.readPDFStructured(<span class="st">"pdf/bill.pdf"</span>);
+</code></pre>
+
+<h2>异步任务回调（类 Event 风格）</h2>
+<pre><code><span class="kw">import</span> yueyang.vostok.office.job.*;
+
+<span class="ty">Vostok</span>.Office.onJobCompleted(n -&gt;
+    <span class="ty">Vostok</span>.Log.info(<span class="st">"job done: {} {}"</span>, n.jobId(), n.resultPath()));
+
+<span class="ty">Vostok</span>.Office.onJobDeadLetter(n -&gt;
+    <span class="ty">Vostok</span>.Log.warn(<span class="st">"unhandled office job notification: {}"</span>, n.status()));
+
+<span class="ty">String</span> jobId = <span class="ty">Vostok</span>.Office.submitJob(
+    <span class="ty">VKOfficeJobRequest</span>.create(() -&gt; {
+        <span class="ty">Vostok</span>.Office.convertToPDF(<span class="st">"word/orders.docx"</span>, <span class="st">"pdf/orders-async.pdf"</span>);
+        <span class="kw">return</span> <span class="ty">VKOfficeJobExecutionResult</span>.ofPath(<span class="st">"pdf/orders-async.pdf"</span>);
+    }).type(<span class="ty">VKOfficeJobType</span>.CONVERT).tag(<span class="st">"batch-a"</span>)
+);
+
+<span class="ty">VKOfficeJobResult</span> result = <span class="ty">Vostok</span>.Office.awaitJob(jobId, <span class="num">30000</span>);
+</code></pre>
+
 <div class="callout info">
   <div class="callout-title">字数统计规则</div>
   Word/PPT/PDF 字数统一按“非空白 Unicode code point”统计；空格、换行、制表符不计入字数。
@@ -138,14 +291,20 @@ req.addPage().addParagraph(<span class="st">"账单 A001"</span>).addImageBytes(
 <table class="config-table">
   <thead><tr><th>参数</th><th>类型</th><th>默认值</th><th>说明</th></tr></thead>
   <tbody>
-    <tr><td class="param-name">excelTempDir</td><td>String</td><td>"tmp/excel"</td><td>Excel 临时目录</td></tr>
-    <tr><td class="param-name">wordTempDir</td><td>String</td><td>"tmp/word"</td><td>Word 临时目录</td></tr>
-    <tr><td class="param-name">pptTempDir</td><td>String</td><td>"tmp/ppt"</td><td>PPT 临时目录</td></tr>
-    <tr><td class="param-name">pdfTempDir</td><td>String</td><td>"tmp/pdf"</td><td>PDF 临时目录</td></tr>
+    <tr><td class="param-name">officeTempDir</td><td>String</td><td>"tmp/office"</td><td>统一临时目录根；Excel/Word/PPT/PDF 自动使用子目录</td></tr>
     <tr><td class="param-name">pptMaxSlides</td><td>int</td><td>10,000</td><td>PPT 最大幻灯片数量</td></tr>
     <tr><td class="param-name">pdfMaxPages</td><td>int</td><td>10,000</td><td>PDF 最大页数</td></tr>
     <tr><td class="param-name">pdfMaxObjects</td><td>int</td><td>1,000,000</td><td>PDF 最大对象数</td></tr>
     <tr><td class="param-name">pdfMaxStreamBytes</td><td>long</td><td>134217728</td><td>PDF 单 stream 解码上限（默认 128MB）</td></tr>
+    <tr><td class="param-name">officeJobEnabled</td><td>boolean</td><td>true</td><td>是否启用 Office 异步任务</td></tr>
+    <tr><td class="param-name">officeJobWorkerThreads</td><td>int</td><td>4</td><td>任务执行线程数</td></tr>
+    <tr><td class="param-name">officeJobQueueCapacity</td><td>int</td><td>4096</td><td>任务队列容量</td></tr>
+    <tr><td class="param-name">officeJobRetentionMs</td><td>long</td><td>86400000</td><td>任务元数据保留时长（ms）</td></tr>
+    <tr><td class="param-name">officeJobResultMaxBytes</td><td>long</td><td>67108864</td><td>任务结果元数据最大字节（业务约束）</td></tr>
+    <tr><td class="param-name">officeJobCallbackThreads</td><td>int</td><td>2</td><td>回调分发线程数</td></tr>
+    <tr><td class="param-name">officeJobCallbackQueueCapacity</td><td>int</td><td>4096</td><td>回调队列容量</td></tr>
+    <tr><td class="param-name">officeJobCallbackTimeoutMs</td><td>long</td><td>5000</td><td>回调处理超时阈值（业务监控用途）</td></tr>
+    <tr><td class="param-name">officeJobNotifyOnRunning</td><td>boolean</td><td>false</td><td>是否发送 RUNNING 通知</td></tr>
     <tr><td class="param-name">xxeSampleBytes</td><td>int</td><td>8192</td><td>XML 安全采样字节数（Excel/Word/PPT）</td></tr>
   </tbody>
 </table>
@@ -180,6 +339,15 @@ req.addPage().addParagraph(<span class="st">"账单 A001"</span>).addImageBytes(
     <tr><td><code>countPDFPages(path, options)</code></td><td>统计 .pdf 页数</td></tr>
     <tr><td><code>readPDF(path, options)</code></td><td>聚合读取 PDF 信息</td></tr>
     <tr><td><code>writePDF(path, request, options)</code></td><td>生成 .pdf（文本 + 图片）</td></tr>
+
+    <tr><td><code>renderWordTemplate/renderPPTTemplate/renderPDFTemplate</code></td><td>模板渲染（{{var}}/{{#list as item}}/{{?cond}}）</td></tr>
+    <tr><td><code>renderExcelTemplate(template, output, data, options)</code></td><td>Excel 模板渲染（支持行级循环与占位行策略）</td></tr>
+    <tr><td><code>convertToPDF(path, target, options)</code></td><td>docx/pptx/xlsx 转 pdf</td></tr>
+    <tr><td><code>convertExcelToCSV / convertCSVToExcel</code></td><td>xlsx 与 csv 双向转换</td></tr>
+    <tr><td><code>readWordStream/readPPTStream/readPDFStream</code></td><td>块级流式读取</td></tr>
+    <tr><td><code>readWordStructured/readPPTStructured/readPDFStructured</code></td><td>结构化节点提取</td></tr>
+    <tr><td><code>submitJob/getJob/cancelJob/awaitJob/listJobs</code></td><td>异步任务管理</td></tr>
+    <tr><td><code>onJob/onceJob/offJob/offAllJobs/onJobDeadLetter</code></td><td>任务回调注册（类 Event 风格）</td></tr>
 
     <tr><td><code>started()</code></td><td>是否已初始化</td></tr>
     <tr><td><code>config()</code></td><td>获取当前配置副本</td></tr>

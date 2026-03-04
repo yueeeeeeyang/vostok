@@ -43,7 +43,7 @@ public final class VKExcelLimits {
                 pick(opt.maxSharedStrings(), config.getExcelMaxSharedStrings()),
                 pickLong(opt.maxWorkbookBytes(), config.getExcelMaxWorkbookBytes()),
                 Math.max(1024, opt.xxeSampleBytes()),
-                pickSubDir(opt.tempSubDir(), config.getExcelTempDir())
+                pickSubDir(opt.tempSubDir(), formatTempSubDir(config.getOfficeTempDir(), "excel"))
         );
     }
 
@@ -57,7 +57,7 @@ public final class VKExcelLimits {
                 config.getExcelMaxSharedStrings(),
                 pickLong(opt.maxWorkbookBytes(), config.getExcelMaxWorkbookBytes()),
                 8192,
-                pickSubDir(opt.tempSubDir(), config.getExcelTempDir())
+                pickSubDir(opt.tempSubDir(), formatTempSubDir(config.getOfficeTempDir(), "excel"))
         );
     }
 
@@ -74,6 +74,15 @@ public final class VKExcelLimits {
             return fallback;
         }
         return value.trim();
+    }
+
+    private static String formatTempSubDir(String root, String child) {
+        String base = root == null ? "" : root.trim();
+        if (base.isEmpty()) {
+            return child;
+        }
+        String normalized = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+        return normalized + "/" + child;
     }
 
     public int maxSheets() {

@@ -12,7 +12,8 @@ public final class VKOfficeConfig {
     private int excelMaxCellChars = 32_767;
     private int excelMaxSharedStrings = 2_000_000;
     private long excelMaxWorkbookBytes = 512L * 1024 * 1024;
-    private String excelTempDir = "tmp/excel";
+    /** Office 统一临时目录根路径（Excel/Word/PPT/PDF 在其下按子目录隔离）。 */
+    private String officeTempDir = "tmp/office";
     private int xxeSampleBytes = 8192;
 
     private long wordMaxDocumentBytes = 512L * 1024 * 1024;
@@ -20,7 +21,6 @@ public final class VKOfficeConfig {
     private int wordMaxImages = 10_000;
     private long wordMaxSingleImageBytes = 50L * 1024 * 1024;
     private long wordMaxTotalImageBytes = 512L * 1024 * 1024;
-    private String wordTempDir = "tmp/word";
 
     private long pptMaxDocumentBytes = 512L * 1024 * 1024;
     private int pptMaxSlides = 10_000;
@@ -28,7 +28,6 @@ public final class VKOfficeConfig {
     private int pptMaxImages = 10_000;
     private long pptMaxSingleImageBytes = 50L * 1024 * 1024;
     private long pptMaxTotalImageBytes = 512L * 1024 * 1024;
-    private String pptTempDir = "tmp/ppt";
 
     private long pdfMaxDocumentBytes = 512L * 1024 * 1024;
     private int pdfMaxPages = 10_000;
@@ -38,7 +37,16 @@ public final class VKOfficeConfig {
     private long pdfMaxTotalImageBytes = 512L * 1024 * 1024;
     private int pdfMaxObjects = 1_000_000;
     private long pdfMaxStreamBytes = 128L * 1024 * 1024;
-    private String pdfTempDir = "tmp/pdf";
+
+    private boolean officeJobEnabled = true;
+    private int officeJobWorkerThreads = 4;
+    private int officeJobQueueCapacity = 4096;
+    private long officeJobRetentionMs = 24L * 60 * 60 * 1000;
+    private long officeJobResultMaxBytes = 64L * 1024 * 1024;
+    private boolean officeJobNotifyOnRunning = false;
+    private int officeJobCallbackThreads = 2;
+    private int officeJobCallbackQueueCapacity = 4096;
+    private long officeJobCallbackTimeoutMs = 5000L;
 
     private long unzipMaxEntries = -1;
     private long unzipMaxTotalUncompressedBytes = -1;
@@ -98,12 +106,13 @@ public final class VKOfficeConfig {
         return this;
     }
 
-    public String getExcelTempDir() {
-        return excelTempDir;
+    public String getOfficeTempDir() {
+        return officeTempDir;
     }
 
-    public VKOfficeConfig excelTempDir(String excelTempDir) {
-        this.excelTempDir = excelTempDir;
+    /** 配置统一临时目录根。 */
+    public VKOfficeConfig officeTempDir(String officeTempDir) {
+        this.officeTempDir = officeTempDir;
         return this;
     }
 
@@ -161,14 +170,6 @@ public final class VKOfficeConfig {
         return this;
     }
 
-    public String getWordTempDir() {
-        return wordTempDir;
-    }
-
-    public VKOfficeConfig wordTempDir(String wordTempDir) {
-        this.wordTempDir = wordTempDir;
-        return this;
-    }
 
     public long getPptMaxDocumentBytes() {
         return pptMaxDocumentBytes;
@@ -224,14 +225,6 @@ public final class VKOfficeConfig {
         return this;
     }
 
-    public String getPptTempDir() {
-        return pptTempDir;
-    }
-
-    public VKOfficeConfig pptTempDir(String pptTempDir) {
-        this.pptTempDir = pptTempDir;
-        return this;
-    }
 
     public long getPdfMaxDocumentBytes() {
         return pdfMaxDocumentBytes;
@@ -305,12 +298,85 @@ public final class VKOfficeConfig {
         return this;
     }
 
-    public String getPdfTempDir() {
-        return pdfTempDir;
+
+    public boolean getOfficeJobEnabled() {
+        return officeJobEnabled;
     }
 
-    public VKOfficeConfig pdfTempDir(String pdfTempDir) {
-        this.pdfTempDir = pdfTempDir;
+    public VKOfficeConfig officeJobEnabled(boolean officeJobEnabled) {
+        this.officeJobEnabled = officeJobEnabled;
+        return this;
+    }
+
+    public int getOfficeJobWorkerThreads() {
+        return officeJobWorkerThreads;
+    }
+
+    public VKOfficeConfig officeJobWorkerThreads(int officeJobWorkerThreads) {
+        this.officeJobWorkerThreads = officeJobWorkerThreads;
+        return this;
+    }
+
+    public int getOfficeJobQueueCapacity() {
+        return officeJobQueueCapacity;
+    }
+
+    public VKOfficeConfig officeJobQueueCapacity(int officeJobQueueCapacity) {
+        this.officeJobQueueCapacity = officeJobQueueCapacity;
+        return this;
+    }
+
+    public long getOfficeJobRetentionMs() {
+        return officeJobRetentionMs;
+    }
+
+    public VKOfficeConfig officeJobRetentionMs(long officeJobRetentionMs) {
+        this.officeJobRetentionMs = officeJobRetentionMs;
+        return this;
+    }
+
+    public long getOfficeJobResultMaxBytes() {
+        return officeJobResultMaxBytes;
+    }
+
+    public VKOfficeConfig officeJobResultMaxBytes(long officeJobResultMaxBytes) {
+        this.officeJobResultMaxBytes = officeJobResultMaxBytes;
+        return this;
+    }
+
+    public boolean getOfficeJobNotifyOnRunning() {
+        return officeJobNotifyOnRunning;
+    }
+
+    public VKOfficeConfig officeJobNotifyOnRunning(boolean officeJobNotifyOnRunning) {
+        this.officeJobNotifyOnRunning = officeJobNotifyOnRunning;
+        return this;
+    }
+
+    public int getOfficeJobCallbackThreads() {
+        return officeJobCallbackThreads;
+    }
+
+    public VKOfficeConfig officeJobCallbackThreads(int officeJobCallbackThreads) {
+        this.officeJobCallbackThreads = officeJobCallbackThreads;
+        return this;
+    }
+
+    public int getOfficeJobCallbackQueueCapacity() {
+        return officeJobCallbackQueueCapacity;
+    }
+
+    public VKOfficeConfig officeJobCallbackQueueCapacity(int officeJobCallbackQueueCapacity) {
+        this.officeJobCallbackQueueCapacity = officeJobCallbackQueueCapacity;
+        return this;
+    }
+
+    public long getOfficeJobCallbackTimeoutMs() {
+        return officeJobCallbackTimeoutMs;
+    }
+
+    public VKOfficeConfig officeJobCallbackTimeoutMs(long officeJobCallbackTimeoutMs) {
+        this.officeJobCallbackTimeoutMs = officeJobCallbackTimeoutMs;
         return this;
     }
 

@@ -2,6 +2,10 @@ package yueyang.vostok.office.ppt.internal;
 
 import yueyang.vostok.office.exception.VKOfficeErrorCode;
 import yueyang.vostok.office.exception.VKOfficeException;
+import yueyang.vostok.office.style.VKOfficeImageStyle;
+import yueyang.vostok.office.style.VKOfficeLayoutStyle;
+import yueyang.vostok.office.style.VKOfficeTextAlign;
+import yueyang.vostok.office.style.VKOfficeTextStyle;
 
 import java.io.BufferedWriter;
 import java.nio.charset.StandardCharsets;
@@ -21,7 +25,8 @@ public final class VKPptXmlWriter {
 
     public static void writePackage(Path packageRoot,
                                     List<SlidePart> slides,
-                                    Set<String> imageExtensions) {
+                                    Set<String> imageExtensions,
+                                    VKOfficeLayoutStyle layoutStyle) {
         try {
             Files.createDirectories(packageRoot.resolve("_rels"));
             Files.createDirectories(packageRoot.resolve("ppt/_rels"));
@@ -34,7 +39,7 @@ public final class VKPptXmlWriter {
             writePresentationRels(packageRoot.resolve("ppt/_rels/presentation.xml.rels"), slides.size());
 
             for (SlidePart slide : slides) {
-                writeSlide(packageRoot.resolve("ppt/slides/slide" + slide.slideNo() + ".xml"), slide);
+                writeSlide(packageRoot.resolve("ppt/slides/slide" + slide.slideNo() + ".xml"), slide, layoutStyle);
                 writeSlideRels(packageRoot.resolve("ppt/slides/_rels/slide" + slide.slideNo() + ".xml.rels"), slide.imageRelationships());
             }
         } catch (VKOfficeException e) {
@@ -100,7 +105,7 @@ public final class VKPptXmlWriter {
         }
     }
 
-    private static void writeSlide(Path path, SlidePart slide) throws Exception {
+    private static void writeSlide(Path path, SlidePart slide, VKOfficeLayoutStyle layoutStyle) throws Exception {
         List<BodyBlock> blocks = slide.blocks() == null ? List.of() : new ArrayList<>(slide.blocks());
         if (blocks.isEmpty()) {
             blocks = Collections.singletonList(BodyBlock.paragraph(""));
@@ -114,11 +119,15 @@ public final class VKPptXmlWriter {
             w.write("<p:grpSpPr/>");
 
             int shapeId = 2;
+            long top = toEmu(layoutStyle == null ? null : layoutStyle.marginTop(), 1000000L);
+            long left = toEmu(layoutStyle == null ? null : layoutStyle.marginLeft(), 1000000L);
             for (BodyBlock block : blocks) {
                 if (block.imageRelId() != null) {
-                    writeImage(w, shapeId++, block.imageRelId(), block.imageName());
+                    writeImage(w, shapeId++, block.imageRelId(), block.imageName(), block.imageStyle(), left, top);
+                    top += toEmu(layoutStyle == null ? null : layoutStyle.blockSpacing(), 340000L);
                 } else {
-                    writeText(w, shapeId++, block.text());
+                    writeText(w, shapeId++, block.text(), block.textStyle(), left, top);
+                    top += toEmu(layoutStyle == null ? null : layoutStyle.defaultLineHeight(), 380000L);
                 }
             }
 
@@ -128,27 +137,49 @@ public final class VKPptXmlWriter {
         }
     }
 
-    private static void writeText(BufferedWriter w, int shapeId, String text) throws Exception {
+    private static void writeText(BufferedWriter w,
+                                  int shapeId,
+                                  String text,
+                                  VKOfficeTextStyle style,
+                                  long left,
+                                  long top) throws Exception {
         String v = text == null ? "" : text;
         w.write("<p:sp>");
         w.write("<p:nvSpPr><p:cNvPr id=\"" + shapeId + "\" name=\"TextBox " + shapeId + "\"/><p:cNvSpPr txBox=\"1\"/><p:nvPr/></p:nvSpPr>");
-        w.write("<p:spPr/>");
+        w.write("<p:spPr><a:xfrm><a:off x=\"" + left + "\" y=\"" + top + "\"/><a:ext cx=\"7600000\" cy=\"450000\"/></a:xfrm></p:spPr>");
         w.write("<p:txBody><a:bodyPr/><a:lstStyle>");
         String normalized = v.replace("\r\n", "\n").replace('\r', '\n');
         String[] lines = normalized.split("\\n", -1);
         for (String line : lines) {
-            w.write("<a:p><a:r><a:t>" + escapeXmlText(line) + "</a:t></a:r></a:p>");
+            w.write("<a:p>");
+            if (style != null && style.align() != null) {
+                w.write("<a:pPr algn=\"" + toPptAlign(style.align()) + "\"/>");
+            }
+            w.write("<a:r>");
+            writeTextRunStyle(w, style);
+            w.write("<a:t>" + escapeXmlText(line) + "</a:t>");
+            w.write("</a:r>");
+            w.write("</a:p>");
         }
         w.write("</a:lstStyle></p:txBody>");
         w.write("</p:sp>");
     }
 
-    private static void writeImage(BufferedWriter w, int shapeId, String rid, String imageName) throws Exception {
+    private static void writeImage(BufferedWriter w,
+                                   int shapeId,
+                                   String rid,
+                                   String imageName,
+                                   VKOfficeImageStyle imageStyle,
+                                   long left,
+                                   long top) throws Exception {
         String name = imageName == null || imageName.isBlank() ? "image" : imageName;
+        long cx = toEmu(imageStyle == null ? null : imageStyle.width(), 3000000L);
+        long cy = toEmu(imageStyle == null ? null : imageStyle.height(), 3000000L);
         w.write("<p:pic>");
         w.write("<p:nvPicPr><p:cNvPr id=\"" + shapeId + "\" name=\"" + escapeXmlAttr(name) + "\"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr>");
         w.write("<p:blipFill><a:blip r:embed=\"" + escapeXmlAttr(rid) + "\"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>");
-        w.write("<p:spPr><a:xfrm><a:off x=\"1000000\" y=\"1000000\"/><a:ext cx=\"3000000\" cy=\"3000000\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr>");
+        w.write("<p:spPr><a:xfrm><a:off x=\"" + left + "\" y=\"" + top + "\"/><a:ext cx=\"" + cx + "\" cy=\"" + cy
+                + "\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></p:spPr>");
         w.write("</p:pic>");
     }
 
@@ -202,6 +233,74 @@ public final class VKPptXmlWriter {
         return sb.toString();
     }
 
+    private static void writeTextRunStyle(BufferedWriter w, VKOfficeTextStyle style) throws Exception {
+        if (style == null) {
+            return;
+        }
+        boolean has = (style.bold() != null && style.bold())
+                || (style.italic() != null && style.italic())
+                || (style.fontSize() != null && style.fontSize() > 0)
+                || (style.colorHex() != null && !style.colorHex().isBlank());
+        if (!has) {
+            return;
+        }
+        w.write("<a:rPr");
+        if (style.bold() != null && style.bold()) {
+            w.write(" b=\"1\"");
+        }
+        if (style.italic() != null && style.italic()) {
+            w.write(" i=\"1\"");
+        }
+        if (style.fontSize() != null && style.fontSize() > 0) {
+            w.write(" sz=\"" + (style.fontSize() * 100) + "\"");
+        }
+        w.write(">");
+        if (style.colorHex() != null && !style.colorHex().isBlank()) {
+            w.write("<a:solidFill><a:srgbClr val=\"" + sanitizeColor(style.colorHex()) + "\"/></a:solidFill>");
+        }
+        w.write("</a:rPr>");
+    }
+
+    private static String sanitizeColor(String colorHex) {
+        String v = colorHex.trim();
+        if (v.startsWith("#")) {
+            v = v.substring(1);
+        }
+        if (v.length() == 3) {
+            v = "" + v.charAt(0) + v.charAt(0) + v.charAt(1) + v.charAt(1) + v.charAt(2) + v.charAt(2);
+        }
+        if (v.length() != 6) {
+            return "000000";
+        }
+        return v.toUpperCase();
+    }
+
+    private static String toPptAlign(VKOfficeTextAlign align) {
+        if (align == null) {
+            return "l";
+        }
+        return switch (align) {
+            case CENTER -> "ctr";
+            case RIGHT -> "r";
+            case JUSTIFY -> "just";
+            default -> "l";
+        };
+    }
+
+    private static long toEmu(Double pt, long fallback) {
+        if (pt == null || pt <= 0) {
+            return fallback;
+        }
+        return Math.max(1, Math.round(pt * 12700.0));
+    }
+
+    private static long toEmu(Integer px, long fallback) {
+        if (px == null || px <= 0) {
+            return fallback;
+        }
+        return Math.max(1, px.longValue() * 9525L);
+    }
+
     /** 幻灯片结构信息。 */
     public static final class SlidePart {
         private final int slideNo;
@@ -232,19 +331,35 @@ public final class VKPptXmlWriter {
         private final String text;
         private final String imageRelId;
         private final String imageName;
+        private final VKOfficeTextStyle textStyle;
+        private final VKOfficeImageStyle imageStyle;
 
-        private BodyBlock(String text, String imageRelId, String imageName) {
+        private BodyBlock(String text,
+                          String imageRelId,
+                          String imageName,
+                          VKOfficeTextStyle textStyle,
+                          VKOfficeImageStyle imageStyle) {
             this.text = text;
             this.imageRelId = imageRelId;
             this.imageName = imageName;
+            this.textStyle = textStyle;
+            this.imageStyle = imageStyle;
         }
 
         public static BodyBlock paragraph(String text) {
-            return new BodyBlock(text, null, null);
+            return new BodyBlock(text, null, null, null, null);
+        }
+
+        public static BodyBlock paragraph(String text, VKOfficeTextStyle textStyle) {
+            return new BodyBlock(text, null, null, textStyle, null);
         }
 
         public static BodyBlock image(String imageRelId, String imageName) {
-            return new BodyBlock(null, imageRelId, imageName);
+            return new BodyBlock(null, imageRelId, imageName, null, null);
+        }
+
+        public static BodyBlock image(String imageRelId, String imageName, VKOfficeImageStyle imageStyle) {
+            return new BodyBlock(null, imageRelId, imageName, null, imageStyle);
         }
 
         public String text() {
@@ -257,6 +372,14 @@ public final class VKPptXmlWriter {
 
         public String imageName() {
             return imageName;
+        }
+
+        public VKOfficeTextStyle textStyle() {
+            return textStyle;
+        }
+
+        public VKOfficeImageStyle imageStyle() {
+            return imageStyle;
         }
     }
 }

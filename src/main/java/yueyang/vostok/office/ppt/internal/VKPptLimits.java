@@ -46,7 +46,7 @@ public final class VKPptLimits {
                 pick(opt.maxImages(), config.getPptMaxImages()),
                 pickLong(opt.maxSingleImageBytes(), config.getPptMaxSingleImageBytes()),
                 pickLong(opt.maxTotalImageBytes(), config.getPptMaxTotalImageBytes()),
-                pickSubDir(opt.tempSubDir(), config.getPptTempDir()),
+                pickSubDir(opt.tempSubDir(), formatTempSubDir(config.getOfficeTempDir(), "ppt")),
                 Math.max(1024, opt.xxeSampleBytes()),
                 opt.imageLoadMode() == null ? VKPptImageLoadMode.BYTES : opt.imageLoadMode());
     }
@@ -60,7 +60,7 @@ public final class VKPptLimits {
                 pick(opt.maxImages(), config.getPptMaxImages()),
                 pickLong(opt.maxSingleImageBytes(), config.getPptMaxSingleImageBytes()),
                 pickLong(opt.maxTotalImageBytes(), config.getPptMaxTotalImageBytes()),
-                pickSubDir(opt.tempSubDir(), config.getPptTempDir()),
+                pickSubDir(opt.tempSubDir(), formatTempSubDir(config.getOfficeTempDir(), "ppt")),
                 Math.max(1024, config.getXxeSampleBytes()),
                 VKPptImageLoadMode.BYTES);
     }
@@ -78,6 +78,15 @@ public final class VKPptLimits {
             return fallback;
         }
         return value.trim();
+    }
+
+    private static String formatTempSubDir(String root, String child) {
+        String base = root == null ? "" : root.trim();
+        if (base.isEmpty()) {
+            return child;
+        }
+        String normalized = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+        return normalized + "/" + child;
     }
 
     public long maxDocumentBytes() {

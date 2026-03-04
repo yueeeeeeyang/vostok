@@ -50,7 +50,7 @@ public final class VKWordPackageWriter {
                 String text = paragraph.text();
                 textChars += VKWordCharCounter.countNonWhitespace(text);
                 checkTextChars(textChars);
-                blocks.add(VKWordXmlWriter.BodyBlock.paragraph(text));
+                blocks.add(VKWordXmlWriter.BodyBlock.paragraph(text, paragraph.style()));
                 continue;
             }
 
@@ -69,7 +69,7 @@ public final class VKWordPackageWriter {
                 imageRels.put(rid, relTarget);
                 imageExtensions.add(prepared.extension());
 
-                blocks.add(VKWordXmlWriter.BodyBlock.image(rid, "image" + imageIndex));
+                blocks.add(VKWordXmlWriter.BodyBlock.image(rid, "image" + imageIndex, image.style()));
                 continue;
             }
 
@@ -81,7 +81,7 @@ public final class VKWordPackageWriter {
             blocks.add(VKWordXmlWriter.BodyBlock.paragraph(""));
         }
 
-        VKWordXmlWriter.writePackage(packageRoot, blocks, imageRels, imageExtensions);
+        VKWordXmlWriter.writePackage(packageRoot, blocks, imageRels, imageExtensions, request.layoutStyle());
     }
 
     private VKWordMediaWriter.PreparedImage writeImage(VKWordMediaWriter mediaWriter,

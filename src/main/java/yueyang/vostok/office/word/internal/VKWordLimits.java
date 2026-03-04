@@ -55,7 +55,7 @@ public final class VKWordLimits {
                 pick(opt.maxImages(), config.getWordMaxImages()),
                 pickLong(opt.maxSingleImageBytes(), config.getWordMaxSingleImageBytes()),
                 pickLong(opt.maxTotalImageBytes(), config.getWordMaxTotalImageBytes()),
-                pickSubDir(opt.tempSubDir(), config.getWordTempDir()),
+                pickSubDir(opt.tempSubDir(), formatTempSubDir(config.getOfficeTempDir(), "word")),
                 Math.max(1024, opt.xxeSampleBytes()),
                 opt.includeHeaderFooter(),
                 opt.includeFootnotes(),
@@ -73,7 +73,7 @@ public final class VKWordLimits {
                 pick(opt.maxImages(), config.getWordMaxImages()),
                 pickLong(opt.maxSingleImageBytes(), config.getWordMaxSingleImageBytes()),
                 pickLong(opt.maxTotalImageBytes(), config.getWordMaxTotalImageBytes()),
-                pickSubDir(opt.tempSubDir(), config.getWordTempDir()),
+                pickSubDir(opt.tempSubDir(), formatTempSubDir(config.getOfficeTempDir(), "word")),
                 Math.max(1024, config.getXxeSampleBytes()),
                 false,
                 false,
@@ -96,6 +96,15 @@ public final class VKWordLimits {
             return fallback;
         }
         return value.trim();
+    }
+
+    private static String formatTempSubDir(String root, String child) {
+        String base = root == null ? "" : root.trim();
+        if (base.isEmpty()) {
+            return child;
+        }
+        String normalized = base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+        return normalized + "/" + child;
     }
 
     public long maxDocumentBytes() {

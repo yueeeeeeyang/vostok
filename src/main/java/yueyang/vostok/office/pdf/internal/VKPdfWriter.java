@@ -57,7 +57,7 @@ public final class VKPdfWriter {
                     String text = paragraph.text();
                     totalChars += VKPdfTextScanner.countNonWhitespace(text);
                     checkTextChars(totalChars);
-                    blocks.add(VKPdfPageComposer.Block.text(text));
+                    blocks.add(VKPdfPageComposer.Block.text(text, paragraph.style()));
                     continue;
                 }
 
@@ -73,7 +73,7 @@ public final class VKPdfWriter {
                     checkTotalImageBytes(totalImageBytes);
 
                     pageImages.add(prepared.withName(imageName));
-                    blocks.add(VKPdfPageComposer.Block.image(imageName));
+                    blocks.add(VKPdfPageComposer.Block.image(imageName, image.style()));
                     continue;
                 }
 
@@ -87,10 +87,10 @@ public final class VKPdfWriter {
             pageModels.add(new PageModel(blocks, pageImages));
         }
 
-        return buildPdf(pageModels);
+        return buildPdf(pageModels, request.layoutStyle());
     }
 
-    private byte[] buildPdf(List<PageModel> pages) {
+    private byte[] buildPdf(List<PageModel> pages, yueyang.vostok.office.style.VKOfficeLayoutStyle layoutStyle) {
         Map<Integer, byte[]> objectBodies = new LinkedHashMap<>();
         List<Integer> pageObjectIds = new ArrayList<>();
 
@@ -109,7 +109,7 @@ public final class VKPdfWriter {
                 objectBodies.put(imageObjId, buildImageObject(image));
             }
 
-            byte[] contentBytes = VKPdfPageComposer.compose(page.blocks(), imageBoxes);
+            byte[] contentBytes = VKPdfPageComposer.compose(page.blocks(), imageBoxes, layoutStyle);
             checkStreamBytes(contentBytes.length);
             int contentObjId = nextId++;
             objectBodies.put(contentObjId, buildStreamObject(contentBytes));
