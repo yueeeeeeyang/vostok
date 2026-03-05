@@ -821,8 +821,6 @@ final class VKReactor implements Runnable {
             while (true) {
                 if (currentOutbound == null) {
                     currentOutbound = writeQueue.poll();
-                    currentHead = null;
-                    currentBody = null;
                     currentFilePos = 0;
                     if (currentOutbound == null) {
                         if (key.isValid()) {
@@ -836,11 +834,11 @@ final class VKReactor implements Runnable {
                         }
                         return;
                     }
+                    // 在首次出队时初始化 head/body 缓冲，避免 OP_WRITE 多次触发时重复写入头部
+                    currentHead = currentOutbound.head != null ? ByteBuffer.wrap(currentOutbound.head) : null;
+                    currentBody = currentOutbound.body != null ? ByteBuffer.wrap(currentOutbound.body) : null;
                 }
 
-                if (currentHead == null && currentOutbound.head != null) {
-                    currentHead = ByteBuffer.wrap(currentOutbound.head);
-                }
                 if (currentHead != null) {
                     channel.write(currentHead);
                     if (currentHead.hasRemaining()) {
@@ -849,9 +847,6 @@ final class VKReactor implements Runnable {
                     currentHead = null;
                 }
 
-                if (currentBody == null && currentOutbound.body != null) {
-                    currentBody = ByteBuffer.wrap(currentOutbound.body);
-                }
                 if (currentBody != null) {
                     channel.write(currentBody);
                     if (currentBody.hasRemaining()) {
