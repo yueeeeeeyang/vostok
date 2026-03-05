@@ -14,7 +14,7 @@
       <div class="logo-mark">V</div>
       <div>
         <div class="logo-text">Vostok</div>
-        <div class="logo-version">v1.9.2.3 · JDK 17+</div>
+        <div class="logo-version">v1.9.2.5 · JDK 17+</div>
       </div>
     </a>
   </div>
@@ -101,6 +101,23 @@
     <tr><td><span class="error-code">DK-540</span></td><td><span class="enum-name">CACHE_ERROR</span></td><td>缓存操作错误</td></tr>
   </tbody>
 </table>
+
+<h2>Data 原生 SQL 场景（executeQuery / executeUpdate）</h2>
+<table class="api-table">
+  <thead><tr><th>场景</th><th>错误码</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>SQL 语法错误（如 SELEC）</td><td><span class="error-code">DK-503</span> SQL_SYNTAX</td><td>由 <code>VKExceptionTranslator</code> 按 SQLState=42xx 映射</td></tr>
+    <tr><td>数据库连接异常</td><td><span class="error-code">DK-504</span> SQL_CONNECTION</td><td>连接断开、网络不可达等连接类错误</td></tr>
+    <tr><td>执行超时</td><td><span class="error-code">DK-501</span> SQL_TIMEOUT</td><td>受 <code>queryTimeoutMs</code> 或事务剩余超时控制</td></tr>
+  </tbody>
+</table>
+
+<pre><code><span class="kw">try</span> (<span class="ty">DataResult</span> rs = <span class="ty">Vostok</span>.Data.executeQuery(<span class="st">"SELEC id FROM t_user"</span>)) {
+    <span class="cm">// no-op</span>
+} <span class="kw">catch</span> (<span class="ty">VKSqlException</span> e) {
+    <span class="cm">// 常见：DK-503 SQL_SYNTAX</span>
+    log.error(<span class="st">"raw sql failed: {} {} sqlState={}"</span>, e.getCode(), e.getMessage(), e.getSqlState());
+}</code></pre>
 
 <h2>Data 模块异常类型</h2>
 <table class="api-table">

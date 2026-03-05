@@ -8,6 +8,7 @@ import yueyang.vostok.data.core.VostokBootstrap;
 import yueyang.vostok.data.core.VostokCryptoMigrateOps;
 import yueyang.vostok.data.core.VostokContext;
 import yueyang.vostok.data.core.VostokCrudOps;
+import yueyang.vostok.data.core.VostokSqlOps;
 import yueyang.vostok.data.core.VostokTxOps;
 import yueyang.vostok.data.jdbc.VKBatchDetailResult;
 import yueyang.vostok.data.migrate.VKCryptoMigrateOptions;
@@ -226,6 +227,24 @@ public class VostokData {
 
     public static long count(Class<?> entityClass, VKQuery query) {
         return VostokCrudOps.count(entityClass, query);
+    }
+
+    /**
+     * 执行原生查询 SQL，返回游标式结果。
+     *
+     * <p>该接口不依赖 Raw SQL 白名单，调用方需自行保证 SQL 安全性。
+     */
+    public static DataResult executeQuery(String sql, Object... params) {
+        return VostokSqlOps.executeQuery(sql, params);
+    }
+
+    /**
+     * 执行原生更新 SQL（INSERT / UPDATE / DELETE / DDL）。
+     *
+     * <p>该接口不依赖 Raw SQL 白名单，调用方需自行保证 SQL 安全性。
+     */
+    public static int executeUpdate(String sql, Object... params) {
+        return VostokSqlOps.executeUpdate(sql, params);
     }
 
     // 字段迁移

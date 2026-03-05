@@ -1,5 +1,6 @@
 package yueyang.vostok.data.jdbc;
 
+import yueyang.vostok.data.DataResult;
 import yueyang.vostok.data.meta.EntityMeta;
 import yueyang.vostok.data.meta.FieldMeta;
 import yueyang.vostok.data.plugin.VKInterceptor;
@@ -379,6 +380,117 @@ public class JdbcExecutor {
                 }
             }
         });
+    }
+
+    /**
+     * 执行原生查询并返回流式游标结果。
+     *
+     * <p>说明：
+     * <ul>
+     *   <li>仅在“建游标”阶段参与重试，游标迭代阶段不重试。</li>
+     *   <li>非事务场景下，DataResult.close() 会关闭连接；事务场景仅关闭 statement/resultSet。</li>
+     * </ul>
+     */
+    public DataResult queryResult(String sql, Object[] params) throws SQLException {
+        return withRetry(sql, params, () -> openQueryResult(sql, params));
+    }
+
+    private DataResult openQueryResult(String sql, Object[] params) throws SQLException {
+        final boolean monitor = isMonitoringEnabled();
+        final long start = monitor ? System.currentTimeMillis() : 0L;
+        if (monitor) {
+            sqlLogger.logSql(sql, params);
+            before(sql, params);
+        }
+
+        ConnectionHolder holder = getConnection();
+        PreparedStatement ps = null;
+        ResultSet rs = null;
+        try {
+            ps = holder.conn.prepareStatement(sql);
+            applyQueryTimeout(ps);
+            bindParams(ps, params);
+            rs = ps.executeQuery();
+
+            ResultSet finalRs = rs;
+            PreparedStatement finalPs = ps;
+            ConnectionHolder finalHolder = holder;
+            return new DataResult(sql, finalRs, error -> {
+                SQLException closeError = null;
+                try {
+                    finalRs.close();
+                } catch (SQLException e) {
+                    closeError = e;
+                }
+                try {
+                    finalPs.close();
+                } catch (SQLException e) {
+                    if (closeError == null) {
+                        closeError = e;
+                    } else {
+                        closeError.addSuppressed(e);
+                    }
+                }
+                try {
+                    finalHolder.closeIfNeeded();
+                } catch (SQLException e) {
+                    if (closeError == null) {
+                        closeError = e;
+                    } else {
+                        closeError.addSuppressed(e);
+                    }
+                }
+
+                Throwable finalError = error;
+                if (closeError != null) {
+                    if (finalError == null) {
+                        finalError = closeError;
+                    } else {
+                        finalError.addSuppressed(closeError);
+                    }
+                }
+
+                if (monitor) {
+                    long cost = System.currentTimeMillis() - start;
+                    sqlLogger.logSlow(sql, params, cost);
+                    sqlMetrics.record(sql, params, cost);
+                    after(sql, params, cost, finalError == null, finalError);
+                }
+
+                if (closeError != null) {
+                    throw closeError;
+                }
+            });
+        } catch (SQLException e) {
+            SQLException finalError = e;
+            if (rs != null) {
+                try {
+                    rs.close();
+                } catch (SQLException closeEx) {
+                    finalError.addSuppressed(closeEx);
+                }
+            }
+            if (ps != null) {
+                try {
+                    ps.close();
+                } catch (SQLException closeEx) {
+                    finalError.addSuppressed(closeEx);
+                }
+            }
+            try {
+                holder.closeIfNeeded();
+            } catch (SQLException closeEx) {
+                finalError.addSuppressed(closeEx);
+            }
+
+            if (monitor) {
+                long cost = System.currentTimeMillis() - start;
+                sqlLogger.logSlow(sql, params, cost);
+                sqlMetrics.record(sql, params, cost);
+                after(sql, params, cost, false, finalError);
+            }
+            throw finalError;
+        }
     }
 
     public List<Object[]> queryRows(String sql, Object[] params) throws SQLException {

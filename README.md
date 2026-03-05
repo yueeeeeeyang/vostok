@@ -3,7 +3,7 @@
 面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合多个模块能力。
 各模块可独立初始化、按需使用。
 
-**当前版本：`1.9.2.3`**
+**当前版本：`1.9.2.5`**
 
 **详细文档**：[Vostok Docs](https://yueeeeeeyang.github.io/vostok/)
 
@@ -15,7 +15,7 @@
 <dependency>
   <groupId>yueyang</groupId>
   <artifactId>vostok</artifactId>
-  <version>1.9.2.3</version>
+  <version>1.9.2.5</version>
 </dependency>
 ```
 
@@ -103,6 +103,7 @@ Vostok.Log.close();
 
 ```java
 import yueyang.vostok.Vostok;
+import yueyang.vostok.data.DataResult;
 import yueyang.vostok.data.annotation.VKId;
 import yueyang.vostok.data.query.VKCondition;
 import yueyang.vostok.data.query.VKOperator;
@@ -132,6 +133,17 @@ Vostok.Data.tx(() -> {
     Vostok.Data.insert(user);
     Vostok.Data.update(user);
 });
+
+// 原生 SQL（游标式 DataResult）
+try (DataResult rs = Vostok.Data.executeQuery(
+        "SELECT id, name FROM users WHERE email = ?", "alice@example.com")) {
+    while (rs.next()) {
+        long id = rs.getLong("id");
+        String name = rs.getString("name");
+    }
+}
+int affected = Vostok.Data.executeUpdate(
+    "UPDATE users SET name = ? WHERE id = ?", "Alice-2", 1L);
 ```
 
 ### Web

@@ -1,5 +1,6 @@
 package yueyang.vostok.data.core;
 
+import yueyang.vostok.data.DataResult;
 import yueyang.vostok.data.config.VKBatchFailStrategy;
 import yueyang.vostok.data.VKDataConfig;
 import yueyang.vostok.data.dialect.VKDialect;
@@ -126,6 +127,22 @@ final class VostokInternal {
             return currentExecutor().executeUpdate(sp.getSql(), sp.getParams());
         } catch (SQLException e) {
             throw VKExceptionTranslator.translate(sp.getSql(), e);
+        }
+    }
+
+    static int executeUpdateRaw(String sql, Object[] params) {
+        try {
+            return currentExecutor().executeUpdate(sql, params);
+        } catch (SQLException e) {
+            throw VKExceptionTranslator.translate(sql, e);
+        }
+    }
+
+    static DataResult executeQueryResult(String sql, Object[] params) {
+        try {
+            return currentExecutor().queryResult(sql, params);
+        } catch (SQLException e) {
+            throw VKExceptionTranslator.translate(sql, e);
         }
     }
 

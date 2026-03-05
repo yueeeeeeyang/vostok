@@ -14,7 +14,7 @@
       <div class="logo-mark">V</div>
       <div>
         <div class="logo-text">Vostok</div>
-        <div class="logo-version">v1.9.2.3 · JDK 17+</div>
+        <div class="logo-version">v1.9.2.5 · JDK 17+</div>
       </div>
     </a>
   </div>
@@ -180,6 +180,43 @@ user.setEmail(<span class="st">"alice@example.com"</span>);
 <span class="cm">// 批量操作明细（适合 CONTINUE 失败策略场景）</span>
 <span class="ty">VKBatchDetailResult</span> detail = <span class="ty">Vostok</span>.Data.batchDeleteDetail(<span class="ty">User</span>.class, ids);
 <span class="ty">System</span>.out.println(<span class="st">"成功: "</span> + detail.totalSuccess() + <span class="st">" 失败: "</span> + detail.totalFail());</code></pre>
+
+<h2>任意 SQL 执行（DataResult 游标）</h2>
+<p>当 Query Builder 无法覆盖复杂场景时，可以直接执行原生 SQL。<code>executeQuery</code> 返回 <code>DataResult</code>，使用方式接近 JDBC <code>ResultSet</code>。</p>
+<pre><code><span class="kw">import</span> yueyang.vostok.data.DataResult;
+
+<span class="cm">// 查询：next() + getXxx()</span>
+<span class="kw">try</span> (<span class="ty">DataResult</span> rs = <span class="ty">Vostok</span>.Data.executeQuery(
+        <span class="st">"SELECT id, user_name, age FROM t_user WHERE age &gt; ?"</span>, <span class="nu">18</span>)) {
+    <span class="kw">while</span> (rs.next()) {
+        <span class="kw">long</span> id = rs.getLong(<span class="st">"id"</span>);
+        <span class="ty">String</span> name = rs.getString(<span class="st">"user_name"</span>);
+        <span class="kw">int</span> age = rs.getInt(<span class="st">"age"</span>);
+        <span class="kw">if</span> (rs.wasNull()) {
+            <span class="cm">// age 列是 SQL NULL 时，getInt 返回 0，需要配合 wasNull() 判断</span>
+        }
+    }
+}
+
+<span class="cm">// 更新：返回影响行数</span>
+<span class="kw">int</span> n = <span class="ty">Vostok</span>.Data.executeUpdate(
+    <span class="st">"UPDATE t_user SET age = ? WHERE id = ?"</span>, <span class="nu">20</span>, <span class="nu">1L</span>
+);</code></pre>
+
+<div class="callout">
+  <div class="callout-title">DataResult 语义</div>
+  <ul>
+    <li>列索引为 1-based（与 JDBC ResultSet 一致）。</li>
+    <li><code>next()</code> 到达末尾返回 <code>false</code>，并自动关闭资源。</li>
+    <li>建议始终使用 <code>try-with-resources</code> 显式关闭。</li>
+    <li><code>getInt/getLong/getDouble/getBoolean</code> 读取到 SQL NULL 时会返回零值，需用 <code>wasNull()</code> 判断。</li>
+  </ul>
+</div>
+
+<div class="callout warn">
+  <div class="callout-title">安全提示</div>
+  <code>executeQuery / executeUpdate</code> 不经过 Raw SQL 白名单，请务必使用参数占位符（<code>?</code>）绑定变量，避免字符串拼接导致注入风险。
+</div>
 
 <h2>乐观锁（@VKVersion）</h2>
 
@@ -596,7 +633,8 @@ executor.submit(task2);</code></pre>
 <h2>SQL 白名单（安全防护）</h2>
 <div class="callout">
   <div class="callout-title">安全说明</div>
-  子查询和原始 SQL 表达式需要先注册到白名单，否则框架会拒绝执行，防止 SQL 注入风险。
+  子查询和原始 SQL 表达式（<code>VKCondition.raw / inSubquery / exists ...</code>）需要先注册到白名单，否则框架会拒绝执行，防止 SQL 注入风险。<br>
+  <code>executeQuery / executeUpdate</code> 不走白名单校验。
 </div>
 <pre><code><span class="cm">// 注册允许执行的原始 SQL</span>
 <span class="ty">Vostok</span>.Data.registerRawSql(
@@ -827,6 +865,8 @@ executor.submit(task2);</code></pre>
     <tr><td><code>findAll(Class&lt;T&gt;)</code></td><td><code>List&lt;T&gt;</code></td><td>查询全部记录</td></tr>
     <tr><td><code>query(Class&lt;T&gt;, VKQuery)</code></td><td><code>List&lt;T&gt;</code></td><td>条件查询</td></tr>
     <tr><td><code>queryColumns(Class&lt;T&gt;, VKQuery, fields...)</code></td><td><code>List&lt;T&gt;</code></td><td>查询指定列，其余字段为默认值</td></tr>
+    <tr><td><code>executeQuery(sql, params...)</code></td><td><code>DataResult</code></td><td>执行原生查询 SQL，返回游标结果</td></tr>
+    <tr><td><code>executeUpdate(sql, params...)</code></td><td><code>int</code></td><td>执行原生更新 SQL，返回影响行数</td></tr>
     <tr><td><code>count(Class, VKQuery)</code></td><td><code>long</code></td><td>统计符合条件的记录数</td></tr>
     <tr><td><code>aggregate(Class, VKQuery, VKAggregate...)</code></td><td><code>List&lt;Object[]&gt;</code></td><td>多维聚合查询，列顺序与参数一致</td></tr>
   </tbody>
