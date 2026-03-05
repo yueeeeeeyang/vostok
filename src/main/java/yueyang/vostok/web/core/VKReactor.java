@@ -213,6 +213,15 @@ final class VKReactor implements Runnable {
         selector.wakeup();
     }
 
+    void requestContinueRead(VKConn conn) {
+        pending.add(() -> {
+            if (!conn.isClosed() && conn.inFlight.get() == 0 && conn.dataLen > 0) {
+                conn.processDataBuf(System.currentTimeMillis());
+            }
+        });
+        selector.wakeup();
+    }
+
     /**
      * Bug1修复：将 WebSocket 帧发送投递到 reactor 的 pending 队列。
      * sendWsFrame 现在只在 reactor 线程调用，wsPendingFrames/wsPendingBytes 无竞态。
@@ -754,6 +763,10 @@ final class VKReactor implements Runnable {
                     rescheduleTimeout(System.currentTimeMillis());
                     return;
                 }
+                // HTTP/1.1: remaining pipelined requests will be dispatched after this
+                // response is enqueued, via requestContinueRead(), to preserve order.
+                rescheduleTimeout(System.currentTimeMillis());
+                return;
             }
         }
 
@@ -1206,6 +1219,7 @@ final class VKReactor implements Runnable {
 
                     req.cleanupUploads();
                     inFlight.decrementAndGet();
+                    reactor.requestContinueRead(this);
                     reactor.requestReschedule(this);
                 }
             });
