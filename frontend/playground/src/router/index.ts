@@ -4,6 +4,7 @@ import VkFormDemoPage from '../pages/components/VkFormDemoPage.vue';
 import VkSearchBarDemoPage from '../pages/components/VkSearchBarDemoPage.vue';
 import VkUploadDemoPage from '../pages/components/VkUploadDemoPage.vue';
 import VkSelectorDemoPage from '../pages/components/VkSelectorDemoPage.vue';
+import VkLoginDemoPage from '../pages/components/VkLoginDemoPage.vue';
 import VkModalFormDemoPage from '../pages/components/VkModalFormDemoPage.vue';
 import VkDrawerFormDemoPage from '../pages/components/VkDrawerFormDemoPage.vue';
 import VkAdminLayoutDemoPage from '../pages/components/VkAdminLayoutDemoPage.vue';
@@ -41,6 +42,11 @@ export const router = createRouter({
       path: '/components/vk-selector',
       name: 'component-vk-selector',
       component: VkSelectorDemoPage
+    },
+    {
+      path: '/components/vk-login',
+      name: 'component-vk-login',
+      component: VkLoginDemoPage
     },
     {
       path: '/components/vk-modal-form',

@@ -24,6 +24,7 @@ const mockRequester: ApiRequester = async (request: NormalizedRequest) => {
       { menuId: 'vk-search-bar', menuName: 'VkSearchBar', iconName: 'layers', routePath: '/components/vk-search-bar' },
       { menuId: 'vk-upload', menuName: 'VkUpload', iconName: 'layers', routePath: '/components/vk-upload' },
       { menuId: 'vk-selector', menuName: 'VkSelector', iconName: 'layers', routePath: '/components/vk-selector' },
+      { menuId: 'vk-login', menuName: 'VkLogin', iconName: 'layers', routePath: '/components/vk-login' },
       { menuId: 'vk-modal-form', menuName: 'VkModalForm', iconName: 'layers', routePath: '/components/vk-modal-form' },
       { menuId: 'vk-drawer-form', menuName: 'VkDrawerForm', iconName: 'layers', routePath: '/components/vk-drawer-form' },
       { menuId: 'vk-admin-layout', menuName: 'VkAdminLayout', iconName: 'layers', routePath: '/components/vk-admin-layout' }

@@ -11,6 +11,7 @@ export type { VostokFrontendOptions, ApiClient, ApiResult, ApiError, BackendAdap
 export type { VkTableProps } from './components/vk-table/vk-table.types';
 export type { VkFormProps } from './components/vk-form/vk-form.types';
 export type { VkSelectorProps } from './components/vk-selector/vk-selector.types';
+export type { VkLoginProps, VkLoginLayoutMode, VkLoginFormValue } from './components/vk-login/vk-login.types';
 export type {
   VkAdminLayoutProps,
   VkAppFieldMap,

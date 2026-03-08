@@ -99,13 +99,13 @@ public final class VKMvcControllerRegistry {
                 String message = config.exposeExceptionMessage()
                         ? (cause.getMessage() == null ? config.internalErrorMessage() : cause.getMessage())
                         : config.internalErrorMessage();
-                Vostok.Log.error("MVC invoke failed: {}", meta.method().toString(), cause);
+                Vostok.Log.error("MVC invoke failed: " + meta.method(), cause);
                 writeError(req, res, config.internalErrorStatus(), message, requestTime);
             } catch (Throwable t) {
                 String message = config.exposeExceptionMessage()
                         ? (t.getMessage() == null ? config.internalErrorMessage() : t.getMessage())
                         : config.internalErrorMessage();
-                Vostok.Log.error("MVC route failed: {}", meta.method().toString(), t);
+                Vostok.Log.error("MVC route failed: " + meta.method(), t);
                 writeError(req, res, config.internalErrorStatus(), message, requestTime);
             }
         };

@@ -36,6 +36,7 @@ import {
   VkSearchBar,
   VkUpload,
   VkSelector,
+  VkLogin,
   VkModalForm,
   VkDrawerForm
 } from '@vostok/frontend/components';
@@ -231,7 +232,32 @@ const options: VkSelectorOption[] = [
 </template>
 ```
 
-### 5.6 `VkUpload`
+### 5.6 `VkLogin`
+
+```vue
+<script setup lang="ts">
+import { VkLogin } from '@vostok/frontend/components';
+import type { VkLoginFormValue } from '@vostok/frontend';
+
+function handleSubmit(payload: VkLoginFormValue): void {
+  console.log(payload);
+}
+</script>
+
+<template>
+  <VkLogin
+    card-title="欢迎登录"
+    layout-mode="left-card"
+    background-image-url="https://picsum.photos/id/1048/1600/900"
+    side-image-url="https://picsum.photos/id/1025/1000/1000"
+    :show-register="true"
+    :show-remember="true"
+    @submit="handleSubmit"
+  />
+</template>
+```
+
+### 5.7 `VkUpload`
 
 ```vue
 <template>
@@ -239,7 +265,7 @@ const options: VkSelectorOption[] = [
 </template>
 ```
 
-### 5.7 `VkModalForm` / `VkDrawerForm`
+### 5.8 `VkModalForm` / `VkDrawerForm`
 
 ```vue
 <template>

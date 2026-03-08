@@ -17,6 +17,7 @@ import {
   VkSearchBar,
   VkUpload,
   VkSelector,
+  VkLogin,
   VkModalForm,
   VkDrawerForm
 } from '@vostok/frontend/components';
@@ -519,7 +520,83 @@ const recentNotifications: VkNotificationItem[] = [
 2. 应用映射 `VkAppFieldMap`
    - `key/label/icon/path/recommended`
 
-## 10. 使用建议
+## 10. `VkLogin`
+
+### 10.1 用途
+
+登录界面组件，支持：
+
+1. 背景图片可替换
+2. 三种布局模式（居中卡片、左卡右图、右卡左图）
+3. 注册入口与记住密码开关控制
+4. 事件回调提交（不内置请求）
+
+### 10.2 最小示例
+
+```vue
+<script setup lang="ts">
+import { VkLogin } from '@vostok/frontend/components';
+import type { VkLoginFormValue } from '@vostok/frontend';
+
+function handleSubmit(payload: VkLoginFormValue): void {
+  console.log(payload);
+}
+</script>
+
+<template>
+  <VkLogin
+    card-title="欢迎登录"
+    layout-mode="center"
+    background-image-url="https://picsum.photos/id/1058/1600/900"
+    username-label="账号"
+    password-label="密码"
+    :show-register="true"
+    :show-remember="true"
+    @submit="handleSubmit"
+  />
+</template>
+```
+
+### 10.3 Props
+
+| 属性 | 类型 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- | --- |
+| `layoutMode` | `'center' \| 'left-card' \| 'right-card'` | 否 | `'center'` | 登录布局模式 |
+| `backgroundImageUrl` | `string` | 否 | - | 整体背景图 URL |
+| `sideImageUrl` | `string` | 否 | - | 左右分栏模式下的大图 URL |
+| `sideImageAlt` | `string` | 否 | `'登录侧图'` | 侧图 `alt` 文案 |
+| `cardTitle` | `string` | 否 | `'欢迎登录'` | 卡片标题 |
+| `usernameLabel` | `string` | 否 | `'用户名'` | 用户名字段标签 |
+| `usernamePlaceholder` | `string` | 否 | `'请输入用户名'` | 用户名输入框占位文案 |
+| `passwordLabel` | `string` | 否 | `'密码'` | 密码字段标签 |
+| `passwordPlaceholder` | `string` | 否 | `'请输入密码'` | 密码输入框占位文案 |
+| `loginButtonText` | `string` | 否 | `'登录'` | 登录按钮文案 |
+| `showRegister` | `boolean` | 否 | `false` | 是否显示注册入口 |
+| `registerText` | `string` | 否 | `'注册账号'` | 注册入口文案 |
+| `showRemember` | `boolean` | 否 | `false` | 是否显示记住密码 |
+| `rememberText` | `string` | 否 | `'记住密码'` | 记住密码文案 |
+| `showForgotPassword` | `boolean` | 否 | `false` | 是否显示忘记密码入口 |
+| `forgotPasswordText` | `string` | 否 | `'忘记密码'` | 忘记密码文案 |
+| `loading` | `boolean` | 否 | `false` | 登录按钮加载状态 |
+| `disabled` | `boolean` | 否 | `false` | 是否禁用整个登录交互 |
+| `initialValue` | `Partial<VkLoginFormValue>` | 否 | `{}` | 初始表单值 |
+
+### 10.4 Events
+
+| 事件名 | 参数类型 | 说明 |
+| --- | --- | --- |
+| `submit` | `VkLoginFormValue` | 点击登录并通过校验后触发 |
+| `register-click` | `void` | 点击注册入口触发 |
+| `forgot-password-click` | `void` | 点击忘记密码入口触发 |
+
+### 10.5 Slots
+
+| 插槽名 | 说明 |
+| --- | --- |
+| `title-extra` | 标题右侧扩展区 |
+| `footer` | 卡片底部扩展区 |
+
+## 11. 使用建议
 
 1. 业务项目优先通过 `props` 传入业务数据，避免在组件内部固化业务语义。
 2. 后端字段不统一时，优先用 `menuFieldMap` 与 `appFieldMap` 适配。
