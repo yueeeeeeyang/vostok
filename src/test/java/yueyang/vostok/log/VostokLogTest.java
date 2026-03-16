@@ -169,6 +169,23 @@ class VostokLogTest {
     }
 
     @Test
+    void testRegisterLoggerAtRuntimeWorksWithStrictMode() throws Exception {
+        Vostok.Log.close();
+        Vostok.Log.init(new VKLogConfig()
+                .consoleEnabled(false)
+                .outputDir(dir.toString())
+                .filePrefix("test")
+                .autoCreateLoggerSink(false)
+                .throwOnUnknownLogger(true));
+
+        Vostok.Log.registerLogger("access", new VKLogSinkConfig().filePrefix("access"));
+        Vostok.Log.logger("access").info("access-runtime");
+        Vostok.Log.flush();
+
+        assertTrue(Files.readString(dir.resolve("access.log")).contains("access-runtime"));
+    }
+
+    @Test
     void testQueuePolicyDropCountsDropped() throws Exception {
         Vostok.Log.setQueueCapacity(8);
         Vostok.Log.setQueueFullPolicy(VKLogQueueFullPolicy.DROP);
@@ -896,6 +913,80 @@ class VostokLogTest {
         assertEquals("my-service", logger.name());
     }
 
+    @Test
+    void testDirectBackendLifecycleAndNoFileOutput() throws Exception {
+        RecordingBackend backend = new RecordingBackend();
+        Vostok.Log.close();
+        Vostok.Log.init(new VKLogConfig()
+                .consoleEnabled(false)
+                .outputDir(dir.toString())
+                .filePrefix("direct")
+                .backend(backend)
+                .backendDispatchMode(VKLogBackendDispatchMode.DIRECT));
+
+        Vostok.Log.info("direct-static");
+        Vostok.Log.logger("web-access").warn("direct-named");
+        Vostok.Log.flush();
+        Vostok.Log.close();
+
+        assertEquals(1, backend.startCount.get(), "Backend should start once in direct mode");
+        assertEquals(1, backend.flushCount.get(), "Backend flush should be delegated once");
+        assertEquals(1, backend.stopCount.get(), "Backend should stop once after close");
+        assertEquals(2, backend.events.size(), "Direct mode should emit both static and named logs");
+        assertEquals("direct-static", backend.events.get(0).message());
+        assertEquals("web-access", backend.events.get(1).loggerName());
+        assertEquals("direct-named", backend.events.get(1).message());
+        assertFalse(Files.exists(dir.resolve("direct.log")),
+                "Direct backend mode should not create local Vostok log files");
+    }
+
+    @Test
+    void testDirectBackendKeepsPerLoggerLevelAndMdc() {
+        RecordingBackend backend = new RecordingBackend();
+        Vostok.Log.close();
+        Vostok.Log.init(new VKLogConfig()
+                .consoleEnabled(false)
+                .outputDir(dir.toString())
+                .filePrefix("direct-mdc")
+                .backend(backend)
+                .backendDispatchMode(VKLogBackendDispatchMode.DIRECT)
+                .registerLogger("audit", new VKLogSinkConfig().level(VKLogLevel.WARN)));
+
+        Vostok.Log.mdcPut("traceId", "trace-direct-1");
+        Vostok.Log.logger("audit").info("should-be-filtered");
+        Vostok.Log.logger("audit").warn("should-pass");
+        Vostok.Log.flush();
+        Vostok.Log.mdcClear();
+
+        assertEquals(1, backend.events.size(), "Per-logger WARN level should filter out INFO");
+        RecordedEvent event = backend.events.get(0);
+        assertEquals("audit", event.loggerName());
+        assertEquals("should-pass", event.message());
+        assertEquals("trace-direct-1", event.mdc().get("traceId"));
+    }
+
+    @Test
+    void testAsyncBackendModeStillUsesVostokFormatting() {
+        RecordingBackend backend = new RecordingBackend();
+        Vostok.Log.close();
+        Vostok.Log.init(new VKLogConfig()
+                .consoleEnabled(false)
+                .outputDir(dir.toString())
+                .filePrefix("async-backend")
+                .backend(backend));
+
+        Vostok.Log.info("async-backend-log");
+        Vostok.Log.flush();
+        Vostok.Log.close();
+
+        assertEquals(1, backend.events.size(), "Async backend mode should still emit one event");
+        String formattedText = backend.events.get(0).message();
+        assertTrue(formattedText.contains("async-backend-log"),
+                "Async mode should keep message content");
+        assertTrue(formattedText.contains("[INFO]"),
+                "Async mode should still send Vostok formatted text to backend");
+    }
+
     // =========================================================================
     // 默认配置（不初始化）行为测试
     // =========================================================================
@@ -1019,5 +1110,51 @@ class VostokLogTest {
                     .forEach(out::add);
         }
         return out;
+    }
+
+    /**
+     * 记录型 Backend，用于验证 lifecycle 与事件内容。
+     */
+    private static final class RecordingBackend implements VKLogBackend {
+        /** start 调用次数。 */
+        private final AtomicInteger startCount = new AtomicInteger();
+        /** flush 调用次数。 */
+        private final AtomicInteger flushCount = new AtomicInteger();
+        /** stop 调用次数。 */
+        private final AtomicInteger stopCount = new AtomicInteger();
+        /** 捕获到的事件列表。 */
+        private final List<RecordedEvent> events = new CopyOnWriteArrayList<>();
+
+        @Override
+        public void emit(VKLogLevel level, String loggerName, String formattedMsg,
+                         Throwable t, long tsMillis, Map<String, String> mdc) {
+            events.add(new RecordedEvent(level, loggerName, formattedMsg, t, tsMillis, Map.copyOf(mdc)));
+        }
+
+        @Override
+        public void start() {
+            startCount.incrementAndGet();
+        }
+
+        @Override
+        public void flush() {
+            flushCount.incrementAndGet();
+        }
+
+        @Override
+        public void stop() {
+            stopCount.incrementAndGet();
+        }
+    }
+
+    /**
+     * Backend 捕获到的事件快照。
+     */
+    private record RecordedEvent(VKLogLevel level,
+                                 String loggerName,
+                                 String message,
+                                 Throwable throwable,
+                                 long tsMillis,
+                                 Map<String, String> mdc) {
     }
 }

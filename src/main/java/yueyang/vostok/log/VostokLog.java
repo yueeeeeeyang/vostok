@@ -372,6 +372,16 @@ public class VostokLog {
     }
 
     /**
+     * 设置 Backend 派发模式。
+     * <p>
+     * 仅在配置了自定义 Backend 时生效。未配置 Backend 时仍走 Vostok 内置文件日志链路。
+     * </p>
+     */
+    public static void setBackendDispatchMode(VKLogBackendDispatchMode backendDispatchMode) {
+        updateConfig(cfg -> cfg.backendDispatchMode(backendDispatchMode));
+    }
+
+    /**
      * 是否对控制台输出启用 ANSI 彩色（仅控制台，不影响文件输出）。
      */
     public static void setConsoleColor(boolean color) {
@@ -388,6 +398,36 @@ public class VostokLog {
      */
     public static void setThrowOnUnknownLogger(boolean throwOnUnknown) {
         updateConfig(cfg -> cfg.throwOnUnknownLogger(throwOnUnknown));
+    }
+
+    /**
+     * 运行时注册一个命名 logger，使用默认 per-logger 配置。
+     * <p>
+     * 该方法主要用于 Web 等框架模块在主日志系统已经启动后，
+     * 再动态补充 access / ratelimit 这类命名 logger。
+     * </p>
+     */
+    public static void registerLogger(String loggerName) {
+        updateConfig(cfg -> cfg.registerLogger(loggerName));
+    }
+
+    /**
+     * 运行时批量注册命名 logger，使用默认 per-logger 配置。
+     */
+    public static void registerLoggers(String... loggerNames) {
+        updateConfig(cfg -> cfg.registerLoggers(loggerNames));
+    }
+
+    /**
+     * 运行时注册命名 logger，并附带专属 sink 覆盖配置。
+     * <p>
+     * 在 Vostok 自身异步文件模式下，可借此为不同 logger 指定独立 filePrefix / level；
+     * 在 direct-backend 模式下，则继续复用这些覆盖信息做级别与注册校验。
+     * </p>
+     */
+    public static void registerLogger(String loggerName, VKLogSinkConfig sinkConfig) {
+        VKAssert.notNull(sinkConfig, "sinkConfig is null");
+        updateConfig(cfg -> cfg.registerLogger(loggerName, sinkConfig));
     }
 
     // -------------------------------------------------------------------------
@@ -760,15 +800,26 @@ public class VostokLog {
         private final ConcurrentHashMap<String, AsyncEngine> sinks = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<String, VKLogger> loggerCache = new ConcurrentHashMap<>();
         private volatile VKLogConfig config;
+        /** direct-backend 模式运行时；为 null 表示仍走 Vostok 自身异步队列。 */
+        private volatile DirectBackendRuntime directRuntime;
 
         private LogRouter(VKLogConfig config) {
             this.config = config.copy();
-            sinks.put(DEFAULT_LOGGER_KEY, new AsyncEngine(defaultSinkConfig(this.config)));
-            preRegisterFromConfig(this.config);
+            if (useDirectBackend(this.config)) {
+                directRuntime = new DirectBackendRuntime(this.config);
+            } else {
+                sinks.put(DEFAULT_LOGGER_KEY, new AsyncEngine(defaultSinkConfig(this.config)));
+                preRegisterFromConfig(this.config);
+            }
         }
 
         /** 静态 API 路径：loggerName 为调用方类名，路由到默认 sink（类名不做 sink 匹配）。 */
         private void logAuto(VKLogLevel level, String loggerName, String message, Throwable error) {
+            DirectBackendRuntime runtime = directRuntime;
+            if (runtime != null) {
+                runtime.logAuto(level, loggerName, message, error);
+                return;
+            }
             AsyncEngine sink = sinks.getOrDefault(loggerName, sinks.get(DEFAULT_LOGGER_KEY));
             sink.log(level, loggerName, message, error);
         }
@@ -777,13 +828,21 @@ public class VostokLog {
          * 命名 Logger 路径：name 已在 {@link NamedLogger} 构造时验证，无需重复校验。
          */
         private void logByLogger(String normalizedName, VKLogLevel level, String message, Throwable error) {
+            DirectBackendRuntime runtime = directRuntime;
+            if (runtime != null) {
+                runtime.logByLogger(normalizedName, level, message, error);
+                return;
+            }
             AsyncEngine sink = sinkForLogger(normalizedName);
             sink.log(level, normalizedName, message, error);
         }
 
         private VKLogger logger(String loggerName) {
             String normalized = validateLoggerName(loggerName);
-            sinkForLogger(normalized);
+            ensureLoggerAllowed(normalized);
+            if (directRuntime == null) {
+                sinkForLogger(normalized);
+            }
             return loggerCache.computeIfAbsent(normalized, n -> new NamedLogger(n, this));
         }
 
@@ -792,6 +851,10 @@ public class VostokLog {
          * 若 sink 未创建则回退到默认 sink 的级别。
          */
         private boolean isLevelEnabled(String normalizedLoggerName, VKLogLevel level) {
+            DirectBackendRuntime runtime = directRuntime;
+            if (runtime != null) {
+                return runtime.isLevelEnabled(normalizedLoggerName, level);
+            }
             AsyncEngine sink = sinks.get(normalizedLoggerName);
             if (sink == null) sink = sinks.get(DEFAULT_LOGGER_KEY);
             return sink != null && level.enabled(sink.level);
@@ -804,17 +867,42 @@ public class VostokLog {
         private void setLoggerLevel(String loggerName, VKLogLevel level) {
             VKAssert.notNull(level, "level is null");
             String normalized = validateLoggerName(loggerName);
+            DirectBackendRuntime runtime = directRuntime;
+            if (runtime != null) {
+                runtime.setLoggerLevel(normalized, level);
+                return;
+            }
             AsyncEngine sink = sinkForLogger(normalized);
             sink.setLevel(level);
         }
 
         private synchronized void applyConfig(VKLogConfig next) {
-            this.config = next.copy();
-            for (var entry : sinks.entrySet()) {
-                String key = entry.getKey();
-                entry.getValue().applyConfig(sinkConfigFor(key, this.config));
+            VKLogConfig nextConfig = next.copy();
+            boolean nextDirect = useDirectBackend(nextConfig);
+            DirectBackendRuntime runtime = directRuntime;
+
+            if (nextDirect) {
+                if (runtime == null) {
+                    closeAsyncSinks();
+                    directRuntime = new DirectBackendRuntime(nextConfig);
+                } else {
+                    runtime.applyConfig(nextConfig);
+                }
+            } else {
+                if (runtime != null) {
+                    runtime.close();
+                    directRuntime = null;
+                    sinks.put(DEFAULT_LOGGER_KEY, new AsyncEngine(defaultSinkConfig(nextConfig)));
+                } else if (!sinks.containsKey(DEFAULT_LOGGER_KEY)) {
+                    sinks.put(DEFAULT_LOGGER_KEY, new AsyncEngine(defaultSinkConfig(nextConfig)));
+                }
+                for (var entry : sinks.entrySet()) {
+                    String key = entry.getKey();
+                    entry.getValue().applyConfig(sinkConfigFor(key, nextConfig));
+                }
+                preRegisterFromConfig(nextConfig);
             }
-            preRegisterFromConfig(this.config);
+            this.config = nextConfig;
         }
 
         private VKLogLevel level() {
@@ -840,10 +928,20 @@ public class VostokLog {
         }
 
         private void flush() {
+            DirectBackendRuntime runtime = directRuntime;
+            if (runtime != null) {
+                runtime.flush();
+                return;
+            }
             for (AsyncEngine e : sinks.values()) e.flush();
         }
 
         private void close() {
+            DirectBackendRuntime runtime = directRuntime;
+            if (runtime != null) {
+                runtime.close();
+                directRuntime = null;
+            }
             for (AsyncEngine e : sinks.values()) e.shutdown();
             sinks.clear();
             loggerCache.clear();
@@ -873,6 +971,25 @@ public class VostokLog {
                 return sinks.get(DEFAULT_LOGGER_KEY);
             }
             return sinks.computeIfAbsent(loggerName, name -> new AsyncEngine(sinkConfigFor(name, config)));
+        }
+
+        /**
+         * direct-backend 模式下校验 logger 是否允许创建。
+         * <p>
+         * 与异步 sink 模式保持同样的 strict-mode 语义：
+         * autoCreate=false 且 throwOnUnknown=true 时，未预注册 logger 直接抛错；
+         * 其余场景均允许继续输出。
+         * </p>
+         */
+        private void ensureLoggerAllowed(String loggerName) {
+            if (directRuntime == null || config.isAutoCreateLoggerSink()) {
+                return;
+            }
+            boolean known = config.getPreRegisteredLoggers().contains(loggerName)
+                    || config.getLoggerSinkConfigs().containsKey(loggerName);
+            if (!known && config.isThrowOnUnknownLogger()) {
+                throw new IllegalArgumentException("Logger sink not registered: " + loggerName);
+            }
         }
 
         private static VKLogConfig defaultSinkConfig(VKLogConfig config) {
@@ -935,6 +1052,191 @@ public class VostokLog {
                 String normalized = validateLoggerName(loggerName);
                 sinks.computeIfAbsent(normalized, name -> new AsyncEngine(sinkConfigFor(name, config)));
             }
+        }
+
+        /**
+         * 关闭所有异步 sink。
+         * <p>
+         * 当切换到 direct-backend 模式时，必须先彻底关闭旧 worker，避免残留线程继续写文件。
+         * </p>
+         */
+        private void closeAsyncSinks() {
+            for (AsyncEngine engine : sinks.values()) {
+                engine.shutdown();
+            }
+            sinks.clear();
+        }
+
+        /**
+         * 判断当前配置是否启用 direct-backend。
+         */
+        private static boolean useDirectBackend(VKLogConfig config) {
+            return config.getBackend() != null
+                    && config.getBackendDispatchMode() == VKLogBackendDispatchMode.DIRECT;
+        }
+    }
+
+    // =========================================================================
+    // DirectBackendRuntime：跳过 Vostok 队列，直接委托外部 Backend
+    // =========================================================================
+
+    /**
+     * direct-backend 运行时。
+     * <p>
+     * 该模式下：
+     * </p>
+     * <ul>
+     *   <li>不创建 {@link AsyncEngine}，避免与外部异步框架形成双层队列</li>
+     *   <li>调用线程直接执行级别判断、MDC 快照采集与 Backend 分发</li>
+     *   <li>仍保留命名 logger、per-logger 级别覆盖、ERROR 监听器等语义</li>
+     * </ul>
+     */
+    private static final class DirectBackendRuntime {
+        /** 默认日志级别。 */
+        private volatile VKLogLevel defaultLevel = VKLogLevel.INFO;
+        /** ERROR 监听器。 */
+        private volatile VKLogErrorListener errorListener;
+        /** 当前生效的 Backend。 */
+        private volatile VKLogBackend backend;
+        /** 命名 logger 级别覆盖，仅保存显式配置过的 logger。 */
+        private final ConcurrentHashMap<String, VKLogLevel> loggerLevels = new ConcurrentHashMap<>();
+
+        private DirectBackendRuntime(VKLogConfig config) {
+            applyConfig(config);
+        }
+
+        /**
+         * 热更新 direct-backend 配置。
+         */
+        private synchronized void applyConfig(VKLogConfig config) {
+            this.defaultLevel = config.getLevel();
+            this.errorListener = config.getErrorListener();
+            rebuildLoggerLevels(config);
+            applyBackend(config.getBackend());
+        }
+
+        /**
+         * 重建命名 logger 级别覆盖表。
+         */
+        private void rebuildLoggerLevels(VKLogConfig config) {
+            loggerLevels.clear();
+            for (Map.Entry<String, VKLogSinkConfig> entry : config.getLoggerSinkConfigs().entrySet()) {
+                VKLogSinkConfig sinkConfig = entry.getValue();
+                if (sinkConfig != null && sinkConfig.getLevel() != null) {
+                    loggerLevels.put(entry.getKey(), sinkConfig.getLevel());
+                }
+            }
+        }
+
+        /**
+         * 统一管理 Backend 生命周期。
+         */
+        private void applyBackend(VKLogBackend newBackend) {
+            VKLogBackend oldBackend = this.backend;
+            if (oldBackend == newBackend) {
+                return;
+            }
+            if (oldBackend != null) {
+                try {
+                    oldBackend.stop();
+                } catch (Exception ignored) {
+                }
+            }
+            this.backend = newBackend;
+            if (newBackend != null) {
+                try {
+                    newBackend.start();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        /**
+         * 静态 API 使用全局级别判断。
+         */
+        private void logAuto(VKLogLevel level, String loggerName, String message, Throwable error) {
+            if (!level.enabled(defaultLevel)) {
+                return;
+            }
+            emit(level, loggerName, message, error);
+        }
+
+        /**
+         * 命名 logger 使用 per-logger 级别覆盖。
+         */
+        private void logByLogger(String loggerName, VKLogLevel level, String message, Throwable error) {
+            if (!isLevelEnabled(loggerName, level)) {
+                return;
+            }
+            emit(level, loggerName, message, error);
+        }
+
+        /**
+         * 判断指定 logger 是否开启给定级别。
+         */
+        private boolean isLevelEnabled(String loggerName, VKLogLevel level) {
+            VKLogLevel targetLevel = loggerLevels.get(loggerName);
+            return level.enabled(targetLevel == null ? defaultLevel : targetLevel);
+        }
+
+        /**
+         * 运行期动态设置命名 logger 级别。
+         */
+        private void setLoggerLevel(String loggerName, VKLogLevel level) {
+            loggerLevels.put(loggerName, level);
+        }
+
+        /**
+         * 直接把事件委托给外部 Backend。
+         * <p>
+         * 这里只做最轻量的工作：时间戳、MDC 快照、级别判断已经在上游完成，
+         * 不再拼接 Vostok 自定义文本格式，避免与外部框架的 Layout 重复工作。
+         * </p>
+         */
+        private void emit(VKLogLevel level, String loggerName, String message, Throwable error) {
+            long ts = System.currentTimeMillis();
+            Map<String, String> mdcSnapshot = VKLogMDC.getAll();
+            VKLogBackend currentBackend = backend;
+            if (currentBackend != null) {
+                try {
+                    currentBackend.emit(level, loggerName, message == null ? "" : message, error, ts, mdcSnapshot);
+                } catch (Exception ignored) {
+                    // direct-backend 失败不能影响业务线程主流程
+                }
+            }
+
+            if (level == VKLogLevel.ERROR) {
+                VKLogErrorListener listener = errorListener;
+                if (listener != null) {
+                    try {
+                        listener.onError(loggerName, message, error, ts);
+                    } catch (Exception ignored) {
+                        // 监听器异常同样不能回流到业务线程
+                    }
+                }
+            }
+        }
+
+        /**
+         * 主动 flush 外部 Backend。
+         */
+        private void flush() {
+            VKLogBackend currentBackend = backend;
+            if (currentBackend != null) {
+                try {
+                    currentBackend.flush();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        /**
+         * 关闭 direct-backend 运行时。
+         */
+        private void close() {
+            loggerLevels.clear();
+            errorListener = null;
+            applyBackend(null);
         }
     }
 

@@ -48,13 +48,15 @@ final class VKAccessLogger {
     private void runLoop() {
         while (running || !queue.isEmpty()) {
             try {
-                String line = queue.poll(500, TimeUnit.MILLISECONDS);
+                // 关闭阶段要继续把队列里的尾部访问日志排空，避免“请求刚结束就停机”时丢日志。
+                String line = running ? queue.poll(500, TimeUnit.MILLISECONDS) : queue.poll();
                 if (line != null) {
                     flushDropped();
                     VKWebLogSupport.accessInfo(line);
                 }
             } catch (InterruptedException ignore) {
-                Thread.currentThread().interrupt();
+                // stop() 会主动 interrupt 唤醒 poll；此处不能重新设置中断标记，
+                // 否则后续 poll 会立即再次抛出 InterruptedException，导致剩余队列无法排空。
             } catch (Throwable ignore) {
             }
         }

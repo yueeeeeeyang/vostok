@@ -6,11 +6,22 @@ import java.util.Map;
  * 日志输出 Backend SPI。
  * <p>
  * 实现此接口可将 Vostok 的日志输出委托给任意外部框架（SLF4J、Log4j2、Logback 等）。
- * 配置到 {@link VKLogConfig#backend(VKLogBackend)} 后，{@link AsyncEngine} 在写入时
- * 调用 {@link #emit}，内置文件写入与控制台输出被跳过；{@link VKLogErrorListener} 仍然正常触发。
+ * 配置到 {@link VKLogConfig#backend(VKLogBackend)} 后，日志事件会按
+ * {@link VKLogConfig#getBackendDispatchMode()} 选择派发方式：
+ * </p>
+ * <ul>
+ *   <li>{@link VKLogBackendDispatchMode#VOSTOK_ASYNC}：由 {@link AsyncEngine} 在 worker 线程调用 {@link #emit}</li>
+ *   <li>{@link VKLogBackendDispatchMode#DIRECT}：由调用线程直接调用 {@link #emit}</li>
+ * </ul>
  * <p>
- * <b>约束</b>：{@link #emit} 在 AsyncEngine worker 线程调用，<b>必须非阻塞、无 IO</b>，
- * 可调用外部框架的异步 API 或投递到独立队列。
+ * 两种模式下，内置文件写入与控制台输出都会被跳过；{@link VKLogErrorListener} 仍然正常触发。
+ * <p>
+ * <b>约束</b>：
+ * </p>
+ * <ul>
+ *   <li>{@code VOSTOK_ASYNC} 模式下，{@link #emit} 在 AsyncEngine worker 线程调用，必须非阻塞、无 IO</li>
+ *   <li>{@code DIRECT} 模式下，{@link #emit} 在业务调用线程执行，应尽量轻量，通常委托给外部异步框架</li>
+ * </ul>
  * <p>
  * 如需同时保留内置文件写入，可自行实现组合 Backend，在 {@link #emit} 中依次分发。
  *
@@ -20,7 +31,14 @@ import java.util.Map;
 public interface VKLogBackend {
 
     /**
-     * 输出一条日志事件。在 AsyncEngine worker 线程调用，必须非阻塞。
+     * 输出一条日志事件。
+     * <p>
+     * 参数 {@code formattedMsg} 的含义取决于派发模式：
+     * </p>
+     * <ul>
+     *   <li>{@code VOSTOK_ASYNC}：表示经过 Formatter 处理后的完整文本</li>
+     *   <li>{@code DIRECT}：表示模板展开后的原始消息体（不含时间戳/级别前缀）</li>
+     * </ul>
      *
      * @param level        日志级别
      * @param loggerName   Logger 名称（命名 Logger 名 或 调用方类名）
@@ -38,6 +56,14 @@ public interface VKLogBackend {
      * 引擎启动时调用（在 worker 线程启动前）。可在此建立连接、分配资源。默认空实现。
      */
     default void start() {}
+
+    /**
+     * 日志门面主动 flush 时调用。
+     * <p>
+     * 默认空实现，供外部框架按自身能力决定是否支持显式 flush。
+     * </p>
+     */
+    default void flush() {}
 
     /**
      * 引擎关闭时调用（在 worker 线程退出后）。可在此释放资源。默认空实现。

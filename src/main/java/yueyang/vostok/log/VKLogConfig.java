@@ -39,6 +39,13 @@ public class VKLogConfig {
     private VKLogErrorListener errorListener = null;
     /** 自定义输出 Backend，null 表示使用内置文件 + 控制台路径。 */
     private VKLogBackend backend = null;
+    /**
+     * Backend 派发模式。
+     * <p>
+     * 默认沿用 Vostok 自身异步 worker，再把结果转发给 Backend。
+     * </p>
+     */
+    private VKLogBackendDispatchMode backendDispatchMode = VKLogBackendDispatchMode.VOSTOK_ASYNC;
     /** 是否对控制台输出启用 ANSI 颜色（开发环境建议开启）。 */
     private boolean consoleColor = false;
     /**
@@ -92,6 +99,7 @@ public class VKLogConfig {
                 .loggerSinkConfigs(loggerSinkConfigs)
                 .formatter(formatter)
                 .errorListener(errorListener)
+                .backendDispatchMode(backendDispatchMode)
                 .consoleColor(consoleColor)
                 .throwOnUnknownLogger(throwOnUnknownLogger)
                 .backend(backend);
@@ -411,6 +419,13 @@ public class VKLogConfig {
     }
 
     /**
+     * 获取 Backend 派发模式。
+     */
+    public VKLogBackendDispatchMode getBackendDispatchMode() {
+        return backendDispatchMode;
+    }
+
+    /**
      * 设置自定义输出 Backend。传入 {@code null} 恢复内置文件 + 控制台路径。
      * 配置 Backend 后，内置文件写入与控制台输出被跳过；{@link VKLogErrorListener} 仍然触发。
      *
@@ -418,6 +433,18 @@ public class VKLogConfig {
      */
     public VKLogConfig backend(VKLogBackend backend) {
         this.backend = backend;
+        return this;
+    }
+
+    /**
+     * 设置 Backend 派发模式。
+     * <p>
+     * 仅当配置了 {@link #backend(VKLogBackend)} 时生效；未配置 Backend 时仍走内置文件路径。
+     * </p>
+     */
+    public VKLogConfig backendDispatchMode(VKLogBackendDispatchMode backendDispatchMode) {
+        VKAssert.notNull(backendDispatchMode, "backendDispatchMode is null");
+        this.backendDispatchMode = backendDispatchMode;
         return this;
     }
 
