@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cluster 模块 — Vostok 文档</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<aside class="sidebar">
+  <div class="sidebar-logo">
+    <a href="index.html">
+      <div class="logo-mark">V</div>
+      <div>
+        <div class="logo-text">Vostok</div>
+        <div class="logo-version">v1.9.2.6 · JDK 17+</div>
+      </div>
+    </a>
+  </div>
+  <nav class="sidebar-nav">
+    <div class="nav-section">入门</div>
+    <a href="index.html"><span class="nav-icon">🏠</span>概览</a>
+    <a href="errors.html"><span class="nav-icon">⚠️</span>错误码参考</a>
+    <div class="nav-section">模块</div>
+    <a href="data.html"><span class="nav-icon">🗄️</span>Data</a>
+    <a href="web.html"><span class="nav-icon">🌐</span>Web</a>
+    <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
+    <a href="file.html"><span class="nav-icon">📁</span>File</a>
+    <a href="office.html"><span class="nav-icon">📊</span>Office</a>
+    <a href="cluster.html" class="active"><span class="nav-icon">🛰️</span>Cluster</a>
+    <a href="log.html"><span class="nav-icon">📋</span>Log</a>
+    <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
+    <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
+    <a href="event.html"><span class="nav-icon">📡</span>Event</a>
+    <a href="http.html"><span class="nav-icon">🔗</span>Http</a>
+    <a href="ai.html"><span class="nav-icon">🤖</span>AI</a>
+    <a href="util.html"><span class="nav-icon">🛠️</span>Util</a>
+  </nav>
+</aside>
+
+<main class="main">
+<div class="content">
+
+<div class="page-header">
+  <div class="module-tag">🛰️ Vostok.Cluster</div>
+  <h1>Cluster 集群模块</h1>
+  <p class="desc">提供 TCP Gossip + Seed 节点自动发现、节点信息缓存、集群广播、可靠 ACK 重试、去重窗口、共享密钥 HMAC 鉴权与运行时统计。首版按 <code>&lt;=100</code> 节点规模设计，优先保证链路稳定性和生产可运维性。</p>
+</div>
+
+<h2>能力概览</h2>
+<ul>
+  <li><strong>节点发现</strong>：通过 <code>seedNodes</code> 入网，收到成员表后继续连接新发现节点，最终收敛为全连接。</li>
+  <li><strong>节点缓存</strong>：本地缓存节点快照，可查询 <code>self()</code>、<code>nodes()</code>、<code>node(nodeId)</code>。</li>
+  <li><strong>广播模式</strong>：默认 <code>broadcast()</code> 为可靠广播；也支持 <code>broadcastBestEffort()</code>。</li>
+  <li><strong>传输安全</strong>：握手时校验 <code>clusterName + clusterSecret(HMAC)</code>，不匹配立即拒绝。</li>
+  <li><strong>高性能边界</strong>：二进制帧协议、有界队列、独立监听线程池，避免业务监听器阻塞 IO 线程。</li>
+</ul>
+
+<div class="callout info">
+  <div class="callout-title">首版边界</div>
+  仅支持 <code>topic + byte[]</code> 广播，不做对象自动序列化；不引入 Redis 注册中心、不做 UDP Multicast、不做消息持久化恢复。
+</div>
+
+<h2>初始化</h2>
+<pre><code><span class="kw">import</span> yueyang.vostok.Vostok;
+<span class="kw">import</span> yueyang.vostok.cluster.VKClusterConfig;
+
+<span class="ty">Vostok</span>.Cluster.init(<span class="kw">new</span> <span class="ty">VKClusterConfig</span>()
+    .clusterName(<span class="st">"prod-order"</span>)
+    .clusterSecret(<span class="st">"replace-with-strong-shared-secret"</span>)
+    .nodeId(<span class="st">"order-node-01"</span>)
+    .bindHost(<span class="st">"0.0.0.0"</span>)
+    .bindPort(<span class="nu">18888</span>)
+    .advertiseHost(<span class="st">"10.0.0.12"</span>)
+    .advertisePort(<span class="nu">18888</span>)
+    .seedNodes(<span class="st">"10.0.0.10:18888"</span>, <span class="st">"10.0.0.11:18888"</span>)
+    .label(<span class="st">"zone"</span>, <span class="st">"sh-a"</span>)
+    .label(<span class="st">"service"</span>, <span class="st">"order"</span>)
+);
+
+<span class="kw">boolean</span> ready = <span class="ty">Vostok</span>.Cluster.awaitReady(<span class="nu">5000</span>);
+<span class="ty">System</span>.out.println(<span class="st">"cluster ready = "</span> + ready);
+<span class="ty">System</span>.out.println(<span class="ty">Vostok</span>.Cluster.self().getNodeId());</code></pre>
+
+<div class="callout warn">
+  <div class="callout-title">配置要求</div>
+  <code>nodeId</code> 与 <code>clusterSecret</code> 必须显式配置。<code>nodeId</code> 需要在同一集群内唯一；不建议依赖随机值，否则节点重启后会造成身份漂移。
+</div>
+
+<h2>自动发现与节点状态</h2>
+<p>Cluster 运行时会缓存全部已知节点快照。节点状态按如下状态机推进：</p>
+<pre><code>JOINING -&gt; ALIVE -&gt; SUSPECT -&gt; DEAD
+                     \------&gt; LEFT</code></pre>
+
+<ul>
+  <li><strong>JOINING</strong>：握手刚完成，成员表还在收敛。</li>
+  <li><strong>ALIVE</strong>：心跳与成员同步正常。</li>
+  <li><strong>SUSPECT</strong>：超过 <code>suspectTimeoutMs</code> 未见心跳，先进入怀疑态，避免短暂网络抖动直接判死。</li>
+  <li><strong>DEAD</strong>：超过 <code>deadTimeoutMs</code> 仍未恢复。</li>
+  <li><strong>LEFT</strong>：节点主动关闭并广播离场帧。</li>
+</ul>
+
+<pre><code><span class="ty">List</span>&lt;<span class="ty">VKClusterNode</span>&gt; snapshot = <span class="ty">Vostok</span>.Cluster.nodes();
+<span class="kw">for</span> (<span class="ty">VKClusterNode</span> node : snapshot) {
+    <span class="ty">System</span>.out.println(node.getNodeId() + <span class="st">" -> "</span> + node.getStatus());
+}
+
+<span class="ty">VKClusterNode</span> peer = <span class="ty">Vostok</span>.Cluster.node(<span class="st">"order-node-02"</span>);
+<span class="kw">if</span> (peer != <span class="kw">null</span> &amp;&amp; peer.getStatus() == <span class="ty">VKClusterNodeStatus</span>.ALIVE) {
+    <span class="cm">// 可以安全参与广播目标集合</span>
+}</code></pre>
+
+<h2>广播与订阅</h2>
+<p>广播载荷固定为 <code>topic + byte[]</code>。订阅按 topic 精确匹配，不支持通配符。</p>
+
+<pre><code><span class="kw">import</span> java.nio.charset.StandardCharsets;
+
+<span class="ty">VKClusterSubscription</span> sub = <span class="ty">Vostok</span>.Cluster.on(<span class="st">"order.created"</span>, message -&gt; {
+    <span class="ty">String</span> body = <span class="kw">new</span> <span class="ty">String</span>(message.getPayload(), <span class="ty">StandardCharsets</span>.UTF_8);
+    <span class="ty">System</span>.out.println(message.getFromNodeId() + <span class="st">": "</span> + body);
+});
+
+<span class="ty">VKClusterBroadcastResult</span> result = <span class="ty">Vostok</span>.Cluster
+    .broadcastReliable(<span class="st">"order.created"</span>, <span class="st">"{\"id\":1001}"</span>.getBytes(<span class="ty">StandardCharsets</span>.UTF_8))
+    .get();
+
+<span class="ty">System</span>.out.println(result.getMode());
+<span class="ty">System</span>.out.println(result.getTargetedNodes());
+<span class="ty">System</span>.out.println(result.getAckedNodes());
+<span class="ty">System</span>.out.println(result.getFailedNodes());
+
+sub.cancel();
+<span class="cm">// 或者：Vostok.Cluster.off(sub);</span>
+<span class="cm">// 或者：Vostok.Cluster.offAll("order.created");</span></code></pre>
+
+<h3>两种广播模式</h3>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>语义</th><th>适用场景</th></tr></thead>
+  <tbody>
+    <tr><td><code>broadcast()</code></td><td>等价于 <code>broadcastReliable()</code></td><td>默认推荐，跨节点状态通知、轻量事件分发</td></tr>
+    <tr><td><code>broadcastReliable()</code></td><td>至少一次；目标节点集合在发送瞬间冻结，使用 ACK + 重试 + 去重</td><td>要求尽量送达的广播</td></tr>
+    <tr><td><code>broadcastBestEffort()</code></td><td>只发一次，不做 ACK，不等待远端处理结果</td><td>追求低延迟、可接受远端丢弃的场景</td></tr>
+  </tbody>
+</table>
+
+<div class="callout tip">
+  <div class="callout-title">BEST_EFFORT 的返回值语义</div>
+  <code>broadcastBestEffort()</code> 的 <code>CompletableFuture</code> 在<strong>本地成功入发送队列</strong>后就完成。<code>failedNodes</code> 只统计本地无法投递到连接层的目标，不代表远端业务监听器一定执行成功。若远端监听队列已满，远端会快速丢弃并把丢弃记入 <code>queueDrops</code> 统计，但发送端不会收到 ACK/NACK。
+</div>
+
+<h3>可靠广播 ACK 语义</h3>
+<p>可靠广播中的 ACK 表示“远端节点已经完成协议解析，并成功放入本地监听分发队列”。它不等价于业务回调执行成功，因此业务监听器内部仍应自行做好幂等与异常保护。</p>
+
+<h2>API 速查</h2>
+<table class="api-table">
+  <thead><tr><th>方法</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>init(config)</code></td><td>启动当前节点 Cluster runtime</td></tr>
+    <tr><td><code>awaitReady(timeoutMs)</code></td><td>等待至少一次握手与成员同步完成</td></tr>
+    <tr><td><code>self()</code></td><td>获取本节点快照</td></tr>
+    <tr><td><code>nodes()</code></td><td>获取按 <code>nodeId</code> 排序的全量节点快照</td></tr>
+    <tr><td><code>node(nodeId)</code></td><td>按节点 ID 查询快照</td></tr>
+    <tr><td><code>on(topic, listener)</code></td><td>订阅 topic</td></tr>
+    <tr><td><code>off(subscription)</code></td><td>取消单个订阅</td></tr>
+    <tr><td><code>offAll(topic)</code></td><td>清空某个 topic 的所有订阅</td></tr>
+    <tr><td><code>broadcast(...)</code></td><td>默认可靠广播</td></tr>
+    <tr><td><code>broadcastReliable(...)</code></td><td>可靠广播</td></tr>
+    <tr><td><code>broadcastBestEffort(...)</code></td><td>尽力广播</td></tr>
+    <tr><td><code>stats()</code></td><td>返回运行时统计快照</td></tr>
+    <tr><td><code>close()</code></td><td>发送 LEAVE 并关闭所有连接</td></tr>
+  </tbody>
+</table>
+
+<h2>VKClusterConfig 关键配置</h2>
+<table class="api-table">
+  <thead><tr><th>配置项</th><th>默认值</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>clusterName</code></td><td><code>default</code></td><td>集群名称，不同名称节点互相拒绝</td></tr>
+    <tr><td><code>nodeId</code></td><td>无</td><td>节点唯一标识，必须显式配置</td></tr>
+    <tr><td><code>bindHost/bindPort</code></td><td><code>127.0.0.1:18888</code></td><td>本地监听地址</td></tr>
+    <tr><td><code>advertiseHost/advertisePort</code></td><td>默认回退到 bind</td><td>对外广播给其他节点的地址</td></tr>
+    <tr><td><code>seedNodes</code></td><td>空</td><td>种子节点列表，格式为 <code>host:port</code></td></tr>
+    <tr><td><code>clusterSecret</code></td><td>无</td><td>握手 HMAC 密钥，必须统一</td></tr>
+    <tr><td><code>heartbeatIntervalMs</code></td><td><code>2000</code></td><td>心跳间隔</td></tr>
+    <tr><td><code>suspectTimeoutMs</code></td><td><code>6000</code></td><td>进入 SUSPECT 的超时</td></tr>
+    <tr><td><code>deadTimeoutMs</code></td><td><code>15000</code></td><td>进入 DEAD 的超时</td></tr>
+    <tr><td><code>syncIntervalMs</code></td><td><code>10000</code></td><td>成员表反熵同步周期</td></tr>
+    <tr><td><code>maxNodeCount</code></td><td><code>100</code></td><td>首版设计上限</td></tr>
+    <tr><td><code>maxMessageBytes</code></td><td><code>1048576</code></td><td>单条广播最大字节数</td></tr>
+    <tr><td><code>outboundQueueCapacity</code></td><td><code>4096</code></td><td>每连接发送队列大小</td></tr>
+    <tr><td><code>listenerQueueCapacity</code></td><td><code>8192</code></td><td>业务监听分发队列大小</td></tr>
+    <tr><td><code>reliableAckTimeoutMs</code></td><td><code>1500</code></td><td>可靠广播 ACK 等待时间</td></tr>
+    <tr><td><code>reliableMaxRetries</code></td><td><code>3</code></td><td>可靠广播最大重试次数</td></tr>
+    <tr><td><code>dedupeRetentionMs</code></td><td><code>60000</code></td><td>消息去重窗口</td></tr>
+    <tr><td><code>includeSelfOnBroadcast</code></td><td><code>true</code></td><td>广播时是否投递给本机监听器</td></tr>
+  </tbody>
+</table>
+
+<h2>运行时统计</h2>
+<p><code>Vostok.Cluster.stats()</code> 返回当前节点的统计快照，可直接接入监控：</p>
+<pre><code><span class="ty">VKClusterStats</span> stats = <span class="ty">Vostok</span>.Cluster.stats();
+<span class="ty">System</span>.out.println(stats.getTotalNodes());
+<span class="ty">System</span>.out.println(stats.getAliveNodes());
+<span class="ty">System</span>.out.println(stats.getOpenConnections());
+<span class="ty">System</span>.out.println(stats.getSentMessages());
+<span class="ty">System</span>.out.println(stats.getReceivedMessages());
+<span class="ty">System</span>.out.println(stats.getReliableRetries());
+<span class="ty">System</span>.out.println(stats.getQueueDrops());
+<span class="ty">System</span>.out.println(stats.getAuthFailures());
+<span class="ty">System</span>.out.println(stats.getProtocolErrors());</code></pre>
+
+<ul>
+  <li><strong>queueDrops</strong>：发送队列或监听分发队列满导致的快速丢弃次数。</li>
+  <li><strong>authFailures</strong>：握手 HMAC 或 clusterName 校验失败次数。</li>
+  <li><strong>protocolErrors</strong>：非法帧、协议版本不兼容、非法长度等协议异常次数。</li>
+</ul>
+
+<h2>生产建议</h2>
+<ul>
+  <li>同一集群内节点数建议控制在 <strong>100 以内</strong>，首版按此规模优化。</li>
+  <li><code>clusterSecret</code> 建议使用高熵随机串，并与应用配置中心统一下发。</li>
+  <li><code>advertiseHost</code> 必须配置为其他节点可达地址，不要直接复用容器内环回地址。</li>
+  <li>业务监听器请尽量短平快；耗时逻辑建议在回调中再转交自己的业务线程池。</li>
+  <li>可靠广播是至少一次语义，业务层需要接受重复投递并保持幂等。</li>
+  <li>若只做弱一致通知，优先使用 <code>broadcastBestEffort()</code>，避免无意义重试。</li>
+</ul>
+
+<h2>错误码</h2>
+<table class="api-table">
+  <thead><tr><th>错误码</th><th>枚举</th><th>场景</th></tr></thead>
+  <tbody>
+    <tr><td><span class="error-code">CL-400</span></td><td><span class="enum-name">INVALID_ARGUMENT</span></td><td>空 topic、空 listener、非法参数</td></tr>
+    <tr><td><span class="error-code">CL-402</span></td><td><span class="enum-name">CONFIG_ERROR</span></td><td>nodeId / clusterSecret / 端口配置错误</td></tr>
+    <tr><td><span class="error-code">CL-403</span></td><td><span class="enum-name">STATE_ERROR</span></td><td>模块未启动就调用运行时方法</td></tr>
+    <tr><td><span class="error-code">CL-404</span></td><td><span class="enum-name">NOT_FOUND</span></td><td>节点或资源不存在</td></tr>
+    <tr><td><span class="error-code">CL-451</span></td><td><span class="enum-name">AUTH_ERROR</span></td><td>clusterName / HMAC 校验失败</td></tr>
+    <tr><td><span class="error-code">CL-500</span></td><td><span class="enum-name">IO_ERROR</span></td><td>监听端口绑定失败、连接 IO 异常</td></tr>
+    <tr><td><span class="error-code">CL-560</span></td><td><span class="enum-name">PROTOCOL_ERROR</span></td><td>非法帧、非法长度、版本不兼容</td></tr>
+    <tr><td><span class="error-code">CL-566</span></td><td><span class="enum-name">LIMIT_EXCEEDED</span></td><td>超过最大节点数、消息体超限</td></tr>
+    <tr><td><span class="error-code">CL-568</span></td><td><span class="enum-name">BROADCAST_TIMEOUT</span></td><td>预留给广播超时场景的错误码</td></tr>
+  </tbody>
+</table>
+
+<h2>关闭</h2>
+<pre><code><span class="ty">Vostok</span>.Cluster.close();</code></pre>
+<p>关闭时会尽量向已连接节点发送 <code>LEAVE</code> 帧，并等待短暂时间让对端将本节点状态推进到 <code>LEFT</code>。</p>
+
+</div>
+</main>
+<script src="toc.js"></script>
+</body>
+</html>

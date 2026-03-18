@@ -14,7 +14,7 @@
       <div class="logo-mark">V</div>
       <div>
         <div class="logo-text">Vostok</div>
-        <div class="logo-version">v1.9.2.5 · JDK 17+</div>
+        <div class="logo-version">v1.9.2.6 · JDK 17+</div>
       </div>
     </a>
   </div>
@@ -28,6 +28,7 @@
     <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
     <a href="file.html"><span class="nav-icon">📁</span>File</a>
     <a href="office.html"><span class="nav-icon">📊</span>Office</a>
+    <a href="cluster.html"><span class="nav-icon">🛰️</span>Cluster</a>
     <a href="log.html"><span class="nav-icon">📋</span>Log</a>
     <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
     <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
@@ -51,6 +52,8 @@
 <pre><code><span class="kw">import</span> yueyang.vostok.data.exception.*;
 <span class="kw">import</span> yueyang.vostok.file.exception.*;
 <span class="kw">import</span> yueyang.vostok.office.exception.*;
+<span class="kw">import</span> yueyang.vostok.cluster.*;
+<span class="kw">import</span> yueyang.vostok.cluster.exception.*;
 <span class="kw">import</span> yueyang.vostok.config.exception.*;
 
 <span class="cm">// Data 模块</span>
@@ -80,6 +83,13 @@
     <span class="ty">Vostok</span>.Office.readWordText(<span class="st">"word/orders.docx"</span>);
 } <span class="kw">catch</span> (<span class="ty">VKOfficeException</span> e) {
     log.error(<span class="st">"Office error: {} {}"</span>, e.getCode(), e.getMessage());
+}
+
+<span class="cm">// Cluster 模块</span>
+<span class="kw">try</span> {
+    <span class="ty">Vostok</span>.Cluster.broadcast(<span class="st">"order.created"</span>, <span class="st">"{}"</span>.getBytes()).join();
+} <span class="kw">catch</span> (<span class="ty">VKClusterException</span> e) {
+    log.error(<span class="st">"Cluster error: {} {}"</span>, e.getCode(), e.getMessage());
 }</code></pre>
 
 <h2>Data 模块错误码（VKErrorCode）</h2>
@@ -242,6 +252,46 @@
 <span class="ty">Vostok</span>.Office.onJobDeadLetter(n -&gt;
     <span class="ty">Vostok</span>.Log.warn(<span class="st">"office dead-letter: {} {}"</span>, n.jobId(), n.status()));
 </code></pre>
+
+<h2>Cluster 模块错误码（VKClusterErrorCode）</h2>
+<table class="api-table">
+  <thead><tr><th>错误码</th><th>枚举</th><th>触发场景</th></tr></thead>
+  <tbody>
+    <tr><td><span class="error-code">CL-400</span></td><td><span class="enum-name">INVALID_ARGUMENT</span></td><td>topic 为空、listener 为空、消息参数非法</td></tr>
+    <tr><td><span class="error-code">CL-402</span></td><td><span class="enum-name">CONFIG_ERROR</span></td><td>nodeId / clusterSecret / 端口等配置错误</td></tr>
+    <tr><td><span class="error-code">CL-403</span></td><td><span class="enum-name">STATE_ERROR</span></td><td>Cluster 未初始化就调用运行时方法</td></tr>
+    <tr><td><span class="error-code">CL-404</span></td><td><span class="enum-name">NOT_FOUND</span></td><td>节点或资源不存在</td></tr>
+    <tr><td><span class="error-code">CL-451</span></td><td><span class="enum-name">AUTH_ERROR</span></td><td>clusterName 不一致、共享密钥 HMAC 校验失败</td></tr>
+    <tr><td><span class="error-code">CL-500</span></td><td><span class="enum-name">IO_ERROR</span></td><td>端口绑定失败、连接 IO 异常</td></tr>
+    <tr><td><span class="error-code">CL-560</span></td><td><span class="enum-name">PROTOCOL_ERROR</span></td><td>非法帧、非法长度、协议版本不兼容</td></tr>
+    <tr><td><span class="error-code">CL-566</span></td><td><span class="enum-name">LIMIT_EXCEEDED</span></td><td>超过最大节点数、消息体超限</td></tr>
+    <tr><td><span class="error-code">CL-568</span></td><td><span class="enum-name">BROADCAST_TIMEOUT</span></td><td>预留给广播超时场景的错误码</td></tr>
+  </tbody>
+</table>
+
+<h2>Cluster 典型错误场景</h2>
+<table class="api-table">
+  <thead><tr><th>场景</th><th>错误码</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td>节点间 <code>clusterSecret</code> 不一致</td><td><span class="error-code">CL-451</span> AUTH_ERROR</td><td>握手时 HMAC 校验失败，连接立即断开</td></tr>
+    <tr><td><code>clusterName</code> 不一致</td><td><span class="error-code">CL-451</span> AUTH_ERROR</td><td>不同集群直接拒绝互联</td></tr>
+    <tr><td>广播 payload 超过 <code>maxMessageBytes</code></td><td><span class="error-code">CL-566</span> LIMIT_EXCEEDED</td><td>广播发送前直接拒绝</td></tr>
+    <tr><td>收到非法帧或帧长度异常</td><td><span class="error-code">CL-560</span> PROTOCOL_ERROR</td><td>协议层拒绝处理并记入 <code>protocolErrors</code></td></tr>
+    <tr><td>模块未初始化就调用 <code>nodes()</code> / <code>broadcast()</code></td><td><span class="error-code">CL-403</span> STATE_ERROR</td><td>必须先执行 <code>Vostok.Cluster.init(...)</code></td></tr>
+  </tbody>
+</table>
+
+<pre><code><span class="kw">try</span> {
+    <span class="ty">Vostok</span>.Cluster.init(<span class="kw">new</span> <span class="ty">VKClusterConfig</span>()
+        .clusterName(<span class="st">"prod-order"</span>)
+        .clusterSecret(<span class="st">"wrong-secret"</span>)
+        .nodeId(<span class="st">"node-01"</span>)
+        .bindHost(<span class="st">"127.0.0.1"</span>)
+        .bindPort(<span class="num">18888</span>));
+    <span class="ty">Vostok</span>.Cluster.broadcast(<span class="st">"order.created"</span>, <span class="st">"{}"</span>.getBytes()).join();
+} <span class="kw">catch</span> (<span class="ty">VKClusterException</span> e) {
+    <span class="ty">Vostok</span>.Log.error(<span class="st">"cluster failed: {} {}"</span>, e.getCode(), e.getMessage());
+}</code></pre>
 
 <h2>Config 模块错误码（VKConfigErrorCode）</h2>
 <table class="api-table">

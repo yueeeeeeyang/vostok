@@ -3,7 +3,7 @@
 面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合多个模块能力。
 各模块可独立初始化、按需使用。
 
-**当前版本：`1.9.2.5`**
+**当前版本：`1.9.2.6`**
 
 **详细文档**：[Vostok Docs](https://yueeeeeeyang.github.io/vostok/)
 
@@ -15,13 +15,13 @@
 <dependency>
   <groupId>yueyang</groupId>
   <artifactId>vostok</artifactId>
-  <version>1.9.2.5</version>
+  <version>1.9.2.6</version>
 </dependency>
 ```
 
 ---
 
-## 模块概览（12 个）
+## 模块概览（13 个）
 
 | 模块 | 门面类 | 说明 |
 |------|--------|------|
@@ -30,6 +30,7 @@
 | `Vostok.Cache` | `VostokCache` | Memory / Redis / 两级缓存、Pipeline、统计 |
 | `Vostok.File` | `VostokFile` | 文件读写、压缩解压、目录操作、监听、文件加解密 |
 | `Vostok.Office` | `VostokOffice` | Office 能力入口（支持 Excel/Word/PPT/PDF 读写/统计） |
+| `Vostok.Cluster` | `VostokCluster` | 集群节点发现、节点缓存、可靠/尽力广播 |
 | `Vostok.Log` | `VostokLog` | 异步日志、滚动压缩、命名 logger、MDC |
 | `Vostok.Config` | `VostokConfig` | 配置加载、热更新、变更监听、类型绑定 |
 | `Vostok.Security` | `VostokSecurity` | SQL/XSS/路径等安全检测、加解密、签名验签 |
@@ -358,6 +359,46 @@ String jobId = Vostok.Office.submitJob(VKOfficeJobRequest.create(() -> {
 
 VKOfficeJobResult result = Vostok.Office.awaitJob(jobId, 30_000);
 System.out.println(result.status());
+```
+
+### Cluster
+
+```java
+import yueyang.vostok.Vostok;
+import yueyang.vostok.cluster.VKClusterConfig;
+
+Vostok.Cluster.init(new VKClusterConfig()
+    .clusterName("prod-order")
+    .clusterSecret("replace-with-strong-shared-secret")
+    .nodeId("order-node-01")
+    .bindHost("0.0.0.0")
+    .bindPort(18888)
+    .advertiseHost("10.0.0.12")
+    .advertisePort(18888)
+    .seedNodes("10.0.0.10:18888", "10.0.0.11:18888")
+    .label("zone", "sh-a"));
+
+boolean ready = Vostok.Cluster.awaitReady(5000);
+System.out.println("cluster ready = " + ready);
+
+var sub = Vostok.Cluster.on("order.created", message -> {
+    String body = new String(message.getPayload(), java.nio.charset.StandardCharsets.UTF_8);
+    System.out.println(message.getFromNodeId() + ": " + body);
+});
+
+var result = Vostok.Cluster.broadcast(
+    "order.created",
+    "{\"id\":1001}".getBytes(java.nio.charset.StandardCharsets.UTF_8)
+).get();
+
+System.out.println(result.getTargetedNodes());
+System.out.println(result.getAckedNodes());
+System.out.println(result.getFailedNodes());
+System.out.println(Vostok.Cluster.nodes().size());
+System.out.println(Vostok.Cluster.stats().getAliveNodes());
+
+sub.cancel();
+Vostok.Cluster.close();
 ```
 
 ### Log

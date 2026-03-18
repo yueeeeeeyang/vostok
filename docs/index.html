@@ -14,7 +14,7 @@
       <div class="logo-mark">V</div>
       <div>
         <div class="logo-text">Vostok</div>
-        <div class="logo-version">v1.9.2.5 · JDK 17+</div>
+        <div class="logo-version">v1.9.2.6 · JDK 17+</div>
       </div>
     </a>
   </div>
@@ -28,6 +28,7 @@
     <a href="cache.html"><span class="nav-icon">⚡</span>Cache</a>
     <a href="file.html"><span class="nav-icon">📁</span>File</a>
     <a href="office.html"><span class="nav-icon">📊</span>Office</a>
+    <a href="cluster.html"><span class="nav-icon">🛰️</span>Cluster</a>
     <a href="log.html"><span class="nav-icon">📋</span>Log</a>
     <a href="config.html"><span class="nav-icon">⚙️</span>Config</a>
     <a href="security.html"><span class="nav-icon">🔒</span>Security</a>
@@ -44,7 +45,7 @@
 <div class="page-header">
   <div class="module-tag">文档</div>
   <h1>Vostok</h1>
-  <p class="desc">面向 JDK 17+ 的轻量 Java 框架，通过统一门面 <code>Vostok</code> 聚合十二个模块能力，各模块按需独立初始化，可使用数据访问、Web 服务、缓存、日志、配置、安全、事件、HTTP 客户端、AI 等全部功能。</p>
+  <p class="desc">面向 JDK 17+ 的轻量 Java 框架，通过统一门面 <code>Vostok</code> 聚合十三个模块能力，各模块按需独立初始化，可使用数据访问、Web 服务、缓存、文件、Office、集群通信、日志、配置、安全、事件、HTTP 客户端、AI 等全部功能。</p>
 </div>
 
 <h2>模块总览</h2>
@@ -78,6 +79,12 @@
     <div class="mc-tag">Vostok.Office</div>
     <div class="mc-name">Office 处理</div>
     <div class="mc-desc">Excel（.xlsx）读写、流式逐行导入、安全检测</div>
+  </a>
+  <a class="module-card" href="cluster.html">
+    <div class="mc-icon">🛰️</div>
+    <div class="mc-tag">Vostok.Cluster</div>
+    <div class="mc-name">集群通信</div>
+    <div class="mc-desc">Seed 节点发现、节点缓存、可靠广播、尽力广播、运行时统计</div>
   </a>
   <a class="module-card" href="log.html">
     <div class="mc-icon">📋</div>
@@ -130,7 +137,7 @@
 <span class="kw">&lt;dependency&gt;</span>
     <span class="kw">&lt;groupId&gt;</span>yueyang<span class="kw">&lt;/groupId&gt;</span>
     <span class="kw">&lt;artifactId&gt;</span>vostok<span class="kw">&lt;/artifactId&gt;</span>
-    <span class="kw">&lt;version&gt;</span>1.9.2.5<span class="kw">&lt;/version&gt;</span>
+    <span class="kw">&lt;version&gt;</span>1.9.2.6<span class="kw">&lt;/version&gt;</span>
 <span class="kw">&lt;/dependency&gt;</span></code></pre>
 
 <h3>按需初始化各模块</h3>

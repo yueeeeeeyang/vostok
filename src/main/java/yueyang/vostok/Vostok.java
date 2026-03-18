@@ -3,6 +3,7 @@ package yueyang.vostok;
 import yueyang.vostok.data.VostokData;
 import yueyang.vostok.cache.VostokCache;
 import yueyang.vostok.config.VostokConfig;
+import yueyang.vostok.cluster.VostokCluster;
 import yueyang.vostok.event.VostokEvent;
 import yueyang.vostok.file.VostokFile;
 import yueyang.vostok.log.VostokLog;
@@ -67,6 +68,14 @@ public final class Vostok {
      */
     public static final class Config extends VostokConfig {
         private Config() {
+        }
+    }
+
+    /**
+     * Cluster entry.
+     */
+    public static final class Cluster extends VostokCluster {
+        private Cluster() {
         }
     }
 
