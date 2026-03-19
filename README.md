@@ -3,7 +3,7 @@
 面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合多个模块能力。
 各模块可独立初始化、按需使用。
 
-**当前版本：`1.9.2.7`**
+**当前版本：`1.9.2.8`**
 
 **详细文档**：[Vostok Docs](https://yueeeeeeyang.github.io/vostok/)
 
@@ -15,7 +15,7 @@
 <dependency>
   <groupId>yueyang</groupId>
   <artifactId>vostok</artifactId>
-  <version>1.9.2.7</version>
+  <version>1.9.2.8</version>
 </dependency>
 ```
 
@@ -197,6 +197,46 @@ Vostok.Web.init(8080)
     .mvcConfig(VKMvcConfig.defaults().exposeExceptionMessage(false))
     .controller(new UserApi())
     .controllers("com.example.api");
+
+// 方式 3：注入自定义 Server Engine（Vostok 核心默认仍内置 BUILTIN）
+class MyServerEngine implements yueyang.vostok.web.spi.VKWebServerEngine {
+    private final yueyang.vostok.web.spi.VKWebRuntimeSupport runtime;
+    private boolean started;
+
+    MyServerEngine(yueyang.vostok.web.spi.VKWebRuntimeSupport runtime) {
+        this.runtime = runtime;
+    }
+
+    @Override
+    public void start() {
+        // 业务项目在这里接入 Netty / Undertow / 其他实现
+        // 普通 HTTP 请求可复用：
+        // runtime.dispatchHttp(req)
+        // WebSocket 元数据可复用：
+        // runtime.findWebSocket(path) / runtime.wsRegistry()
+        started = true;
+    }
+
+    @Override
+    public void stop() {
+        started = false;
+    }
+
+    @Override
+    public boolean isStarted() {
+        return started;
+    }
+
+    @Override
+    public int port() {
+        return 8080;
+    }
+}
+
+Vostok.Web.init(new VKWebConfig()
+        .port(8080)
+        .serverFactory((cfg, runtime) -> new MyServerEngine(runtime)))
+    .get("/ping", (req, res) -> res.text("pong"));
 ```
 
 ### Cache

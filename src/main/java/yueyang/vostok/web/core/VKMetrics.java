@@ -30,8 +30,19 @@ public final class VKMetrics {
     /**
      * 注入活跃连接数获取器，由 VKWebServer 在初始化时调用。
      */
-    void setActiveConnectionsSupplier(IntSupplier supplier) {
+    public void setActiveConnectionsSupplier(IntSupplier supplier) {
         this.activeConnectionsSupplier = supplier;
+    }
+
+    /**
+     * 对外暴露的请求指标写入口，便于第三方 Web Engine 复用同一套 metrics 模型。
+     */
+    public void recordRequest(long nanos, boolean error) {
+        totalRequests.incrementAndGet();
+        totalResponseNs.addAndGet(Math.max(0L, nanos));
+        if (error) {
+            totalErrors.incrementAndGet();
+        }
     }
 
     /** 获取历史总请求数。 */

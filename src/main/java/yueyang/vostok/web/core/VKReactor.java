@@ -1,7 +1,5 @@
 package yueyang.vostok.web.core;
 
-import yueyang.vostok.web.VKErrorHandler;
-import yueyang.vostok.web.VKHandler;
 import yueyang.vostok.web.VKWebConfig;
 import yueyang.vostok.web.http.VKHttpParseException;
 import yueyang.vostok.web.http.VKHttpParser;
@@ -11,9 +9,9 @@ import yueyang.vostok.web.http.VKMultipartStreamDecoder;
 import yueyang.vostok.web.http.VKHttpWriter;
 import yueyang.vostok.web.http.VKRequest;
 import yueyang.vostok.web.http.VKResponse;
-import yueyang.vostok.web.middleware.VKChain;
-import yueyang.vostok.web.middleware.VKMiddleware;
-import yueyang.vostok.web.route.VKRouter;
+import yueyang.vostok.web.spi.VKWebDispatchResult;
+import yueyang.vostok.web.spi.VKWebHttpDispatcher;
+import yueyang.vostok.web.spi.VKWebRuntimeSupport;
 import yueyang.vostok.web.sse.VKSseEmitter;
 import yueyang.vostok.web.util.VKBufferPool;
 import yueyang.vostok.web.websocket.VKWebSocketEndpoint;
@@ -38,7 +36,6 @@ import java.security.MessageDigest;
 import java.util.ArrayDeque;
 import java.util.Base64;
 import java.util.Deque;
-import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -75,12 +72,10 @@ final class VKReactor implements Runnable {
         }
     });
 
-    private final VKWebServer server;
+    private final VKBuiltinWebServerEngine engine;
+    private final VKWebRuntimeSupport runtime;
     private final Selector selector;
     private final VKWorkerPool workers;
-    private final VKRouter router;
-    private final List<VKMiddleware> middlewares;
-    private final VKErrorHandler errorHandler;
     private final VKHttpParser parser;
     private final VKBufferPool bufferPool;
     private final VKWebConfig config;
@@ -91,22 +86,18 @@ final class VKReactor implements Runnable {
     /** TLS 上下文，null 表示明文 HTTP。 */
     private final SSLContext sslContext;
 
-    VKReactor(VKWebServer server,
+    VKReactor(VKBuiltinWebServerEngine engine,
+              VKWebRuntimeSupport runtime,
               Selector selector,
               VKWorkerPool workers,
-              VKRouter router,
-              List<VKMiddleware> middlewares,
-              VKErrorHandler errorHandler,
               VKHttpParser parser,
               VKBufferPool bufferPool,
               VKWebConfig config,
               SSLContext sslContext) {
-        this.server = server;
+        this.engine = engine;
+        this.runtime = runtime;
         this.selector = selector;
         this.workers = workers;
-        this.router = router;
-        this.middlewares = middlewares;
-        this.errorHandler = errorHandler;
         this.parser = parser;
         this.bufferPool = bufferPool;
         this.config = config;
@@ -178,10 +169,10 @@ final class VKReactor implements Runnable {
                     }
                     sslEngine.beginHandshake(); // 触发握手状态机初始化
                 }
-                VKConn conn = new VKConn(server, channel, key, parser, bufferPool, workers, router,
-                        middlewares, errorHandler, this, config, sslEngine);
+                VKConn conn = new VKConn(engine, runtime, channel, key, parser, bufferPool, workers,
+                        this, config, sslEngine);
                 key.attach(conn);
-                server.incConnections();
+                engine.incConnections();
                 conn.rescheduleTimeout(System.currentTimeMillis());
             } catch (Exception e) {
                 try {
@@ -274,15 +265,13 @@ final class VKReactor implements Runnable {
             SSE
         }
 
-        private final VKWebServer server;
+        private final VKBuiltinWebServerEngine engine;
+        private final VKWebRuntimeSupport runtime;
         private final SocketChannel channel;
         private final SelectionKey key;
         private final VKHttpParser parser;
         private final VKBufferPool bufferPool;
         private final VKWorkerPool workers;
-        private final VKRouter router;
-        private final List<VKMiddleware> middlewares;
-        private final VKErrorHandler errorHandler;
         private final VKReactor reactor;
         /** 明文模式下的读缓冲（从连接池借出，关闭时归还）。 */
         private final ByteBuffer readBuffer;
@@ -344,27 +333,23 @@ final class VKReactor implements Runnable {
         private final AtomicInteger inFlight = new AtomicInteger();
         private MultipartCtx multipartCtx;
 
-        VKConn(VKWebServer server,
+        VKConn(VKBuiltinWebServerEngine engine,
+               VKWebRuntimeSupport runtime,
                SocketChannel channel,
                SelectionKey key,
                VKHttpParser parser,
                VKBufferPool bufferPool,
                VKWorkerPool workers,
-               VKRouter router,
-               List<VKMiddleware> middlewares,
-               VKErrorHandler errorHandler,
                VKReactor reactor,
                VKWebConfig config,
                SSLEngine sslEngine) {
-            this.server = server;
+            this.engine = engine;
+            this.runtime = runtime;
             this.channel = channel;
             this.key = key;
             this.parser = parser;
             this.bufferPool = bufferPool;
             this.workers = workers;
-            this.router = router;
-            this.middlewares = middlewares;
-            this.errorHandler = errorHandler;
             this.reactor = reactor;
             this.webConfig = config;
             this.readTimeoutMs = config.getReadTimeoutMs();
@@ -1035,7 +1020,7 @@ final class VKReactor implements Runnable {
                     return;
                 }
             } else {
-                if (now - lastActive >= server.keepAliveTimeoutMs()) {
+                if (now - lastActive >= engine.keepAliveTimeoutMs()) {
                     close();
                     return;
                 }
@@ -1056,9 +1041,9 @@ final class VKReactor implements Runnable {
                 timeoutToken = reactor.timer.schedule(this, now + 30_000);
                 return;
             }
-            long timeoutMs = waitingBody ? readTimeoutMs : server.keepAliveTimeoutMs();
+            long timeoutMs = waitingBody ? readTimeoutMs : engine.keepAliveTimeoutMs();
             if (inFlight.get() > 0) {
-                timeoutMs = Math.max(timeoutMs, server.keepAliveTimeoutMs());
+                timeoutMs = Math.max(timeoutMs, engine.keepAliveTimeoutMs());
             }
             long deadline = now + timeoutMs;
             timeoutToken = reactor.timer.schedule(this, deadline);
@@ -1094,7 +1079,7 @@ final class VKReactor implements Runnable {
             } catch (IOException ignore) {
             }
             bufferPool.release(readBuffer);
-            server.decConnections();
+            engine.decConnections();
 
             closeOutbound(currentOutbound);
             VKOutbound pendingOut;
@@ -1106,7 +1091,7 @@ final class VKReactor implements Runnable {
                 multipartCtx = null;
             }
             if (wsWasOpen && wsEndpoint != null && wsSession != null) {
-                server.unregisterWebSocketSession(wsEndpoint.path(), wsSession);
+                runtime.unregisterWebSocketSession(wsEndpoint.path(), wsSession);
                 try {
                     wsEndpoint.handler().onClose(wsSession, 1006, "Abnormal Closure");
                 } catch (Throwable ignore) {
@@ -1137,47 +1122,13 @@ final class VKReactor implements Runnable {
         private void dispatch(VKRequest req) {
             inFlight.incrementAndGet();
             boolean accepted = workers.submit(() -> {
-                long startNs = System.nanoTime();
-                boolean isError = false;
-                VKResponse res = new VKResponse();
                 try {
-                    ensureTraceId(req, res);
+                    VKWebHttpDispatcher.ensureTraceId(req, new VKResponse());
                     if (tryUpgradeWebSocket(req)) {
                         return;
                     }
-                    var match = router.match(req.method(), req.path());
-                    // Bug fix: 中间件必须在所有请求（包括 404）上执行，使 CORS 等中间件能拦截 OPTIONS preflight
-                    VKHandler finalHandler;
-                    if (match == null || match.handler() == null) {
-                        finalHandler = (r, s) -> s.status(404).text("Not Found");
-                    } else {
-                        req.setParams(match.params());
-                        if (!server.tryRateLimit(req, match, res)) {
-                            return;
-                        }
-                        finalHandler = match.handler();
-                    }
-                    if (middlewares.isEmpty()) {
-                        finalHandler.handle(req, res);
-                    } else {
-                        VKChain chain = new VKChain(middlewares, finalHandler);
-                        chain.next(req, res);
-                    }
-                } catch (VKMultipartParseException e) {
-                    res.status(e.status()).text(e.getMessage());
-                    isError = true;
-                } catch (Throwable t) {
-                    if (protocol == Protocol.WS && wsEndpoint != null) {
-                        wsEndpoint.handler().onError(wsSession, t);
-                        return;
-                    }
-                    try {
-                        errorHandler.handle(t, req, res);
-                    } catch (Throwable ignore) {
-                        res.status(500).text("Internal Server Error");
-                    }
-                    isError = true;
-                } finally {
+                    VKWebDispatchResult dispatchResult = runtime.dispatchHttp(req);
+                    VKResponse res = dispatchResult.response();
                     if (protocol == Protocol.WS) {
                         inFlight.decrementAndGet();
                         reactor.requestReschedule(this);
@@ -1205,17 +1156,16 @@ final class VKReactor implements Runnable {
                     VKOutbound out = VKOutbound.from(res, keepAlive);
                     enqueueResponse(out, !keepAlive);
 
-                    long costNs = System.nanoTime() - startNs;
-                    long costMs = costNs / 1_000_000;
-                    // 更新 metrics：请求数和响应时间
-                    server.recordRequest(costNs, isError || res.status() >= 500);
+                    runtime.recordRequest(dispatchResult.costNs(), dispatchResult.error());
 
-                    logAccess(req, res.status(), out.totalBytes(), costMs);
+                    logAccess(req, res.status(), out.totalBytes(), dispatchResult.costMs());
 
-                    req.cleanupUploads();
                     inFlight.decrementAndGet();
                     reactor.requestContinueRead(this);
                     reactor.requestReschedule(this);
+                } catch (Throwable t) {
+                    inFlight.decrementAndGet();
+                    respondError(500, "Internal Server Error", true);
                 }
             });
 
@@ -1275,7 +1225,7 @@ final class VKReactor implements Runnable {
             if (upgrade == null || !"websocket".equalsIgnoreCase(upgrade)) {
                 return false;
             }
-            VKWebSocketEndpoint endpoint = server.findWebSocket(req.path());
+            VKWebSocketEndpoint endpoint = runtime.findWebSocket(req.path());
             if (endpoint == null) {
                 respondError(404, "Not Found", true);
                 return true;
@@ -1347,10 +1297,10 @@ final class VKReactor implements Runnable {
                     frame -> reactor.scheduleSend(this, frame),
                     // Bug2修复：通过 requestClose 在 reactor 线程内关闭，消除与 onRead 的竞态
                     () -> reactor.requestClose(this),
-                    server.wsRegistry(),
+                    runtime.wsRegistry(),
                     authResult.attributes()
             );
-            server.registerWebSocketSession(endpoint.path(), wsSession);
+            runtime.registerWebSocketSession(endpoint.path(), wsSession);
             try {
                 endpoint.config().getHandshakeHook().afterAuth(wsSession, hsContext);
                 endpoint.handler().onOpen(wsSession);
@@ -1542,7 +1492,7 @@ final class VKReactor implements Runnable {
             System.arraycopy(reasonBytes, 0, payload, 2, reasonBytes.length);
             sendWsFrame(VKWsFrame.close(payload));
             if (wsEndpoint != null && wsSession != null) {
-                server.unregisterWebSocketSession(wsEndpoint.path(), wsSession);
+                runtime.unregisterWebSocketSession(wsEndpoint.path(), wsSession);
                 wsEndpoint.handler().onClose(wsSession, code, reason == null ? "" : reason);
             }
             wsEndpoint = null;
@@ -1644,26 +1594,15 @@ final class VKReactor implements Runnable {
             }
         }
 
-        private void ensureTraceId(VKRequest req, VKResponse res) {
-            String tid = req.header("x-trace-id");
-            if (tid == null || tid.isEmpty()) {
-                tid = Long.toHexString(System.nanoTime()) + "-" + TRACE_SEQ.incrementAndGet();
-            }
-            req.setTraceId(tid);
-            if (res.headers().get("X-Trace-Id") == null) {
-                res.header("X-Trace-Id", tid);
-            }
-        }
-
         private void logAccess(VKRequest req, int status, long bytes, long costMs) {
-            if (!server.accessLogEnabled()) {
+            if (!engine.accessLogEnabled()) {
                 return;
             }
             String ip = req.remoteAddress() == null ? "-" : req.remoteAddress().getAddress().getHostAddress();
             String traceId = req.traceId() == null ? "-" : req.traceId();
             String msg = ip + " \"" + req.method() + " " + req.path() + "\" " + status + " " + bytes + " "
                     + costMs + "ms trace=" + traceId;
-            server.logAccess(msg);
+            engine.logAccess(msg);
         }
 
         private boolean isStreamingMultipart(VKHttpParser.ParsedHeaders headers) {

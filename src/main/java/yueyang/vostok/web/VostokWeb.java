@@ -1,20 +1,23 @@
 package yueyang.vostok.web;
 
-import yueyang.vostok.web.core.VKWebServer;
+import yueyang.vostok.web.auto.VKAutoCrud;
+import yueyang.vostok.web.auto.VKCrudStyle;
+import yueyang.vostok.web.asset.VKStaticHandler;
+import yueyang.vostok.web.core.VKBuiltinWebServerEngine;
 import yueyang.vostok.web.middleware.VKCorsConfig;
 import yueyang.vostok.web.middleware.VKCorsMiddleware;
 import yueyang.vostok.web.middleware.VKGzipConfig;
 import yueyang.vostok.web.middleware.VKGzipMiddleware;
 import yueyang.vostok.web.middleware.VKMiddleware;
-import yueyang.vostok.web.auto.VKAutoCrud;
-import yueyang.vostok.web.auto.VKCrudStyle;
-import yueyang.vostok.web.asset.VKStaticHandler;
+import yueyang.vostok.web.mvc.VKMvcConfig;
+import yueyang.vostok.web.mvc.VKMvcControllerRegistry;
 import yueyang.vostok.web.rate.VKRateLimitConfig;
+import yueyang.vostok.web.spi.VKWebRuntimeSupport;
+import yueyang.vostok.web.spi.VKWebServerEngine;
+import yueyang.vostok.web.spi.VKWebServerFactory;
 import yueyang.vostok.web.sse.VKSseHandler;
 import yueyang.vostok.web.websocket.VKWebSocketConfig;
 import yueyang.vostok.web.websocket.VKWebSocketHandler;
-import yueyang.vostok.web.mvc.VKMvcConfig;
-import yueyang.vostok.web.mvc.VKMvcControllerRegistry;
 
 /**
  * Vostok Web 公共 API 入口类。
@@ -26,7 +29,8 @@ import yueyang.vostok.web.mvc.VKMvcControllerRegistry;
 public class VostokWeb {
     private static final Object LOCK = new Object();
     private static final VostokWeb INSTANCE = new VostokWeb();
-    private static VKWebServer server;
+    private static VKWebRuntimeSupport runtime;
+    private static VKWebServerEngine engine;
     private static volatile VKMvcConfig mvcConfig = VKMvcConfig.defaults();
 
     protected VostokWeb() {
@@ -38,7 +42,13 @@ public class VostokWeb {
 
     public static VostokWeb init(VKWebConfig config) {
         synchronized (LOCK) {
-            server = new VKWebServer(config);
+            VKWebConfig actual = config == null ? new VKWebConfig() : config;
+            runtime = new VKWebRuntimeSupport(actual);
+            VKWebServerFactory factory = actual.getServerFactory();
+            engine = factory == null ? new VKBuiltinWebServerEngine(actual, runtime) : factory.create(actual, runtime);
+            if (engine == null) {
+                throw new IllegalStateException("VKWebServerFactory returned null engine");
+            }
             mvcConfig = VKMvcConfig.defaults();
         }
         return INSTANCE;
@@ -81,56 +91,56 @@ public class VostokWeb {
     // ---- WebSocket Binary Broadcast ----
 
     public static int websocketBroadcastBinary(String path, byte[] data) {
-        ensureServerStatic();
-        return server.broadcastWebSocketBinary(path, data);
+        ensureInitializedStatic();
+        return runtime.wsRegistry().broadcastAllBinary(path, data);
     }
 
     public static int websocketBroadcastRoomBinary(String path, String room, byte[] data) {
-        ensureServerStatic();
-        return server.broadcastWebSocketRoomBinary(path, room, data);
+        ensureInitializedStatic();
+        return runtime.wsRegistry().broadcastRoomBinary(path, room, data);
     }
 
     public static int websocketBroadcastGroupBinary(String path, String group, byte[] data) {
-        ensureServerStatic();
-        return server.broadcastWebSocketGroupBinary(path, group, data);
+        ensureInitializedStatic();
+        return runtime.wsRegistry().broadcastGroupBinary(path, group, data);
     }
 
     public static int websocketBroadcastRoomAndGroupBinary(String path, String room, String group, byte[] data) {
-        ensureServerStatic();
-        return server.broadcastWebSocketRoomAndGroupBinary(path, room, group, data);
+        ensureInitializedStatic();
+        return runtime.wsRegistry().broadcastRoomAndGroupBinary(path, room, group, data);
     }
 
     // ---- Instance API ----
 
     public VostokWeb get(String path, VKHandler handler) {
-        ensureServer();
-        server.addRoute("GET", path, handler);
+        ensureInitialized();
+        runtime.addRoute("GET", path, handler);
         return this;
     }
 
     public VostokWeb post(String path, VKHandler handler) {
-        ensureServer();
-        server.addRoute("POST", path, handler);
+        ensureInitialized();
+        runtime.addRoute("POST", path, handler);
         return this;
     }
 
     public VostokWeb route(String method, String path, VKHandler handler) {
-        ensureServer();
-        server.addRoute(method, path, handler);
+        ensureInitialized();
+        runtime.addRoute(method, path, handler);
         return this;
     }
 
     /** 注册单个注解控制器实例。 */
     public VostokWeb controller(Object controller) {
-        ensureServer();
-        new VKMvcControllerRegistry(server, mvcConfig).registerController(controller);
+        ensureInitialized();
+        new VKMvcControllerRegistry(runtime, mvcConfig).registerController(controller);
         return this;
     }
 
     /** 按包扫描并注册注解控制器。 */
     public VostokWeb controllers(String... basePackages) {
-        ensureServer();
-        new VKMvcControllerRegistry(server, mvcConfig).registerControllers(basePackages);
+        ensureInitialized();
+        new VKMvcControllerRegistry(runtime, mvcConfig).registerControllers(basePackages);
         return this;
     }
 
@@ -141,9 +151,9 @@ public class VostokWeb {
     }
 
     public VostokWeb autoCrudApi(String... basePackages) {
-        ensureServer();
+        ensureInitialized();
         for (var route : VKAutoCrud.build(VKCrudStyle.RESTFUL, basePackages)) {
-            server.addRoute(route.method(), route.path(), route.handler());
+            runtime.addRoute(route.method(), route.path(), route.handler());
         }
         return this;
     }
@@ -153,45 +163,45 @@ public class VostokWeb {
     }
 
     public VostokWeb autoCrudApi(VKCrudStyle style, String... basePackages) {
-        ensureServer();
-        VKCrudStyle s = style == null ? VKCrudStyle.RESTFUL : style;
-        for (var route : VKAutoCrud.build(s, basePackages)) {
-            server.addRoute(route.method(), route.path(), route.handler());
+        ensureInitialized();
+        VKCrudStyle actual = style == null ? VKCrudStyle.RESTFUL : style;
+        for (var route : VKAutoCrud.build(actual, basePackages)) {
+            runtime.addRoute(route.method(), route.path(), route.handler());
         }
         return this;
     }
 
     public VostokWeb use(VKMiddleware middleware) {
-        ensureServer();
-        server.addMiddleware(middleware);
+        ensureInitialized();
+        runtime.addMiddleware(middleware);
         return this;
     }
 
     public VostokWeb staticDir(String urlPrefix, String directory) {
-        ensureServer();
+        ensureInitialized();
         String prefix = urlPrefix == null ? "/" : urlPrefix;
         VKStaticHandler handler = new VKStaticHandler(prefix, java.nio.file.Path.of(directory));
         String p = prefix.endsWith("/") ? prefix.substring(0, prefix.length() - 1) : prefix;
-        server.addRoute("GET", p + "/{*path}", handler);
-        server.addRoute("GET", p, handler);
+        runtime.addRoute("GET", p + "/{*path}", handler);
+        runtime.addRoute("GET", p, handler);
         return this;
     }
 
     public VostokWeb error(VKErrorHandler handler) {
-        ensureServer();
-        server.setErrorHandler(handler);
+        ensureInitialized();
+        runtime.setErrorHandler(handler);
         return this;
     }
 
     public VostokWeb rateLimit(VKRateLimitConfig config) {
-        ensureServer();
-        server.setGlobalRateLimit(config);
+        ensureInitialized();
+        runtime.setGlobalRateLimit(config);
         return this;
     }
 
     public VostokWeb rateLimit(VKHttpMethod method, String path, VKRateLimitConfig config) {
-        ensureServer();
-        server.setRouteRateLimit(method, path, config);
+        ensureInitialized();
+        runtime.setRouteRateLimit(method, path, config);
         return this;
     }
 
@@ -200,142 +210,112 @@ public class VostokWeb {
     }
 
     public VostokWeb websocket(String path, VKWebSocketConfig config, VKWebSocketHandler handler) {
-        ensureServer();
-        server.addWebSocket(path, config, handler);
+        ensureInitialized();
+        runtime.addWebSocket(path, config, handler);
         return this;
     }
 
     /**
      * 注册 SSE 端点。handler 在 worker 线程中被调用，emitter 可保存到外部集合用于后续推送。
-     *
-     * @param path    SSE 端点路径
-     * @param handler SSE 连接建立回调
      */
     public VostokWeb sse(String path, VKSseHandler handler) {
-        ensureServer();
-        server.addRoute("GET", path, (req, res) -> {
-            res.sseResponse(emitter -> handler.handle(req, emitter));
-        });
+        ensureInitialized();
+        runtime.addRoute("GET", path, (req, res) -> res.sseResponse(emitter -> handler.handle(req, emitter)));
         return this;
     }
 
-    /**
-     * 注册 Gzip 压缩中间件（使用默认配置：minBytes=256，压缩 text/ 和 application/json）。
-     */
+    /** 注册 Gzip 压缩中间件（使用默认配置：minBytes=256，压缩 text/ 和 application/json）。 */
     public VostokWeb gzip() {
         return use(new VKGzipMiddleware());
     }
 
-    /**
-     * 注册 Gzip 压缩中间件（使用自定义配置）。
-     */
+    /** 注册 Gzip 压缩中间件（使用自定义配置）。 */
     public VostokWeb gzip(VKGzipConfig config) {
         return use(new VKGzipMiddleware(config));
     }
 
-    /**
-     * 注册 CORS 中间件（允许所有来源的默认配置）。
-     */
+    /** 注册 CORS 中间件（允许所有来源的默认配置）。 */
     public VostokWeb cors() {
         return use(new VKCorsMiddleware());
     }
 
-    /**
-     * 注册 CORS 中间件（使用自定义配置）。
-     */
+    /** 注册 CORS 中间件（使用自定义配置）。 */
     public VostokWeb cors(VKCorsConfig config) {
         return use(new VKCorsMiddleware(config));
     }
 
-    /**
-     * 注册内置健康检查端点 GET /actuator/health。
-     * 返回：{"status":"UP","connections":42}
-     */
+    /** 注册内置健康检查端点 GET /actuator/health。 */
     public VostokWeb health() {
         return health("/actuator/health");
     }
 
-    /**
-     * 注册自定义路径的健康检查端点。
-     * 返回：{"status":"UP","connections":42}
-     */
+    /** 注册自定义路径的健康检查端点。 */
     public VostokWeb health(String path) {
-        ensureServer();
-        server.addRoute("GET", path, (req, res) -> {
-            res.status(200).json(server.metrics().toHealthJson());
-        });
+        ensureInitialized();
+        runtime.addRoute("GET", path, (req, res) -> res.status(200).json(runtime.metrics().toHealthJson()));
         return this;
     }
 
-    /**
-     * 注册内置 Metrics 端点 GET /actuator/metrics。
-     * 返回：{"requests":1000,"errors":2,"activeConnections":42,"avgResponseMs":5.2}
-     */
+    /** 注册内置 Metrics 端点 GET /actuator/metrics。 */
     public VostokWeb metrics() {
         return metrics("/actuator/metrics");
     }
 
-    /**
-     * 注册自定义路径的 Metrics 端点。
-     */
+    /** 注册自定义路径的 Metrics 端点。 */
     public VostokWeb metrics(String path) {
-        ensureServer();
-        server.addRoute("GET", path, (req, res) -> {
-            res.status(200).json(server.metrics().toMetricsJson());
-        });
+        ensureInitialized();
+        runtime.addRoute("GET", path, (req, res) -> res.status(200).json(runtime.metrics().toMetricsJson()));
         return this;
     }
 
-    // ---- Internal Methods ----
-
     private void startInternal() {
-        ensureServer();
-        server.start();
+        ensureInitialized();
+        engine.start();
     }
 
     private void stopInternal() {
-        if (server != null) {
-            server.stop();
+        if (engine != null) {
+            engine.stop();
         }
     }
 
     private boolean startedInternal() {
-        return server != null && server.isStarted();
+        return engine != null && engine.isStarted();
     }
 
     private int portInternal() {
-        ensureServer();
-        return server.port();
+        ensureInitialized();
+        return engine.port();
     }
 
     private int websocketBroadcastInternal(String path, String text) {
-        ensureServer();
-        return server.broadcastWebSocket(path, text);
+        ensureInitialized();
+        return runtime.wsRegistry().broadcastAllText(path, text);
     }
 
     private int websocketBroadcastRoomInternal(String path, String room, String text) {
-        ensureServer();
-        return server.broadcastWebSocketRoom(path, room, text);
+        ensureInitialized();
+        return runtime.wsRegistry().broadcastRoomText(path, room, text);
     }
 
     private int websocketBroadcastGroupInternal(String path, String group, String text) {
-        ensureServer();
-        return server.broadcastWebSocketGroup(path, group, text);
+        ensureInitialized();
+        return runtime.wsRegistry().broadcastGroupText(path, group, text);
     }
 
     private int websocketBroadcastRoomAndGroupInternal(String path, String room, String group, String text) {
-        ensureServer();
-        return server.broadcastWebSocketRoomAndGroup(path, room, group, text);
+        ensureInitialized();
+        return runtime.wsRegistry().broadcastRoomAndGroupText(path, room, group, text);
     }
 
-    private void ensureServer() {
-        if (server == null) {
+    private void ensureInitialized() {
+        if (runtime == null || engine == null) {
             throw new IllegalStateException("VostokWeb is not initialized. Call init() first.");
         }
     }
 
-    private static void ensureServerStatic() {
-        if (server == null) {
+    private static void ensureInitializedStatic() {
+        if (runtime == null || engine == null) {
             throw new IllegalStateException("VostokWeb is not initialized. Call init() first.");
         }
     }

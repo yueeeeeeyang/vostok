@@ -1,5 +1,6 @@
 package yueyang.vostok.web;
 
+import yueyang.vostok.web.spi.VKWebServerFactory;
 import yueyang.vostok.web.tls.VKTlsConfig;
 
 /**
@@ -37,6 +38,8 @@ public final class VKWebConfig {
     private int websocketIdleTimeoutMs = 120_000;
     /** TLS 配置，null 表示明文 HTTP。 */
     private VKTlsConfig tlsConfig;
+    /** 自定义 Web 引擎工厂，null 时回退到内建 NIO 实现。 */
+    private VKWebServerFactory serverFactory;
 
     public int getPort() {
         return port;
@@ -309,6 +312,21 @@ public final class VKWebConfig {
     /** 设置 TLS 配置，启用 HTTPS。 */
     public VKWebConfig tls(VKTlsConfig tls) {
         this.tlsConfig = tls;
+        return this;
+    }
+
+    public VKWebServerFactory getServerFactory() {
+        return serverFactory;
+    }
+
+    /**
+     * 注入自定义 Web Server Engine 工厂。
+     *
+     * 业务项目可在这里挂接 Netty、Undertow 或其他自定义实现；
+     * 未设置时，Vostok.Web 默认仍使用内建 NIO 引擎。
+     */
+    public VKWebConfig serverFactory(VKWebServerFactory serverFactory) {
+        this.serverFactory = serverFactory;
         return this;
     }
 }

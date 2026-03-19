@@ -14,7 +14,7 @@
       <div class="logo-mark">V</div>
       <div>
         <div class="logo-text">Vostok</div>
-        <div class="logo-version">v1.9.2.7 · JDK 17+</div>
+        <div class="logo-version">v1.9.2.8 · JDK 17+</div>
       </div>
     </a>
   </div>
@@ -45,7 +45,7 @@
 <div class="page-header">
   <div class="module-tag">🌐 Vostok.Web</div>
   <h1>Web 服务器模块</h1>
-  <p class="desc">基于 Java NIO Reactor 模式的高性能 HTTP 服务器，支持函数式路由、<code>@VKApi</code> 注解控制器参数绑定、统一 <code>VKWebResult</code> 返回、中间件、WebSocket、SSE、静态资源、GZIP 压缩、CORS、TLS/HTTPS、限流，以及根据实体类自动生成 REST CRUD API。</p>
+  <p class="desc">基于 Java NIO Reactor 模式的高性能 HTTP 服务器，支持函数式路由、<code>@VKApi</code> 注解控制器参数绑定、统一 <code>VKWebResult</code> 返回、中间件、WebSocket、SSE、静态资源、GZIP 压缩、CORS、TLS/HTTPS、限流，以及根据实体类自动生成 REST CRUD API；同时支持通过 <code>VKWebConfig.serverFactory(...)</code> 注入自定义 Server Engine。</p>
 </div>
 
 <h2>初始化与启动</h2>
@@ -76,6 +76,50 @@
     )
     .webStart(<span class="kw">true</span>)
 );</code></pre>
+
+<h2>自定义 Server Engine</h2>
+<p>Vostok 核心当前默认内置的是 <code>BUILTIN</code> NIO 引擎，但 Web 语义层已经抽成可复用的 SPI。业务项目如果需要接入 Netty、Undertow 或其他实现，可以通过 <code>serverFactory(...)</code> 注入自定义引擎，而不需要改动 <code>Vostok.Web</code> 的公共 API。</p>
+<pre><code><span class="kw">import</span> yueyang.vostok.web.spi.*;
+
+<span class="kw">class</span> <span class="ty">MyServerEngine</span> <span class="kw">implements</span> <span class="ty">VKWebServerEngine</span> {
+    <span class="kw">private final</span> <span class="ty">VKWebRuntimeSupport</span> runtime;
+    <span class="kw">private boolean</span> started;
+
+    <span class="ty">MyServerEngine</span>(<span class="ty">VKWebRuntimeSupport</span> runtime) {
+        <span class="kw">this</span>.runtime = runtime;
+    }
+
+    <span class="kw">@Override</span>
+    <span class="kw">public void</span> start() {
+        <span class="cm">// 1. 业务项目自己负责 socket accept / event loop / HTTP 编解码 / TLS</span>
+        <span class="cm">// 2. 普通 HTTP 请求复用 Vostok 语义：</span>
+        <span class="cm">//    VKWebDispatchResult result = runtime.dispatchHttp(req);</span>
+        <span class="cm">// 3. WebSocket 元数据复用：</span>
+        <span class="cm">//    runtime.findWebSocket(path) / runtime.wsRegistry()</span>
+        started = <span class="kw">true</span>;
+    }
+
+    <span class="kw">@Override</span>
+    <span class="kw">public void</span> stop() { started = <span class="kw">false</span>; }
+
+    <span class="kw">@Override</span>
+    <span class="kw">public boolean</span> isStarted() { <span class="kw">return</span> started; }
+
+    <span class="kw">@Override</span>
+    <span class="kw">public int</span> port() { <span class="kw">return</span> <span class="nu">8080</span>; }
+}
+
+<span class="ty">Vostok</span>.Web.init(<span class="kw">new</span> <span class="ty">VKWebConfig</span>()
+    .port(<span class="nu">8080</span>)
+    .serverFactory((cfg, runtime) -&gt; <span class="kw">new</span> <span class="ty">MyServerEngine</span>(runtime))
+)
+.get(<span class="st">"/ping"</span>, (req, res) -&gt; res.text(<span class="st">"pong"</span>));</code></pre>
+
+<div class="callout">
+  <div class="callout-title">自定义引擎的职责边界</div>
+  业务自定义引擎需要自己负责：<code>socket accept / event loop / HTTP 编解码 / TLS / WebSocket / SSE / 文件传输与背压</code>。<br>
+  可以直接复用 Vostok 的：<code>router</code>、<code>middleware</code>、<code>rateLimit</code>、<code>@VKApi MVC</code>、<code>VKWebResult</code>、<code>metrics</code>、<code>VKWsRegistry</code>。
+</div>
 
 <h2>路由</h2>
 
@@ -631,6 +675,7 @@ web.error((error, req, res) -&gt; {
     <tr><td class="param-name">workerQueueSize</td><td>int</td><td>10000</td><td>Worker 任务队列容量</td></tr>
     <tr><td class="param-name">backlog</td><td>int</td><td>1024</td><td>TCP 连接队列长度</td></tr>
     <tr><td class="param-name">maxConnections</td><td>int</td><td>10000</td><td>最大并发连接数</td></tr>
+    <tr><td class="param-name">serverFactory(VKWebServerFactory)</td><td>VKWebServerFactory</td><td>null</td><td>自定义 Server Engine 工厂；为空时使用内建 NIO 引擎</td></tr>
     <tr><td colspan="4" style="color:var(--text-dim);font-weight:600;padding:8px 12px">HTTP</td></tr>
     <tr><td class="param-name">readBufferSize</td><td>int</td><td>16384</td><td>读缓冲区大小（字节）</td></tr>
     <tr><td class="param-name">maxHeaderBytes</td><td>int</td><td>32768</td><td>请求头最大字节数</td></tr>

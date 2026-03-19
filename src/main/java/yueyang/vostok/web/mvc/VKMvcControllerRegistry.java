@@ -2,13 +2,13 @@ package yueyang.vostok.web.mvc;
 
 import yueyang.vostok.Vostok;
 import yueyang.vostok.web.VKHandler;
-import yueyang.vostok.web.core.VKWebServer;
 import yueyang.vostok.web.mvc.annotation.VKApi;
 import yueyang.vostok.web.mvc.annotation.VKDelete;
 import yueyang.vostok.web.mvc.annotation.VKGet;
 import yueyang.vostok.web.mvc.annotation.VKPatch;
 import yueyang.vostok.web.mvc.annotation.VKPost;
 import yueyang.vostok.web.mvc.annotation.VKPut;
+import yueyang.vostok.web.spi.VKWebRuntimeSupport;
 import yueyang.vostok.util.scan.VKScanner;
 
 import java.lang.reflect.Constructor;
@@ -20,13 +20,13 @@ import java.util.Set;
  * 控制器注册器：扫描 @VKApi 并注册到现有路由系统。
  */
 public final class VKMvcControllerRegistry {
-    private final VKWebServer server;
+    private final VKWebRuntimeSupport runtime;
     private final VKMvcConfig config;
     private final VKMvcTypeConverterRegistry converters;
     private final Set<String> routeKeys = new HashSet<>();
 
-    public VKMvcControllerRegistry(VKWebServer server, VKMvcConfig config) {
-        this.server = server;
+    public VKMvcControllerRegistry(VKWebRuntimeSupport runtime, VKMvcConfig config) {
+        this.runtime = runtime;
         this.config = config == null ? VKMvcConfig.defaults() : config.copy();
         this.converters = new VKMvcTypeConverterRegistry();
     }
@@ -59,7 +59,7 @@ public final class VKMvcControllerRegistry {
 
                 VKMvcMethodInvoker invoker = new VKMvcMethodInvoker(controller, method, converters);
                 VKMvcRouteMeta meta = new VKMvcRouteMeta(route.method(), fullPath, controller, method, invoker);
-                server.addRoute(route.method(), fullPath, buildHandler(meta));
+                runtime.addRoute(route.method(), fullPath, buildHandler(meta));
             } catch (Exception e) {
                 onLoadError("Register MVC route failed: " + type.getName() + "#" + method.getName(), e);
             }

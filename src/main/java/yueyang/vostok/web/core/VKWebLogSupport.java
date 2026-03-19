@@ -10,7 +10,7 @@ import yueyang.vostok.web.route.VKRouteMatch;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-final class VKWebLogSupport {
+public final class VKWebLogSupport {
     private static final String ACCESS_LOGGER = "web-access";
     private static final String RATELIMIT_LOGGER = "web-ratelimit";
     private static final AtomicBoolean REGISTER_WARNED = new AtomicBoolean(false);
@@ -18,7 +18,7 @@ final class VKWebLogSupport {
     private VKWebLogSupport() {
     }
 
-    static void ensureLoggersReady() {
+    public static void ensureLoggersReady() {
         if (!Vostok.Log.initialized()) {
             VKLogConfig cfg = VKLogConfig.defaults()
                     .registerLogger(ACCESS_LOGGER, new VKLogSinkConfig().filePrefix("access"))
@@ -46,7 +46,7 @@ final class VKWebLogSupport {
         }
     }
 
-    static void logRateLimit(VKRequest req, VKRouteMatch match, String scope, VKRateLimiter.Decision decision) {
+    public static void logRateLimit(VKRequest req, VKRouteMatch match, String scope, VKRateLimiter.Decision decision) {
         String method = req == null ? "-" : req.method();
         String path = req == null ? "-" : req.path();
         String route = match == null || match.routePattern() == null ? "-" : match.routePattern();
