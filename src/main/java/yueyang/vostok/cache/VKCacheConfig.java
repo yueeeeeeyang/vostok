@@ -1,6 +1,7 @@
 package yueyang.vostok.cache;
 
 import yueyang.vostok.cache.event.VKCacheEventListener;
+import yueyang.vostok.cache.redis.spi.VKRedisClientPoolFactory;
 
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -72,6 +73,8 @@ public class VKCacheConfig {
     // ---------- Feature5：事件监听器 ----------
     /** 缓存事件监听器，null 表示不启用。 */
     private transient VKCacheEventListener eventListener = null;
+    /** Redis 外部连接池工厂，仅支持代码注入，不参与 properties 自动装配。 */
+    private transient VKRedisClientPoolFactory redisClientPoolFactory = null;
 
     private Map<String, String> options = new LinkedHashMap<>();
 
@@ -480,6 +483,15 @@ public class VKCacheConfig {
         return this;
     }
 
+    public VKRedisClientPoolFactory getRedisClientPoolFactory() {
+        return redisClientPoolFactory;
+    }
+
+    public VKCacheConfig redisClientPoolFactory(VKRedisClientPoolFactory redisClientPoolFactory) {
+        this.redisClientPoolFactory = redisClientPoolFactory;
+        return this;
+    }
+
     public Map<String, String> getOptions() {
         return new LinkedHashMap<>(options);
     }
@@ -547,6 +559,7 @@ public class VKCacheConfig {
                 .l1Config(l1Config)
                 .l2Config(l2Config)
                 .eventListener(eventListener)
+                .redisClientPoolFactory(redisClientPoolFactory)
                 .options(options);
     }
 

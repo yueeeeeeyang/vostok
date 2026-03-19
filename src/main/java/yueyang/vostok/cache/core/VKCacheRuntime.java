@@ -17,8 +17,6 @@ import yueyang.vostok.cache.exception.VKCacheException;
 import yueyang.vostok.cache.pipeline.VKCachePipeline;
 import yueyang.vostok.cache.pipeline.VKCachePipelineResult;
 import yueyang.vostok.cache.provider.VKCacheClient;
-import yueyang.vostok.cache.provider.VKCacheProvider;
-import yueyang.vostok.cache.provider.VKCacheProviderFactory;
 import yueyang.vostok.cache.stats.VKCacheStats;
 
 import java.nio.charset.StandardCharsets;
@@ -81,7 +79,7 @@ public final class VKCacheRuntime {
     public List<VKCachePoolMetrics> poolMetrics() {
         List<VKCachePoolMetrics> out = new ArrayList<>();
         for (Map.Entry<String, CacheHolder> entry : holders.entrySet()) {
-            out.add(entry.getValue().pool.metrics(entry.getKey()));
+            out.add(entry.getValue().poolBundle.pool().metrics(entry.getKey()));
         }
         return out;
     }
@@ -687,7 +685,7 @@ public final class VKCacheRuntime {
     // ---- 内部辅助方法 ----
 
     private boolean allow(CacheHolder holder, VKCacheCommandType commandType) {
-        if (holder.pool.allowCommand()) {
+        if (holder.poolBundle.pool().allowCommand()) {
             return true;
         }
         VKCacheDegradePolicy policy = holder.config.getDegradePolicy();
@@ -762,7 +760,9 @@ public final class VKCacheRuntime {
         RuntimeException last = null;
 
         for (int i = 0; i < attempts; i++) {
-            VKCacheClient client = holder.pool.borrow();
+            VKCacheClient client = holder.poolBundle.pool().borrow();
+            // 统一依赖 VKCacheClient 的 borrow -> invalidate -> close 语义，
+            // 这样默认内建池和外部 Redis 池都能复用同一条主执行链。
             try {
                 return action.run(client);
             } catch (RuntimeException e) {
@@ -867,12 +867,10 @@ public final class VKCacheRuntime {
     }
 
     private CacheHolder createHolder(VKCacheConfig config) {
-        VKCacheProvider provider = VKCacheProviderFactory.create(config.getProviderType());
-        provider.init(config);
-        VKCacheConnectionPool pool = new VKCacheConnectionPool(provider, config);
+        VKCachePoolSupport.ManagedPool poolBundle = VKCachePoolSupport.create(config);
         VKCacheCodec codec = VKCacheCodecs.get(config.getCodec());
         VKBloomFilter bloomFilter = config.getBloomFilter() == null ? VKBloomFilter.noOp() : config.getBloomFilter();
-        return new CacheHolder(config.copy(), provider, pool, codec, bloomFilter,
+        return new CacheHolder(config.copy(), poolBundle, codec, bloomFilter,
                 new ConcurrentHashMap<>(), new ConcurrentHashMap<>(), new VKCacheStats());
     }
 
@@ -897,19 +895,14 @@ public final class VKCacheRuntime {
     }
 
     private record CacheHolder(VKCacheConfig config,
-                               VKCacheProvider provider,
-                               VKCacheConnectionPool pool,
+                               VKCachePoolSupport.ManagedPool poolBundle,
                                VKCacheCodec codec,
                                VKBloomFilter bloomFilter,
                                ConcurrentHashMap<String, ReentrantLock> keyLocks,
                                ConcurrentHashMap<String, CompletableFuture<Object>> singleFlight,
                                VKCacheStats stats) {
         private void close() {
-            try {
-                pool.close();
-            } finally {
-                provider.close();
-            }
+            poolBundle.close();
             keyLocks.clear();
             singleFlight.clear();
         }

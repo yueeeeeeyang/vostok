@@ -14,7 +14,7 @@
       <div class="logo-mark">V</div>
       <div>
         <div class="logo-text">Vostok</div>
-        <div class="logo-version">v1.9.2.8 · JDK 17+</div>
+        <div class="logo-version">v1.9.2.9 · JDK 17+</div>
       </div>
     </a>
   </div>
@@ -92,6 +92,38 @@
     .clusterVirtualNodes(<span class="nu">128</span>)
     .defaultTtlMs(<span class="nu">3600_000L</span>)
 );</code></pre>
+
+<h3>自定义 Redis 连接池（如 Jedis）</h3>
+<pre><code><span class="cm">// 1. 业务项目自行引入 Jedis/Lettuce 等依赖
+// 2. 实现 VKRedisClientPoolFactory / VKRedisClientPool
+// 3. 把第三方 client 适配成 VKCacheClient 并注入配置</span>
+<span class="ty">Vostok</span>.Cache.init(<span class="kw">new</span> <span class="ty">VKCacheConfig</span>()
+    .providerType(<span class="ty">VKCacheProviderType</span>.REDIS)
+    .codec(<span class="st">"string"</span>)
+    .option(<span class="st">"jedis.maxTotal"</span>, <span class="st">"32"</span>)
+    .redisClientPoolFactory(cfg -&gt; <span class="kw">new</span> <span class="ty">MyJedisPoolAdapter</span>(cfg))
+);
+
+<span class="cm">// MyJedisPoolAdapter 由业务项目实现，示意：</span>
+<span class="kw">public final class</span> <span class="ty">MyJedisPoolAdapter</span> <span class="kw">implements</span> <span class="ty">VKRedisClientPool</span> {
+    <span class="kw">private final</span> <span class="ty">JedisPool</span> pool;
+
+    <span class="kw">public</span> <span class="ty">MyJedisPoolAdapter</span>(<span class="ty">VKCacheConfig</span> cfg) {
+        <span class="kw">this</span>.pool = <span class="kw">new</span> <span class="ty">JedisPool</span>(cfg.getEndpoints()[<span class="nu">0</span>]);
+    }
+
+    <span class="kw">public</span> <span class="ty">VKCacheClient</span> borrow() {
+        <span class="kw">return</span> <span class="kw">new</span> <span class="ty">MyJedisClientAdapter</span>(pool.getResource());
+    }
+}</code></pre>
+
+<div class="callout tip">
+  <div class="callout-title">外部池 SPI 说明</div>
+  默认仍使用 Vostok 内建 Redis 连接池；仅当显式配置 <code>redisClientPoolFactory(...)</code> 时，才切换到外部池。<br>
+  该 SPI 只支持<strong>代码注入</strong>，不会由 <code>VKCacheConfigFactory.fromMap/fromProperties</code> 自动实例化。<br>
+  <code>TIERED</code> 模式下，如果 <code>l2Config</code> 是 Redis，也同样支持这一扩展点。<br>
+  <code>poolMetrics()</code> 在外部池下优先返回第三方池快照；若第三方池拿不到原生统计，<code>total/active/idle</code> 会返回 <code>-1</code> 表示未知。
+</div>
 
 <h3>分层缓存（L1 内存 + L2 Redis）</h3>
 <pre><code><span class="ty">Vostok</span>.Cache.init(<span class="kw">new</span> <span class="ty">VKCacheConfig</span>()

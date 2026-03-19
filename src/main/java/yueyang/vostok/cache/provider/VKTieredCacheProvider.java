@@ -1,6 +1,8 @@
 package yueyang.vostok.cache.provider;
 
 import yueyang.vostok.cache.VKCacheConfig;
+import yueyang.vostok.cache.VKCacheProviderType;
+import yueyang.vostok.cache.core.VKCachePoolSupport;
 import yueyang.vostok.cache.exception.VKCacheErrorCode;
 import yueyang.vostok.cache.exception.VKCacheException;
 
@@ -29,8 +31,8 @@ import java.util.Set;
  * }</pre>
  */
 public class VKTieredCacheProvider implements VKCacheProvider {
-    private VKCacheProvider l1;
-    private VKCacheProvider l2;
+    private VKCachePoolSupport.ManagedPool l1Pool;
+    private VKCachePoolSupport.ManagedPool l2Pool;
     private long l1DefaultTtlMs;
 
     @Override
@@ -50,45 +52,46 @@ public class VKTieredCacheProvider implements VKCacheProvider {
         if (l1Cfg == null) {
             l1Cfg = new VKCacheConfig();
         }
+        // TIERED 的 L1 语义固定为内存缓存，这里显式收口，避免误把外部 Redis 池配置注入到 L1。
+        l1Cfg = l1Cfg.copy().providerType(VKCacheProviderType.MEMORY);
         this.l1DefaultTtlMs = l1Cfg.getDefaultTtlMs() > 0 ? l1Cfg.getDefaultTtlMs() : 60_000;
 
-        this.l1 = new VKMemoryCacheProvider();
-        l1.init(l1Cfg);
-
-        this.l2 = VKCacheProviderFactory.create(l2Cfg.getProviderType());
-        l2.init(l2Cfg);
+        this.l1Pool = VKCachePoolSupport.create(l1Cfg);
+        this.l2Pool = VKCachePoolSupport.create(l2Cfg);
     }
 
     @Override
     public VKCacheClient createClient() {
         ensureInit();
-        return new TieredClient(l1.createClient(), l2.createClient(), l1DefaultTtlMs);
+        return new TieredClient(l1Pool.pool().borrow(), l2Pool.pool().borrow(), l1DefaultTtlMs);
     }
 
     @Override
     public boolean validate(VKCacheClient client) {
         if (client instanceof TieredClient tc) {
-            return l2.validate(tc.l2);
+            return tc.l2.ping();
         }
         return true;
     }
 
     @Override
     public void destroy(VKCacheClient client) {
-        if (client instanceof TieredClient tc) {
-            try { l1.destroy(tc.l1); } catch (Exception ignore) {}
-            try { l2.destroy(tc.l2); } catch (Exception ignore) {}
+        if (client != null) {
+            try {
+                client.close();
+            } catch (Exception ignore) {
+            }
         }
     }
 
     @Override
     public void close() {
-        if (l1 != null) l1.close();
-        if (l2 != null) l2.close();
+        if (l1Pool != null) l1Pool.close();
+        if (l2Pool != null) l2Pool.close();
     }
 
     private void ensureInit() {
-        if (l1 == null || l2 == null) {
+        if (l1Pool == null || l2Pool == null) {
             throw new VKCacheException(VKCacheErrorCode.STATE_ERROR,
                     "TieredCacheProvider is not initialized");
         }
@@ -104,6 +107,7 @@ public class VKTieredCacheProvider implements VKCacheProvider {
         final VKCacheClient l2;
         /** L1 缓存的最大 TTL 上限（ms）；回填时取 min(原始ttl, l1DefaultTtlMs)。 */
         private final long l1DefaultTtlMs;
+        private boolean closed;
 
         TieredClient(VKCacheClient l1, VKCacheClient l2, long l1DefaultTtlMs) {
             this.l1 = l1;
@@ -271,6 +275,10 @@ public class VKTieredCacheProvider implements VKCacheProvider {
 
         @Override
         public void close() {
+            if (closed) {
+                return;
+            }
+            closed = true;
             try { l1.close(); } catch (Exception ignore) {}
             try { l2.close(); } catch (Exception ignore) {}
         }

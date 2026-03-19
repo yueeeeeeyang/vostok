@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *       避免持锁期间执行 I/O（validate 可能触发网络 ping）</li>
  * </ul>
  */
-public final class VKCacheConnectionPool implements AutoCloseable {
+public final class VKCacheConnectionPool implements VKCacheClientPool {
     private final VKCacheProvider provider;
     private final VKCacheConfig config;
     private final Deque<PooledState> idle = new ArrayDeque<>();

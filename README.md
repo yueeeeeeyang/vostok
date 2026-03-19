@@ -3,7 +3,7 @@
 面向 `JDK 17+` 的轻量 Java 框架，通过统一门面 `Vostok` 聚合多个模块能力。
 各模块可独立初始化、按需使用。
 
-**当前版本：`1.9.2.8`**
+**当前版本：`1.9.2.9`**
 
 **详细文档**：[Vostok Docs](https://yueeeeeeyang.github.io/vostok/)
 
@@ -15,7 +15,7 @@
 <dependency>
   <groupId>yueyang</groupId>
   <artifactId>vostok</artifactId>
-  <version>1.9.2.8</version>
+  <version>1.9.2.9</version>
 </dependency>
 ```
 
@@ -254,6 +254,26 @@ Vostok.Cache.set("user:1", "tom", 60_000);
 String name = Vostok.Cache.get("user:1");
 
 long n = Vostok.Cache.incr("counter");
+
+// 业务项目也可以自行引入 Jedis/Lettuce，并把外部 Redis 连接池接入 Vostok.Cache
+Vostok.Cache.init(new VKCacheConfig()
+    .providerType(VKCacheProviderType.REDIS)
+    .codec("string")
+    .option("jedis.maxTotal", "32")
+    .redisClientPoolFactory(cfg -> new MyJedisPoolAdapter(cfg))); // 业务项目自定义实现
+
+// TIERED 的 L2 如果是 Redis，也同样支持外部连接池 SPI
+Vostok.Cache.init(new VKCacheConfig()
+    .providerType(VKCacheProviderType.TIERED)
+    .codec("string")
+    .l1Config(new VKCacheConfig()
+        .providerType(VKCacheProviderType.MEMORY)
+        .codec("string")
+        .defaultTtlMs(60_000))
+    .l2Config(new VKCacheConfig()
+        .providerType(VKCacheProviderType.REDIS)
+        .codec("string")
+        .redisClientPoolFactory(cfg -> new MyJedisPoolAdapter(cfg))));
 ```
 
 ### File
